@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 504" width="820" height="504" role="img" aria-labelledby="title desc">
   <title id="title">How usdash works</title>
-  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at list prices, cache misses and why, a cache clock per session, what re-sending each conversation costs, and advice in dollars. It shows a header, live sessions with what to do, idle sessions with what coming back costs, and every request on a key.</desc>
+  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at Anthropic's list prices (read from its docs at start), cache misses and why, a cache clock per session, what re-sending each conversation costs, and advice in dollars. It shows a header, live sessions with what to do, idle sessions with what coming back costs, and, on r, every request.</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #c5c8c6; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
@@ -49,7 +49,7 @@
   <!-- usdash -->
   <rect class="card" x="26" y="212" width="768" height="156" rx="8" stroke="#98a84b"/>
   <text x="46" y="240" font-size="16" font-weight="700" style="fill: #98a84b">💲 usdash</text>
-  <text class="sub" x="774" y="240" text-anchor="end">reads new lines every second · read-only, nothing leaves your machine</text>
+  <text class="sub" x="774" y="240" text-anchor="end">reads new lines every second · prices from Anthropic's docs · your data stays local</text>
   <g text-anchor="middle">
     <rect x="46" y="256" width="220" height="36" rx="6" fill="#3a3a3a"/>
     <text class="step" x="156" y="279">one request per reply</text>

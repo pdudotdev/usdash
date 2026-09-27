@@ -16,8 +16,8 @@ from pathlib import Path
 from statistics import median
 
 from .facts import Facts, load_facts
-from .models import model_key, on_cloud_provider, pretty_model
-from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, load_web_search, request_cost, usage_parts, write_price
+from .models import model_key, pretty_model
+from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, load_pricing, request_cost, usage_parts, write_price
 from .transcripts import Record, account_file
 
 FEED_HISTORY = 10_000
@@ -316,14 +316,14 @@ class Store:
 
     def __init__(self, prices: dict, facts: Facts | None = None, web_search: float | None = None) -> None:
         self.prices = prices
-        self.web_search = load_web_search() if web_search is None else web_search  # USD per search
-        self.base_facts = facts or load_facts()  # models.yaml and the docs; `facts` adds the transcripts
+        self.web_search = load_pricing().web_search if web_search is None else web_search  # USD per search
+        self.facts = facts or load_facts()  # models.yaml, and the lineup from the docs
         self.sessions: dict[str, Session] = {}
         self.feed: deque[Request] = deque(maxlen=FEED_HISTORY)
         self.days: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))  # day -> cost, read, prompt, requests
         # day -> reason -> $ paid to write again what could have been read back
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        self.unpriced: Counter = Counter()  # models missing from pricing.yaml
+        self.unpriced: Counter = Counter()  # requests with no known price, by model ("Opus 5.5 fast": its fast prices)
         self.summaries: dict[str, tuple[int, int]] = {}  # record id -> (conversation, summary) tokens of each /compact
         # (folder, entrypoint) -> (tokens, model family): the tool list and system prompt as a
         # request right after /compact read them back from the cache
@@ -378,7 +378,9 @@ class Store:
         elif kind == "last-prompt" and data.get("lastPrompt") and not session.last_prompt:
             session.last_prompt = " ".join(str(data["lastPrompt"]).split())
         elif kind == "cost-state" and isinstance(data.get("totalCostUSD"), (int, float)):
-            session.cost_state, session.cost_at_state = float(data["totalCostUSD"]), session.cost_total
+            total = float(data["totalCostUSD"])
+            if total != session.cost_state:  # the same record read again (a file re-read) changes nothing
+                session.cost_state, session.cost_at_state = total, session.cost_total
             session.ended = True
         elif kind == "system" and not record.subagent:
             main = session.main
@@ -443,11 +445,10 @@ class Store:
             request.end = end or request.end
         request.usage = usage_parts(usage)
         request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
-        price = self.prices.get(model_key(model))
-        if price is None:
-            self.unpriced[model_key(model)] += 1 if old is None else 0
-        else:
-            price = as_paid(price, usage, model_key(model))  # fast mode, US-only inference
+        base = self.prices.get(model_key(model))
+        price = as_paid(base, model_key(model), request.speed, request.geo) if base else None  # fast mode, US-only
+        if price is None and old is None:
+            self.unpriced[pretty_model(model) + (" fast" if base else "")] += 1
         request.cost = request_cost(usage, price) + request.usage["searches"] * self.web_search if price else None
         self._classify(request, price)
         self._account(session, request, +1)
@@ -463,7 +464,7 @@ class Store:
             if not session.prefix and request.prompt:
                 session.prefix, session.prefix_model = request.prompt, model
             read = request.usage.get("read", 0)
-            prefix = self.base_facts.convert(session.prefix, session.prefix_model, model)
+            prefix = self.facts.convert(session.prefix, session.prefix_model, model)
             if old is None and request.prev is not None and request.prev.compacted and 0 < read <= prefix:
                 # Right after /compact, only the tool list and system prompt were still
                 # cached: what this request read back is their exact size.
@@ -497,7 +498,7 @@ class Store:
         if missed < max(REWRITE_MIN_TOKENS, REWRITE_SHARE * could_read):
             return
         request.rewritten = missed
-        request.reason = rewrite_reason(request, prev, self.base_facts)
+        request.reason = rewrite_reason(request, prev, self.facts)
         if price:
             ttl = request.ttl or prev.ttl or FIVE_MINUTES
             request.rewrite_cost = missed * (write_price(price, ttl) - price["cache_read"]) / 1_000_000
@@ -523,43 +524,17 @@ class Store:
 
     # --- Across sessions --------------------------------------------------------
 
-    @property
-    def facts(self) -> Facts:
-        """What's known about the models, with what this machine's transcripts show (facts.py)."""
-        return memo(self, "facts", lambda: self.base_facts.with_seen(*self._seen()))
-
-    def _seen(self) -> tuple[dict[str, tuple[int, int]], list[float]]:
-        """From consecutive main-conversation requests while the cache was warm
-        (no /compact or Claude Code upgrade between): each model's effort
-        changes, (kept the cache, re-wrote it); and at each switch between the
-        two tokenizers, the same conversation's old tokens / current tokens."""
-        base = self.base_facts
-        effort: dict[str, list[int]] = defaultdict(lambda: [0, 0])
-        ratios = []
-        for session in self.sessions.values():
-            requests = session.main_requests()
-            for a, b in zip(requests, requests[1:]):
-                if (b.prev is None or b.prev.compacted or a.version != b.version
-                        or b.start - a.start >= (a.ttl or session.ttl or FIVE_MINUTES)):
-                    continue
-                before, after = model_key(a.model), model_key(b.model)
-                if before == after:
-                    if a.effort and b.effort and a.effort != b.effort and not on_cloud_provider(b.model):
-                        effort[after][0 if b.usage.get("read", 0) >= 0.9 * a.prompt else 1] += 1
-                elif base.old_tokenizer(before) != base.old_tokenizer(after) and a.prompt >= 20_000:
-                    old, current = (a.prompt, b.prompt) if base.old_tokenizer(before) else (b.prompt, a.prompt)
-                    if 0.5 < old / current < 1.1:  # else not the same conversation
-                        ratios.append(old / current)
-        return {model: (kept, rewrote) for model, (kept, rewrote) in effort.items()}, ratios
-
     def price(self, model: str | None, session: Session | None = None) -> dict | None:
         """`model`'s list prices, or, given a session, as its next request
-        would pay them there: at its speed (fast mode, where `model` has it)
-        and where it runs (US-only inference)."""
+        would pay them there: at its speed (fast mode; another model runs fast
+        only if it has fast mode prices) and where it runs (US-only inference).
+        None if unknown."""
         price = self.prices.get(model_key(model))
         if price is None or session is None:
             return price
-        return as_paid(price, {"speed": session.main.speed, "inference_geo": session.main.geo}, model_key(model))
+        own = model_key(model) == model_key(session.model)
+        speed = session.main.speed if own or price.get("fast") else None
+        return as_paid(price, model_key(model), speed, session.main.geo)
 
     def prefix_on(self, session: Session, model: str | None) -> float:
         """A session's tool list and system prompt, counted in `model`'s tokens."""

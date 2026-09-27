@@ -38,19 +38,20 @@ def rows(tip: advice.Advice) -> dict[str, advice.Option]:
 def test_a_warm_session_says_stay_and_prices_every_option(store):
     session = session_on(store, out=2_000)
     tip = live(store, session, LAST_START + 600)
-    assert tip.action == "Stay on Opus 5.5 for now; switching is free after your next 1-hour break."
+    assert tip.action == "Stay on Opus 5.5 for now; switching is free once the cache expires (1 hour without a message)."
     assert not tip.urgent
     options = rows(tip)
-    assert list(options) == ["stay", "Fable 5.1", "Sonnet 5", "Haiku 4.5", "/effort"]  # a 42k chat: no /compact
+    assert list(options) == ["Stay", "Fable 5.1", "Sonnet 5", "Haiku 4.5", "/effort"]  # a 42k chat: no /compact
+    assert options["Stay"].bold and options["Stay"].model == "claude-opus-5-5"  # the row the others compare with
     assert [o.arrow for o in tip.options] == ["", "↑", "↓", "↓", ""]
     # 42,000 tokens read back at $0.20, or written again at $8 (the 1-hour cache).
-    assert options["stay"].text == "re-sends 42k tokens: $0.01 now, $0.34 after a break"
+    assert options["Stay"].text == "re-sends 42k tokens: $0.01 now, $0.34 once the cache expires"
     assert re.fullmatch(rf"{MONEY} more now, then ≈{MONEY} less a message · evens out after ≈\d+ messages",
                         options["Sonnet 5"].text)
     assert re.fullmatch(rf"{MONEY} more now, then ≈{MONEY} more a message", options["Fable 5.1"].text)
     assert options["/effort"].text == "costs nothing now"
     api = session_on(store, out=500, ttl="5m", session="sess-2")  # short replies: switching now still costs extra
-    assert live(store, api, LAST_START + 60).action.endswith("after your next 5-minute break.")
+    assert live(store, api, LAST_START + 60).action.endswith("once the cache expires (5 minutes without a message).")
 
 
 def test_idle_sessions_get_no_advice(store):
@@ -74,7 +75,7 @@ def test_switch_now_when_the_target_already_has_it_cheaper(store):
     tip = live(store, session, T0 + 130)
     assert (tip.action, tip.urgent) == ("Switch to Haiku 4.5 now: it's already cheaper.", True)
     # Every amount leans on the estimated tool list and summary.
-    assert rows(tip)["stay"].text.startswith("re-sends ≈43k tokens: ≈$")
+    assert rows(tip)["Stay"].text.startswith("re-sends ≈43k tokens: ≈$")
     assert re.fullmatch(rf"≈{MONEY} less now, then ≈{MONEY} less a message", rows(tip)["Haiku 4.5"].text)
 
 
@@ -102,7 +103,7 @@ def test_no_stay_action_on_the_cheapest_model(store):
     tip = live(store, session, LAST_START + 10)
     assert tip.action is None  # nothing cheaper to switch to
     assert [(o.arrow, o.label) for o in tip.options] == [
-        ("", "stay"), ("↑", "Fable 5.1"), ("↑", "Opus 5.5"), ("↑", "Sonnet 5"), ("", "/effort")]
+        ("", "Stay"), ("↑", "Fable 5.1"), ("↑", "Opus 5.5"), ("↑", "Sonnet 5"), ("", "/effort")]
     # On Haiku an effort change re-writes the conversation: 42,000 × ($2 − $0.10).
     assert rows(tip)["/effort"].text == "re-sends 42k tokens: $0.08 more now"
 
@@ -114,7 +115,7 @@ def test_compact_action_only_when_big_warm_and_about_to_expire(store):
     # 139k read back at $0.20 (or written at $5 on the 5-minute cache) plus a ~4.2k summary at $20.
     assert tip.action == "Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."
     assert tip.urgent
-    assert rows(tip)["/compact"].text == "≈$0.11 now, ≈$0.78 after a break; then ≈$0.02 less a message"
+    assert rows(tip)["/compact"].text == "≈$0.11 now, ≈$0.78 once the cache expires; then ≈$0.02 less a message"
     assert advice.advise(store, session, LAST_START + ONE_HOUR + 1) is None  # already cold
     small = session_on(store, session="sess-2")
     assert not live(store, small, LAST_START + ONE_HOUR - 300).action.startswith("Taking a break")

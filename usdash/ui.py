@@ -1,9 +1,9 @@
 """The screen: a header, then either the sessions (the default) or every request.
 
-Sessions from the last 24 hours, newest first, in two sections. A live
-session (cache warm, not closed) opens up: what you last typed there, what to
-do, and what each option costs. An idle one gets a line with what coming back
-to it costs. Closed script runs fold into one row per folder. `r` swaps in the
+Sessions from the last 24 hours, newest first, in two panes. A live session
+(cache warm, not exited) opens up: what you last typed there, what to do, and
+what each option costs. An idle one gets a line with what coming back to it
+costs. Finished script runs fold into one row per folder. `r` swaps in the
 request feed (rendering copied in spirit from llm-trunk's scripts/dashboard.py:
 a NOTE column that runs to the end of the line, the same scrolling keys).
 """
@@ -26,7 +26,8 @@ from .sessions import Request, Session, Store, day_of, snippet
 MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
 APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
-HEADER_HEIGHT = 4
+HEADER_HEIGHT = 5  # three lines and the frame
+PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
 
 
@@ -130,7 +131,7 @@ def header(store: Store, view: View) -> Panel:
     spent = day.get("cost", 0.0)
     hit = day.get("read", 0) / day["prompt"] if day.get("prompt") else None
     rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost >= 0.005}
-    # One line each: the header has room for exactly two.
+    # One line each: the header has room for exactly three.
     line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), no_wrap=True, overflow="ellipsis")
     if hit is not None:
         line.append(f"  ·  {hit:.0%} of input read from cache", style="green" if hit >= 0.9 else "yellow")
@@ -144,16 +145,21 @@ def header(store: Store, view: View) -> Panel:
         else f"Estimated at {view.prices}",
         style="dim", no_wrap=True, overflow="ellipsis",
     )
-    # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
-    # summary); an exited session's TOTAL is Claude Code's own, which counts them.
-    detail.append("  ·  amounts can read low: transcripts miss background requests")
+    # Warnings first: the line is cut at the terminal's edge.
+    if store.unpriced:
+        count, models = sum(store.unpriced.values()), ", ".join(sorted(store.unpriced))
+        detail.append(f"  ·  {plural(count, 'request')} with no known price, left out ({models})", style="yellow")
     if view.docs_changed:
         pages = " and ".join(view.docs_changed)
         detail.append(f"  ·  Anthropic's {pages} page{'s' if len(view.docs_changed) > 1 else ''} changed: "
                       f"usdash may need an update", style="yellow")
     if view.unknown_types:
         detail.append(f"  ·  {view.unknown_types} records of unknown types (newer Claude Code?)", style="yellow")
-    return Panel(Group(line, detail), title=Text("💲 usdash · live", style="bold"), title_align="left")
+    # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
+    # summary); an exited session's TOTAL is Claude Code's own, which counts them.
+    caveat = Text("Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…). "
+                  "An exited session's TOTAL is complete.", style="dim", no_wrap=True, overflow="ellipsis")
+    return Panel(Group(line, detail, caveat), title=Text("💲 usdash · live", style="bold"), title_align="left")
 
 
 # --- Tables ------------------------------------------------------------------------
@@ -252,7 +258,8 @@ def advice_lines(advice: Advice) -> list[Text]:
     width = max((len(option.label) for option in advice.options), default=0)
     for option in advice.options:
         line = Text.assemble((f"   {option.arrow or ' '} ", "dim"))
-        line.append(option.label.ljust(width), style=model_style(option.model) if option.model else "")
+        style = " ".join(filter(None, [model_style(option.model) if option.model else "", "bold" if option.bold else ""]))
+        line.append(option.label.ljust(width), style=style)
         line.append(f"  {option.text}")
         lines.append(line)
     return lines
@@ -311,54 +318,67 @@ def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
     return lines
 
 
-def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: int) -> tuple[list[Text], int]:
-    """The lines of the sessions from `start` on that fit in `room`, each
-    section under its label and a dim line between sessions, and how many
-    sessions that is: at least one (a live block taller than the room is cut,
-    not skipped)."""
-    lines, shown, section = [], 0, None
+def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: int,
+              head: int) -> tuple[list[tuple[bool, list[Text]]], int]:
+    """The sessions from `start` on that fit in `room` lines, split into panes
+    (live, then idle): each pane costs `head` lines (its frame and the column
+    names) plus its sessions, with a dim line between two sessions. Also how
+    many sessions that is: at least one (a live block taller than the room is
+    cut, not skipped)."""
+    panes: list[tuple[bool, list[Text]]] = []
+    used = shown = 0
     for entry, block in zip(entries[start:], blocks[start:]):
-        if entry.live != section:
-            head = [Text("LIVE" if entry.live else "IDLE", style="bold dim")]
-        else:
-            head = [Text("─" * 500, style="dim", no_wrap=True, overflow="crop")]  # cut at the panel's edge
-        if shown and len(lines) + len(head) + len(block) > room:
+        new = not panes or panes[-1][0] != entry.live
+        cost = len(block) + (head if new else 1)
+        if shown and used + cost > room:
             break
-        lines += head + block
-        section, shown = entry.live, shown + 1
-    return lines, shown
+        if new:
+            panes.append((entry.live, []))
+        else:
+            panes[-1][1].append(Text("─" * 500, style="dim", no_wrap=True, overflow="crop"))  # cut at the pane's edge
+        panes[-1][1].extend(block)
+        used, shown = used + cost, shown + 1
+    return panes, shown
 
 
-def sessions_panel(store: Store, view: View, rows: int) -> Panel:
-    """The sessions, scrolled by whole session: a live one's lines never split."""
+def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
+    """The sessions in two panes, live above idle, scrolled together by whole
+    session (a live one's lines never split); the columns line up across both."""
     window = duration_text(view.window)
     entries = session_entries(store, view)
-    live = sum(entry.live for entry in entries)
-    title = f"sessions · last {window} · {live} live · {len(entries) - live} idle"
-    subtitle = Text("↑↓/wheel/j/k: scroll · r: every request · q: quit", style="dim")
+    keys = Text("↑↓/wheel/j/k: scroll · r: every request · q: quit", style="dim")
     if not entries:
-        return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"),
-                     title=Text(title, style="bold"), title_align="left", subtitle=subtitle, subtitle_align="right")
+        return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"), subtitle=keys,
+                     title=Text(f"sessions · last {window}", style="bold"), title_align="left", subtitle_align="right")
     names, widths = column_widths(SESSION_COLUMNS, [entry.cells for entry in entries])
-    lines = header_lines(SESSION_COLUMNS, names, widths)
+    columns = header_lines(SESSION_COLUMNS, names, widths)
     blocks = [entry_lines(SESSION_COLUMNS, widths, entry) for entry in entries]
-    room = max(1, rows - len(lines))
+    head = PANE_FRAME + len(columns)
     # The furthest the list can scroll: the first session from which all the rest fit.
     last = len(entries) - 1
-    while last > 0 and page_from(entries, blocks, last - 1, room)[1] == len(entries) - last + 1:
+    while last > 0 and page_from(entries, blocks, last - 1, rows, head)[1] == len(entries) - last + 1:
         last -= 1
     view.session_last = last
     view.session_scroll = max(0, min(view.session_scroll, last))
-    body, shown = page_from(entries, blocks, view.session_scroll, room)
-    lines += body
+    panes, shown = page_from(entries, blocks, view.session_scroll, rows, head)
     view.session_page = shown
-    if shown < len(entries):
-        first = view.session_scroll + 1
-        title += f" · {first}–{view.session_scroll + shown} of {len(entries)}"
-    if view.session_scroll:
-        subtitle = Text("g: back to the top", style="bold yellow")
-    return Panel(Group(*lines[:rows]), title=Text(title, style="bold"), subtitle=subtitle, title_align="left",
-                 subtitle_align="right")
+    live = sum(entry.live for entry in entries)
+    titles = {True: f"live · {plural(live, 'session')}",
+              False: f"idle · {plural(len(entries) - live, 'session')} · last {window}"}
+    parts = []
+    for i, (is_live, lines) in enumerate(panes):
+        final = i == len(panes) - 1
+        title, subtitle = titles[is_live], None
+        if final:
+            if shown < len(entries):
+                title += f" · showing {view.session_scroll + 1}–{view.session_scroll + shown} of {len(entries)}"
+            subtitle = Text("g: back to the top", style="bold yellow") if view.session_scroll else keys
+        pane = Panel(Group(*columns, *lines), title=Text(title, style="bold"), title_align="left",
+                     subtitle=subtitle, subtitle_align="right")
+        parts.append(Layout(pane) if final else Layout(pane, size=head + len(lines)))  # the last takes what's left
+    layout = Layout()
+    layout.split_column(*parts)
+    return layout
 
 
 # --- Feed --------------------------------------------------------------------------
@@ -480,7 +500,7 @@ def render(store: Store, view: View, height: int) -> Layout:
     if view.mode == "requests":
         panel = feed_panel(store, view, max(1, body - 3))  # the panel's border and the column names
     else:
-        panel = sessions_panel(store, view, body - 2)  # the panel's border
+        panel = sessions_view(store, view, body)  # the panes, their frames included
     layout = Layout()
     layout.split_column(Layout(header(store, view), size=HEADER_HEIGHT), Layout(panel))
     return layout

@@ -5,8 +5,8 @@ One action per session, the first that applies:
   2. ⚡ switch now: a cheaper model is already cheaper, even with the re-write
   3. 💡 switch now: staying has cost as much as switching would (rent-or-buy)
   4. 💡 try a lower /effort: it keeps the cache, and this session's replies show the saving
-  5. 💡 stay for now: switching is free after the next break that outlasts the cache
-Then one row per option: stay, every other model (↑ more capable, ↓ cheaper),
+  5. 💡 stay for now: switching is free once the cache expires
+Then one row per option: Stay, every other model (↑ more capable, ↓ cheaper),
 /compact and /effort. Amounts for now are exact; per-message amounts (≈)
 assume messages and replies stay as they have been (engine.py).
 
@@ -16,8 +16,7 @@ dollars; the user decides.
 """
 from dataclasses import dataclass, field
 
-from .engine import (cache_clock, cheaper, compact, context, effort_rewrite, effort_saving, fast_off, model_move,
-                     others, resend)
+from .engine import cache_clock, cheaper, compact, context, effort_rewrite, effort_saving, model_move, others, resend
 from .models import model_key, pretty_model
 from .prices import ONE_HOUR, as_paid, request_cost
 from .sessions import Session, Store
@@ -34,6 +33,7 @@ class Option:
     text: str
     arrow: str = ""  # "↑" a more capable model, "↓" a cheaper one
     model: str | None = None  # the model a row is about, for its colour
+    bold: bool = False  # the row to compare the others with: Stay
 
 
 @dataclass
@@ -122,7 +122,7 @@ def held_extra(store: Store, session: Session, target: str, since: float) -> flo
             },
             "output_tokens": request.usage["output"] * ratio,
         }
-        price_l = as_paid(base_l, {"speed": request.speed, "inference_geo": request.geo}, target)
+        price_l = as_paid(base_l, target, request.speed if base_l.get("fast") else None, request.geo)
         searches = request.usage.get("searches", 0) * store.web_search  # the same on any model
         extra += request.cost - searches - request_cost(usage, price_l)
     return extra
@@ -173,8 +173,8 @@ def advise(store: Store, session: Session, now: float, memory: Memory | None = N
     elif effort:
         advice.action = f"Try /effort {effort[0]}: ≈{money(effort[1])} less a message, at no cost now."
     elif worth:
-        brk = "1-hour" if ttl >= ONE_HOUR else f"{ttl // 60}-minute"
-        advice.action = f"Stay on {here} for now; switching is free after your next {brk} break."
+        idle = "1 hour" if ttl >= ONE_HOUR else plural(ttl // 60, "minute")
+        advice.action = f"Stay on {here} for now; switching is free once the cache expires ({idle} without a message)."
     advice.options = options(store, session, now, ctx, moves, costs, effort)
     return advice
 
@@ -184,8 +184,8 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
     rows = []
     stay_now, stay_cold = resend(store, session, session.model, True), resend(store, session, session.model, False)
     if stay_now is not None and stay_cold is not None:
-        rows.append(Option("stay", f"{resends(ctx)}: {approx}{money(stay_now)} now, "
-                                   f"{approx}{money(stay_cold)} after a break"))
+        rows.append(Option("Stay", f"{resends(ctx)}: {approx}{money(stay_now)} now, "
+                                   f"{approx}{money(stay_cold)} once the cache expires", model=session.model, bold=True))
     down = cheaper(store, session.model)
     for target, move in moves.items():
         mark = "" if move.exact else "≈"
@@ -195,7 +195,7 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
             text += f" · evens out after ≈{plural(max(1, round(move.payback)), 'message')}"
         rows.append(Option(pretty_model(target), text, "↓" if target in down else "↑", target))
     if costs and costs.saving >= MIN_SAVING:
-        rows.append(Option("/compact", f"≈{money(costs.now)} now, ≈{money(costs.after_break)} after a break; "
+        rows.append(Option("/compact", f"≈{money(costs.now)} now, ≈{money(costs.after_break)} once the cache expires; "
                                        f"then ≈{money(costs.saving)} less a message"))
     if store.facts.effort_keeps_cache(session.model):
         if effort:
@@ -204,8 +204,4 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
             rows.append(Option("/effort", "costs nothing now"))
     elif (rewrite := effort_rewrite(store, session, now)) is not None:
         rows.append(Option("/effort", f"{resends(ctx)}: {approx}{money(rewrite)} more now"))
-    if (slower := fast_off(store, session, now)) is not None:
-        cost, saving = slower
-        rows.append(Option("/fast off", f"{resends(ctx)}: ≈{money(cost)} {'more' if cost >= 0 else 'less'} now, "
-                                        f"then ≈{money(saving)} less a message"))
     return rows

@@ -7,9 +7,8 @@
     usdash --offline        # don't read Anthropic's docs; use the last ones read
 
 Read-only: it reads Claude Code's transcripts on this machine, and nothing
-about them leaves it. At start it reads three pages of Anthropic's docs
-(prices, the current models, effort), sending nothing about you, unless
---offline. Scroll the request feed with the arrow keys, the mouse wheel or
+about them leaves it. At start it reads two pages of Anthropic's docs (the
+prices and the current models), sending nothing about you, unless --offline. Scroll the request feed with the arrow keys, the mouse wheel or
 j/k, a page with space/b, jump to the newest with g and the oldest with G;
 q quits.
 """
@@ -30,7 +29,7 @@ from rich.live import Live
 
 from .docs import fetch_text, read_docs
 from .facts import Facts, load_facts
-from .prices import load_prices, load_web_search, prices_verified
+from .prices import load_pricing
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
 from .ui import View, press, render, track_feed
@@ -108,23 +107,22 @@ class Known:
     changed: list[str]  # Anthropic's pages that no longer read as expected
 
 
-def shipped() -> Known:
-    return Known(load_prices(), load_web_search(), load_facts(), prices_label(prices_verified(), offline=True), [])
-
-
-def knowledge(offline: bool) -> Known:
-    """What Anthropic's docs say, read now, else their saved copies, else the shipped files."""
-    known = shipped()
-    dates = {"pricing": prices_verified(), "models": known.facts.verified, "effort": known.facts.verified}
-    pages = read_docs(None if offline else fetch_text, shipped=dates)
-    pricing, effort = pages["pricing"], pages["effort"].data
-    if pricing.data:
-        known.prices.update(pricing.data["models"])
-        known.web_search = pricing.data["web_search"]
-    known.facts = known.facts.with_docs(pages["models"].data, set(effort) if effort is not None else None)
-    fresh = pricing.data is not None and pricing.as_of is None
-    known.label = prices_label(None if fresh else pricing.as_of or dates["pricing"], offline)
-    known.changed = [name for name, page in pages.items() if page.changed]
+def knowledge(offline: bool | None = None) -> Known:
+    """What Anthropic's docs say, read now, else their saved copies, else the
+    shipped files. None reads nothing at all, not even the saved copies."""
+    pricing, facts = load_pricing(), load_facts()
+    known = Known(pricing.models, pricing.web_search, facts, prices_label(pricing.verified, offline=True), [])
+    if offline is None:
+        return known
+    pages = read_docs(None if offline else fetch_text, shipped={"pricing": pricing.verified, "models": facts.verified})
+    page = pages["pricing"]
+    if page.data:
+        known.prices.update(page.data["models"])
+        known.web_search = page.data["web_search"]
+    known.facts = facts.with_lineup(pages["models"].data)
+    fresh = page.data is not None and page.as_of is None
+    known.label = prices_label(None if fresh else page.as_of or pricing.verified, offline)
+    known.changed = [name for name, found in pages.items() if found.changed]
     return known
 
 
@@ -143,7 +141,7 @@ def history_start(now: float, since: int | None, window: int) -> float:
 class App:
     def __init__(self, projects: Path, since: float, window: int, clock=time.time, known: Known | None = None) -> None:
         """`known`: what knowledge() returns; without it, the shipped files only."""
-        known = known or shipped()
+        known = known or knowledge()
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
         self.store = Store(known.prices, known.facts, known.web_search)

@@ -42,7 +42,7 @@ Rules that matter:
 | The cache lives **5 minutes or 1 hour** after the **start** of the last request that read or wrote it, and every read restarts the clock | A break longer than that means the next message re-writes everything |
 | Claude Code's main conversation uses the **1-hour cache on a subscription** (within the plan's usage) and the **5-minute cache on an API key, usage credits or a cloud provider**, unless changed with `promptCacheTtl` or `CLAUDE_CODE_PROMPT_CACHE_TTL`. Subagents, compaction and titles use 5 minutes | Read which one a session uses from its usage data (§7) |
 | Sessions running **in parallel in the same folder** share the cached tool list and system prompt; a session started later shares it only if its git status snapshot matches | A model that another open session is already using often has ~35–50k tokens cached for you |
-| Tokenizers differ: models from Claude Opus 4.7 on (Opus 5.5, Sonnet 5, …) count **~30% more tokens** than earlier ones (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6) for the same text | The same conversation is ~0.77× the tokens on the older tokenizer (measured 0.758 in a real run; the models overview's words per 1M tokens gives 0.74). usdash learns the ratio from this machine's switches once it has two |
+| Tokenizers differ: models from Claude Opus 4.7 on (Opus 5.5, Sonnet 5, …) count **~30% more tokens** than earlier ones (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6) for the same text | The same conversation is ~0.77× the tokens on the older tokenizer (measured 0.758 in a real run; the models overview's words per 1M tokens gives 0.74). |
 
 ---
 
@@ -246,7 +246,7 @@ B > X × 0.75 ÷ (1.25 − read/input)       → B > 0.652·X  (Sonnet 5, Haiku 
 | output(M) | For the current model: the session's own average output per message on that model and effort, else on that model, else across interactive sessions (scripted `claude -p` runs are left out: a "say OK" run makes a model or effort look nearly free). For a model you'd move to: the session's own average on it if it has used it, else the current model's, converted to the target's tokenizer: the task is the same, so assume a reply of the same length. Other sessions' replies on that model come from other tasks and would mislead. For a lower effort: the session's own average at that effort if it has used it; else its current average, scaled by how much shorter replies got at that effort in the interactive sessions that used both (each compares a task with itself). Without such a session there's no estimate: another session's replies alone come from another task |
 | When a request started | The timestamp of the record it answers, found through `parentUuid`, skipping earlier blocks of the same reply |
 | Claude Code's own total | The `cost-state` record (`totalCostUSD`, per-model `modelUsage`). It's written when a session closes, not as it goes, so it can only check finished sessions. It includes the background requests the transcript lacks |
-| Converting N between models | × 0.77 from the current tokenizer (Opus 4.7 and later) to the older one (Haiku 4.5 and every model before Opus 4.7), × 1.3 the other way; none within either (usdash/models.yaml, or the ratio learned from this machine's switches) |
+| Converting N between models | × 0.77 from the current tokenizer (Opus 4.7 and later) to the older one (Haiku 4.5 and every model before Opus 4.7), × 1.3 the other way; none within either (usdash/models.yaml) |
 | Effort changes | On Opus 5.5 the request after an effort change read 100% of the previous prompt back (4 of 4 here); on Opus 5, 7% |
 
 ---
@@ -296,10 +296,10 @@ idle session: "resuming re-sends Ck tokens: $a on E, $b on L1, $c on L2"   (C wr
               into one row per folder)
 
 live session: one row per option
-    stay       "re-sends Ck tokens: $X now, $Y after a break"            (C read back / written again)
+    Stay       "re-sends Ck tokens: $X now, $Y once the cache expires"   (C read back / written again)
     ↑ / ↓ L    "$Z more (less) now, then ≈$s less (more) a message · evens out after ≈m messages"
                Z = C on L, written − C read back here (≈ if another session keeps L's tool list cached)
-    /compact   "≈$A now, ≈$B after a break; then ≈$c less a message"      (summary size learned; shown
+    /compact   "≈$A now, ≈$B once the cache expires; then ≈$c less a message" (summary size learned; shown
                when not compacted since the last request and c ≥ $0.005)
     /effort    "costs nothing now" on Opus 5.5 / Fable 5.1 ("/effort X: costs nothing now, then ≈$s less a
                message" once a lower effort's saving is known), else "re-sends Ck tokens: $W more now"
@@ -315,7 +315,7 @@ and one action, the first that applies:
     💡 a lower effort saves $0.005+ a message (Opus 5.5 / Fable 5.1, with replies at that effort):
                                  "Try /effort X: ≈$s less a message, at no cost now."
     💡 a cheaper L saves $0.005+ a message:
-                                 "Stay on E for now; switching is free after your next 1-hour (5-minute) break."
+                                 "Stay on E for now; switching is free once the cache expires (1 hour (5 minutes) without a message)."
 ```
 
 /clear and "use a subagent instead of /model" are not in usdash yet.

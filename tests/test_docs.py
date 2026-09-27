@@ -1,15 +1,81 @@
 """Anthropic's docs at start: read now, else the saved copy, else what ships with usdash."""
+import http.client
 import json
+import time
 from datetime import date
 
-from conftest import FIXTURES
+import pytest
+from conftest import FIXTURES, PRICES
 
 from usdash import app, docs
 from usdash.facts import load_facts
-from usdash.prices import load_prices
+from usdash.prices import load_pricing
 
+PRICING_PAGE = (FIXTURES / "pricing-page.md").read_text()  # as fetched on 2026-09-27
+MODELS_PAGE = (FIXTURES / "models-page.md").read_text()
 URLS = [url for url, _ in docs.PAGES.values()]
-PAGES = dict(zip(URLS, ((FIXTURES / name).read_text() for name in ("pricing-page.md", "models-page.md", "effort-page.md"))))
+PAGES = dict(zip(URLS, (PRICING_PAGE, MODELS_PAGE)))
+ALIASES = next(line for line in MODELS_PAGE.splitlines() if line.startswith("| Claude API alias"))
+
+
+# --- Reading the pages -------------------------------------------------------------
+
+
+def test_the_pricing_page_reads_as_the_bundled_prices():
+    page = docs.parse_pricing_page(PRICING_PAGE)
+    for model, price in PRICES.items():
+        assert page["models"][model] == price, model  # fast mode's included
+    assert page["models"]["claude-3-5-haiku"]["input"] == 0.8  # and models pricing.yaml leaves out
+    assert page["web_search"] == load_pricing().web_search == 0.01  # $10 per 1,000 searches
+
+
+def test_the_models_overview_names_the_lineup():
+    assert docs.parse_lineup(MODELS_PAGE) == load_facts().lineup == [
+        "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"]
+
+
+@pytest.mark.parametrize(
+    ("parse", "page", "old", "new"),
+    [
+        (docs.parse_pricing_page, PRICING_PAGE, "Cache hits and refreshes | Output tokens",
+         "Cache hits and refreshes | Output tokens (base)"),  # new columns
+        (docs.parse_pricing_page, PRICING_PAGE, "$0.20 / MTok<sup>2</sup>", "$4.20 / MTok<sup>2</sup>"),  # reads > input
+        (docs.parse_pricing_page, PRICING_PAGE, "| Claude Opus 5.5                 | $8 / MTok  |",
+         "| Claude Opus 5.5                 | $2 / MTok  |"),  # fast mode below standard
+        (docs.parse_pricing_page, PRICING_PAGE, "| Claude Opus 5.5                 | $8 / MTok  | $40 / MTok |",
+         "| Claude Opus 5.5 | $8 / MTok |"),  # a short row
+        (docs.parse_pricing_page, PRICING_PAGE, "### Fast mode pricing", "### Speed pricing"),
+        (docs.parse_pricing_page, PRICING_PAGE, "**$10 per 1,000 searches**", "**$10 per search**"),
+        (docs.parse_lineup, MODELS_PAGE, "| Claude API alias", "| Model alias"),  # the row is gone
+        (docs.parse_lineup, MODELS_PAGE, ALIASES, ALIASES.replace("claude-sonnet-5", "claude-sonnet-6")),  # name ≠ alias
+    ],
+)
+def test_a_page_that_reads_wrong_is_refused(parse, page, old, new):
+    assert page.count(old) == 1
+    with pytest.raises(ValueError):
+        parse(page.replace(old, new))
+
+
+# --- Fetching them -----------------------------------------------------------------
+
+
+def test_a_reply_cut_short_is_a_page_not_read(monkeypatch):
+    def cut_short(request, timeout, context):
+        raise http.client.IncompleteRead(b"partial")  # not an OSError
+    monkeypatch.setattr(docs.urllib.request, "urlopen", cut_short)
+    assert docs.fetch_text(URLS[0]) is None
+
+
+def test_the_pages_get_one_deadline_in_all():
+    def hangs(url):
+        time.sleep(0.5)
+        return "late"
+    start = time.monotonic()
+    assert docs.fetch_all(hangs, URLS, deadline=0.1) == dict.fromkeys(URLS)
+    assert time.monotonic() - start < 0.3
+
+
+# --- Falling back ------------------------------------------------------------------
 
 
 def test_pages_read_now_are_used_and_saved(tmp_path):
@@ -17,9 +83,8 @@ def test_pages_read_now_are_used_and_saved(tmp_path):
     pages = docs.read_docs(PAGES.get, saved, today=date(2026, 10, 1))
     assert all(page.as_of is None and not page.changed for page in pages.values())
     assert pages["models"].data == load_facts().lineup
-    assert all(pages["pricing"].data["models"][model] == price for model, price in load_prices().items())
     kept = json.loads(saved.read_text())
-    assert set(kept) == {"format", "pricing", "models", "effort"} and kept["effort"]["date"] == "2026-10-01"
+    assert set(kept) == {"format", "pricing", "models"} and kept["models"]["date"] == "2026-10-01"
 
 
 def test_unreachable_pages_fall_back_to_the_saved_copy_then_the_shipped_files(tmp_path):
@@ -27,29 +92,33 @@ def test_unreachable_pages_fall_back_to_the_saved_copy_then_the_shipped_files(tm
     docs.read_docs(PAGES.get, saved, today=date(2026, 10, 1))
     pages = docs.read_docs(lambda url: None, saved)
     assert pages["pricing"].as_of == "2026-10-01" and pages["pricing"].data
-    # A copy older than what ships with usdash isn't used.
-    pages = docs.read_docs(lambda url: None, saved, shipped={"pricing": "2026-12-01"})
+    # A copy older than what ships with usdash isn't used; a shipped file without a date rules nothing out.
+    pages = docs.read_docs(lambda url: None, saved, shipped={"pricing": "2026-12-01", "models": "?"})
     assert pages["pricing"].data is None and pages["models"].as_of == "2026-10-01"
-    assert docs.read_docs(None, tmp_path / "none.json")["effort"] == docs.Page(None, None)  # --offline, no copy
+    assert docs.read_docs(None, tmp_path / "none.json")["models"] == docs.Page(None, None)  # --offline, no copy
 
 
 def test_a_page_that_changed_is_flagged_and_its_copy_used(tmp_path):
     saved = tmp_path / "docs.json"
     docs.read_docs(PAGES.get, saved, today=date(2026, 10, 1))
-    redesigned = {**PAGES, URLS[1]: "# Models\n\nA page usdash can't read."}
+    redesigned = {**PAGES, URLS[1]: MODELS_PAGE.replace("## Compare models", "## Our models")}
     pages = docs.read_docs(redesigned.get, saved)
     assert pages["models"].changed and pages["models"].as_of == "2026-10-01"
     assert not pages["pricing"].changed and pages["pricing"].as_of is None
 
 
-def test_offline_the_shipped_files_say_so(monkeypatch):
-    known = app.knowledge(offline=True)  # no copy saved (conftest)
-    assert known.prices == load_prices() and known.web_search == 0.01
-    assert known.facts.lineup == load_facts().lineup and known.facts.effort_possible is None
-    assert known.label == "API list prices of Sep 26 (offline)" and known.changed == []
+def test_a_wifi_sign_in_page_is_not_a_changed_page(tmp_path):
+    pages = docs.read_docs(lambda url: "<html>Sign in to the hotel Wi-Fi</html>", tmp_path / "docs.json")
+    assert not any(page.changed for page in pages.values())
 
 
 def test_a_copy_saved_by_an_older_usdash_is_ignored(tmp_path):
     saved = tmp_path / "docs.json"
     saved.write_text(json.dumps({"pricing": {"date": "2030-01-01", "data": {"claude-opus-5-5": {}}}}))  # no format
     assert docs.read_docs(None, saved)["pricing"] == docs.Page(None, None)
+
+
+def test_offline_the_shipped_files_say_so():
+    known = app.knowledge(offline=True)  # no copy saved (conftest)
+    assert known.prices == PRICES and known.web_search == 0.01 and known.facts == load_facts()
+    assert known.label == "API list prices of Sep 26 (offline)" and known.changed == []

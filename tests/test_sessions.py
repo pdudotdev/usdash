@@ -71,7 +71,11 @@ def test_models_missing_from_pricing_are_counted_not_priced(store):
     t.into(store)
     (request,) = store.sessions["sess-1"].requests.values()
     assert request.cost is None
-    assert store.unpriced == {"claude-mystery-9": 1}
+    assert store.unpriced == {"Mystery 9": 1}
+    # Fast mode on a model whose fast mode prices aren't known: left out too, not priced at half.
+    t.turn(T0 + 60, model="claude-opus-4-7", speed="fast")
+    t.into(store)
+    assert store.sessions["sess-1"].last_request.cost is None and store.unpriced["Opus 4.7 fast"] == 1
 
 
 # --- Cache lifetime and the account -----------------------------------------------
@@ -281,15 +285,21 @@ def test_closing_and_resuming(store):
     t = Transcript()
     t.turn(T0, write=40_000)
     t.record("cost-state", totalCostUSD=0.5)
+    records = list(t.records)
     t.into(store)
     session = store.sessions["sess-1"]
     assert session.ended and session.cost_state == 0.5
     assert session.total == 0.5  # Claude Code's own, above the transcripts' $0.32
     t.turn(T0 + 600, write=40_000)
+    records += t.records
     t.into(store)
     assert not session.ended
     # Resumed: Claude Code's total so far, plus what the transcripts show since; never lower.
     assert session.total == pytest.approx(0.5 + (40_000 * 8 + 2 * 4 + 100 * 20) / 1e6)
+    # The same file read again from the start (it was rewritten): nothing changes.
+    total = session.total
+    store.add_all(records)
+    assert session.total == pytest.approx(total) and not session.ended
 
 
 def test_fast_mode_changes_the_price_and_turning_it_on_re_writes(store):

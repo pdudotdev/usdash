@@ -16,7 +16,7 @@ Formulas: research/CACHE-DECISIONS.md (§3 a move, §5 when to make it, §6 /com
 from dataclasses import dataclass
 
 from .models import model_key
-from .prices import FIVE_MINUTES, as_paid, output_cost, prompt_cost, write_price
+from .prices import FIVE_MINUTES, output_cost, prompt_cost, write_price
 from .sessions import Session, Store
 
 DEFAULT_OUTPUT = 500  # output tokens per message, before any history
@@ -210,7 +210,7 @@ def compact(store: Store, session: Session, now: float) -> Compact | None:
     summary; later messages read the tool list and the summary instead of the
     conversation (research/CACHE-DECISIONS.md §6). The summary's size is
     learned from earlier compactions (Store.summary_size), so all three
-    amounts are ≈; the difference between now and after a break is exact."""
+    amounts are ≈; the difference between now and once the cache expires is exact."""
     price, ctx = store.price(session.model, session), context(store, session)
     if not price or ctx is None or session.main.compacted:
         return None
@@ -222,22 +222,3 @@ def compact(store: Store, session: Session, now: float) -> Compact | None:
     remaining = store.tool_list(session, session.model) + summary
     saving = max(0.0, (ctx.tokens - remaining) * price["cache_read"] / 1e6)
     return Compact(now_cost, after_break, saving)
-
-
-def fast_off(store: Store, session: Session, now: float) -> tuple[float, float] | None:
-    """Turning fast mode off: (what it costs now, ≈ what each later message
-    saves). A speed change keeps only the tool list cached (the prompt-caching
-    docs), so the rest of the conversation is written again, at standard
-    prices; later messages pay standard prices. None unless it runs fast."""
-    fast, base = store.price(session.model, session), store.prices.get(model_key(session.model))
-    ctx = context(store, session)
-    if session.main.speed != "fast" or not fast or not base or ctx is None:
-        return None
-    standard = as_paid(base, {"inference_geo": session.main.geo}, model_key(session.model))
-    warm, _, ttl = cache_clock(session, now)
-    stay = resend(store, session, session.model, warm)
-    tools = min(store.tool_list(session, session.model), ctx.tokens) if warm else 0
-    out = typical_output(store, session, session.model, session.effort)
-    add = session.growth()
-    return (prompt_cost(standard, ctx.tokens, tools, ttl) - stay,
-            message_saving(fast, standard, ctx.tokens, ctx.tokens, out, out, add, add, ttl))

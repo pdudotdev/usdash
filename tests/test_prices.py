@@ -2,12 +2,11 @@
 import re
 
 import pytest
-from conftest import FIXTURES
 
 from usdash import prices
 from usdash.models import model_key, name_key, on_cloud_provider, pretty_model
 
-PRICES = prices.load_prices()
+PRICES = prices.load_pricing().models
 
 
 @pytest.mark.parametrize(
@@ -48,20 +47,9 @@ def test_every_model_has_every_price_and_1h_writes_cost_twice_input():
 
 
 def test_pricing_file_says_when_it_was_verified():
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", prices.prices_verified())  # shown in the header
-
-
-# --- The pricing page -------------------------------------------------------------
-
-PAGE = (FIXTURES / "pricing-page.md").read_text()  # as fetched on 2026-09-27
-
-
-def test_the_pricing_page_reads_as_the_bundled_prices():
-    page = prices.parse_pricing_page(PAGE)
-    for model, price in PRICES.items():
-        assert page["models"][model] == price, model  # fast mode's included
-    assert page["models"]["claude-3-5-haiku"]["input"] == 0.8  # and models pricing.yaml leaves out
-    assert page["web_search"] == prices.load_web_search() == 0.01  # $10 per 1,000 searches
+    pricing = prices.load_pricing()
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", pricing.verified)  # shown in the header when offline
+    assert pricing.web_search == 0.01  # $10 per 1,000 searches
 
 
 @pytest.mark.parametrize(
@@ -78,34 +66,19 @@ def test_name_key(name, key):
     assert name_key(name) == key
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        ("Cache hits and refreshes | Output tokens", "Cache hits and refreshes | Output tokens (base)"),  # new columns
-        ("$0.20 / MTok<sup>2</sup>", "$4.20 / MTok<sup>2</sup>"),  # Opus 5.5's cache reads above its input
-        ("| Claude Opus 5.5                 | $8 / MTok  |", "| Claude Opus 5.5                 | $2 / MTok  |"),
-        ("### Fast mode pricing", "### Speed pricing"),
-        ("**$10 per 1,000 searches**", "**$10 per search**"),
-    ],
-)
-def test_a_page_that_reads_wrong_is_refused(change):
-    assert PAGE.count(change[0]) == 1
-    with pytest.raises(ValueError):
-        prices.parse_pricing_page(PAGE.replace(*change))
-
-
-
 def test_fast_mode_and_us_only_inference_cost_more():
     usage = {"input_tokens": 1_000, "cache_read_input_tokens": 100_000, "output_tokens": 1_000}
     opus = PRICES["claude-opus-5-5"]
-    standard = prices.request_cost(usage, prices.as_paid(opus, {**usage, "speed": "standard"}, "claude-opus-5-5"))
-    fast = prices.request_cost(usage, prices.as_paid(opus, {**usage, "speed": "fast"}, "claude-opus-5-5"))
+    standard = prices.request_cost(usage, prices.as_paid(opus, "claude-opus-5-5", "standard"))
+    fast = prices.request_cost(usage, prices.as_paid(opus, "claude-opus-5-5", "fast"))
     assert standard == pytest.approx((1_000 * 4 + 100_000 * 0.2 + 1_000 * 20) / 1e6)
     assert fast == pytest.approx(2 * standard)  # $8/$40, and cache reads keep their 0.05× of input
-    us = prices.request_cost(usage, prices.as_paid(opus, {**usage, "inference_geo": "us"}, "claude-opus-5-5"))
+    us = prices.request_cost(usage, prices.as_paid(opus, "claude-opus-5-5", geo="us"))
     assert us == pytest.approx(1.1 * standard)
     haiku = PRICES["claude-haiku-4-5"]  # before Claude 4.6: no US-only premium
-    assert prices.as_paid(haiku, {"inference_geo": "us"}, "claude-haiku-4-5") == haiku
+    assert prices.as_paid(haiku, "claude-haiku-4-5", geo="us") == haiku
+    # Fast, on a model whose fast mode prices aren't known: no price rather than half of it.
+    assert prices.as_paid(PRICES["claude-opus-4-7"], "claude-opus-4-7", "fast") is None
 
 
 def test_request_cost_uses_the_transcript_convention():

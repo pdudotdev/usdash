@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from usdash.prices import load_prices
+from usdash.prices import load_pricing
 from usdash.sessions import Store, desktop_sessions
 from usdash.transcripts import Record, Tailer, read_record
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PROJECTS = FIXTURES / "projects"
 DESKTOP = FIXTURES / "desktop"
-PRICES = load_prices()
+PRICES = load_pricing().models
 T0 = 1_790_000_000.0  # 2026-09-21, a fixed "now" for synthetic transcripts
 
 # Fixture sessions (see scripts/make_fixture.py), by what each one covers.

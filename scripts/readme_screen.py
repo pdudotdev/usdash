@@ -22,7 +22,7 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 OUT = ROOT / "docs" / "dashboard.svg"
-WIDTH, HEIGHT = 140, 25
+WIDTH, HEIGHT = 140, 27
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
 
@@ -60,7 +60,7 @@ def sessions() -> Store:
     for i in range(3):
         run = Transcript(session=f"9{i}e1b2c3", cwd="/home/you/shop", entrypoint="sdk-cli")
         run.turn(T - 3 * 3600 + 600 * i, text="summarize the CI log", write=24_000, ttl="5m", out=300)
-        run.record("cost-state", totalCostUSD=0.12)
+        run.record("cost-state", totalCostUSD=0.14)
         runs.append(run)
     for transcript in (billing, *runs, notes, fix):  # each in its own order: closing records carry no time
         store.add_all(transcript.records)

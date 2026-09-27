@@ -60,19 +60,21 @@ def test_sessions_are_told_apart_by_name_place_and_id(store):
 def test_sections_and_counts(store):
     two_sessions(store)
     text = screen(store, ui.View(now=NOW))
-    assert "sessions · last 24h · 1 live · 1 idle" in text
-    labels = [line.strip("│ ") for line in text.splitlines() if line.strip("│ ") in ("LIVE", "IDLE")]
-    assert labels == ["LIVE", "IDLE"]
+    # Two panes, live above idle, each with its own column names, lined up with each other.
+    titles = [line for line in text.splitlines() if line.startswith("╭─ live") or line.startswith("╭─ idle")]
+    assert [title.split(" ─")[0] for title in titles] == ["╭─ live · 1 session", "╭─ idle · 1 session · last 24h"]
+    names = [line for line in text.splitlines() if "SESSION" in line and "CACHE" in line]
+    assert len(names) == 2 and names[0] == names[1]
 
 
 def test_a_live_session_opens_up_with_its_action_and_options(store):
     two_sessions(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    assert "💡 Stay on Opus 5.5 for now; switching is free after your next 1-hour break." in a[2]
+    assert "💡 Stay on Opus 5.5 for now; switching is free once the cache expires (1 hour without a message)." in a[2]
     options = [line.strip("│ ").split("  ")[0].strip() for line in a[3:]]
-    assert options == ["stay", "↑ Fable 5.1", "↓ Sonnet 5", "↓ Haiku 4.5", "/effort"]
-    # 42,002 tokens read back at $0.20, or written again at $8 after a break.
-    assert "stay       re-sends 42k tokens: $0.01 now, $0.34 after a break" in a[3]
+    assert options == ["Stay", "↑ Fable 5.1", "↓ Sonnet 5", "↓ Haiku 4.5", "/effort"]
+    # 42,002 tokens read back at $0.20, or written again at $8 once the cache expires.
+    assert "Stay       re-sends 42k tokens: $0.01 now, $0.34 once the cache expires" in a[3]
     assert "evens out after ≈" in a[5] and "/effort    costs nothing now" in a[7]
 
 
@@ -93,7 +95,7 @@ def test_the_session_numbers_say_what_they_are(store):
     lines = screen(store, ui.View(now=NOW)).splitlines()
     i = next(n for n, line in enumerate(lines) if "SESSION" in line and "CACHE" in line)
     assert lines[i].split()[1:-1] == ["ID", "SESSION", "PROJECT", "WHERE", "MODEL", "CACHE", "CONTEXT", "TODAY", "TOTAL"]
-    assert lines[i - 1].startswith("╭─ sessions")  # one line of names
+    assert lines[i - 1].startswith("╭─ live")  # one line of names, under the pane's title
 
 
 def test_an_exited_sessions_total_is_claude_codes_own(store):
@@ -141,7 +143,7 @@ def test_closed_script_runs_fold_into_one_row(store):
     assert "3 runs" in rows[1] and "jobs" in rows[1] and "exited · " in rows[1]
     assert "summarize the log" in rows[0]  # an open run shows like any session
     assert text.count("└ ") == 1  # only the open run has a line under it
-    assert "0 live · 2 idle" in text
+    assert "idle · 2 sessions · last 24h" in text and "╭─ live" not in text  # no live pane without a live session
 
 
 def test_archived_and_long_idle_sessions_are_hidden(store):
@@ -169,10 +171,11 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
         idle.into(store)
     view = ui.View(now=NOW)
     text = screen(store, view, height=30)
-    assert "· 1–5 of 14" in text and len(block(text, "aaaa")) == 8  # the live one, whole, and four idle
+    assert "· showing 1–5 of 14" in text and len(block(text, "aaaa")) == 8  # the live one, whole, and four idle
     ui.press(store, view, "down")
     text = screen(store, view, height=30)
-    assert "aaaa" not in text and "· 2–" in text and "g: back to the top" in text
+    assert "aaaa" not in text and "· showing 2–" in text and "g: back to the top" in text
+    assert "╭─ live" not in text  # the live pane scrolled away with its only session
     ui.press(store, view, "end")
     text = screen(store, view, height=30)
     assert "of 14" in text and "idle task 11" in text  # the oldest, at the bottom of the last page
@@ -184,14 +187,14 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
     assert view.session_scroll == view.session_last - 1 > 0
 
 
-def test_a_fast_session_says_so_and_offers_turning_it_off(store):
+def test_a_fast_session_says_so(store):
     t = Transcript(session="ffff-1111")
     t.turn(T0, text="ship it fast", write=40_000, speed="fast")
     t.turn(T0 + 60, text="and the tests", read=40_000, write=2_000, speed="fast")
     t.into(store)
     lines = block(screen(store, ui.View(now=T0 + 120)), "ffff")
     assert "Opus 5.5 high fast" in lines[0]
-    assert any("/fast off" in line and "re-sends 42k tokens: ≈$" in line for line in lines)
+    assert any("Stay       re-sends 42k tokens: $0.02 now" in line for line in lines)  # read back at $0.40
 
 
 def test_the_request_list_shows_web_searches(store):
@@ -255,10 +258,11 @@ def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
     text = screen(store, ui.View(now=T0 + 60 + 7300))
     assert "TODAY $" in text and "of input read from cache" in text
     assert "⟳ cache misses added $" in text and "(cache expired $" in text
-    assert "Estimated at current API list prices  ·  amounts can read low: transcripts miss background requests" in text
+    assert "Estimated at current API list prices" in text
+    assert "Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…)." in text
     assert "subscription" not in text  # an API-key account
     subscription = screen(store, ui.View(now=T0 + 60 + 7300, subscription=True))
-    assert "At current API list prices; your subscription isn't billed per token  ·  amounts can" in subscription
+    assert "At current API list prices; your subscription isn't billed per token" in subscription
     feed = screen(store, ui.View(now=T0 + 60 + 7300, mode="requests"))
     assert "⟳ re-wrote 42k: cache expired (idle 120 min)" in feed
 
@@ -374,7 +378,7 @@ def test_window_labels_are_exact(seconds, text):
 
 def test_a_90_minute_window_is_labelled_as_such(store):
     two_sessions(store)
-    assert "sessions · last 90m" in screen(store, ui.View(now=T0 + 660, window=5400))
+    assert "idle · 1 session · last 90m" in screen(store, ui.View(now=T0 + 660, window=5400))
     assert "no Claude Code activity in the last 90m" in screen(store, ui.View(now=T0 + 10 * 3600, window=5400))
 
 
@@ -391,10 +395,15 @@ def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
     assert "Estimated at API list prices of Sep 26 (couldn't refresh them)" in text
 
 
-def test_a_docs_page_that_changed_is_named_in_the_header(store):
+def test_warnings_come_first_on_the_headers_second_line(store):
     two_sessions(store)
-    text = screen(store, ui.View(now=NOW, docs_changed=["models", "effort"]), width=250)
-    assert "Anthropic's models and effort pages changed: usdash may need an update" in text
+    unknown = Transcript(session="cccc-3333")
+    unknown.turn(T0, model="claude-mystery-9")
+    unknown.into(store)
+    text = screen(store, ui.View(now=NOW, docs_changed=["pricing", "models"]), width=140)  # the README's width
+    assert "Estimated at current API list prices  ·  1 request with no known price, left out (Mystery 9)  ·  " in text
+    assert "Anthropic's pricing and models pages changed: usdash may need an update" in screen(
+        store, ui.View(now=NOW, docs_changed=["pricing", "models"]), width=220)
 
 
 @pytest.mark.parametrize(
@@ -426,4 +435,4 @@ def test_the_default_window_is_24_hours(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("COLUMNS", "200")
     app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
     out = capsys.readouterr().out
-    assert "sessions · last 24h" in out and "from yesterday" in out and "from the day before" not in out
+    assert "idle · 1 session · last 24h" in out and "from yesterday" in out and "from the day before" not in out
