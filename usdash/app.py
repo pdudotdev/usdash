@@ -111,9 +111,9 @@ class App:
         track_feed(self.store, self.view)
         return changed
 
-    def frame(self, height: int, width: int = 200):
+    def frame(self, height: int):
         self.view.now = self.clock()
-        return render(self.store, self.view, height, width)
+        return render(self.store, self.view, height)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> None:
     app.poll()
     console = Console()
     if args.once:
-        console.print(app.frame(console.size.height, console.size.width))
+        console.print(app.frame(console.size.height))
         return
 
     keys: queue.Queue = queue.Queue()
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> None:
         tty.setcbreak(fd)
         threading.Thread(target=read_keys, args=(fd, keys, stop), daemon=True).start()
     try:
-        with Live(app.frame(console.size.height, console.size.width), screen=True, auto_refresh=False, console=console) as live:
+        with Live(app.frame(console.size.height), screen=True, auto_refresh=False, console=console) as live:
             # Ask the terminal to send the mouse wheel as arrow keys (most do by default).
             console.file.write("\x1b[?1007h")
             last_poll = last_frame = 0.0
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> None:
                 # Countdowns tick once a second; otherwise redraw only on change.
                 second = int(clock_now)
                 if (pending or second != shown_second) and clock_now - last_frame >= FRAME_SECONDS:
-                    live.update(app.frame(console.size.height, console.size.width), refresh=True)
+                    live.update(app.frame(console.size.height), refresh=True)
                     last_frame, shown_second, pending = clock_now, second, False
     except KeyboardInterrupt:
         pass

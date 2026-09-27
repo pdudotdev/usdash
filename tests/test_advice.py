@@ -91,8 +91,8 @@ def test_rent_or_buy_counts_from_when_the_tip_first_appeared_for_every_cheaper_m
     t.into(store)
     # Enough to cover switching to Haiku (~$0.06), not Sonnet (~$0.17): the nearest model isn't the only one checked.
     later = live(store, session, LAST_START + 80, memory)
-    assert re.fullmatch(rf"Switch to Haiku 4\.5 now: since this tip appeared, staying has cost {MONEY} more than "
-                        rf"Haiku 4\.5 would have, more than switching costs \({MONEY}\)\.", later.action)
+    assert re.fullmatch(rf"Switch to Haiku 4\.5 now: it would have saved {MONEY} by now; switching costs {MONEY}\.",
+                        later.action)
     # Without the memory, the count starts now: no history yet.
     assert live(store, session, LAST_START + 80, advice.Memory()).action.startswith("Stay on Opus 5.5")
 
@@ -120,6 +120,13 @@ def test_compact_action_only_when_big_warm_and_about_to_expire(store):
     assert not live(store, small, LAST_START + ONE_HOUR - 300).action.startswith("Taking a break")
 
 
+def test_no_compact_action_when_compacting_saves_too_little(store):
+    # Haiku reads at $0.10: 101k tokens with a 60k tool list and a ~3.8k summary save < $0.005 a message.
+    session = session_on(store, model="claude-haiku-4-5", prompts=(60_000, 100_000, 101_000), ttl="5m", effort=None)
+    tip = live(store, session, LAST_START + FIVE_MINUTES - 120)
+    assert tip.action is None and "/compact" not in rows(tip)
+
+
 def test_compact_action_on_a_five_minute_cache(store):
     session = session_on(store, prompts=(40_000, 138_000, 139_000), ttl="5m")
     assert not live(store, session, LAST_START + 60).urgent
@@ -135,6 +142,14 @@ def test_effort_action_on_opus_5_5(store):
     tip = live(store, session, LAST_START + 10)
     assert tip.action == "Try /effort medium: ≈$0.04 less a message, at no cost now."
     assert rows(tip)["/effort medium"].text == "costs nothing now, then ≈$0.04 less a message"
+
+
+def test_arrows_point_down_only_to_the_models_switch_advice_considers(store):
+    # Fable 5.1's output costs the same as Fable 5's: not cheaper, so ↑ like any peer or better model.
+    session = session_on(store, model="claude-fable-5")
+    tip = live(store, session, LAST_START + 10)
+    assert [(o.arrow, o.label) for o in tip.options][1:5] == [
+        ("↑", "Fable 5.1"), ("↓", "Opus 5.5"), ("↓", "Sonnet 5"), ("↓", "Haiku 4.5")]
 
 
 def test_effort_row_where_it_would_rewrite_the_cache(store):

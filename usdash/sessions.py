@@ -306,7 +306,7 @@ class Store:
         # day -> reason -> $ paid to write again what could have been read back
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # models missing from pricing.yaml
-        self.summaries: list[tuple[int, int]] = []  # (conversation, summary) tokens of each /compact seen
+        self.summaries: dict[str, tuple[int, int]] = {}  # record id -> (conversation, summary) tokens of each /compact
         # (folder, entrypoint) -> (tokens, model family): the tool list and system prompt as a
         # request right after /compact read them back from the cache
         self.measured_prefix: dict[tuple, tuple[int, str | None]] = {}
@@ -370,10 +370,17 @@ class Store:
             if data.get("subtype") == "compact_boundary":
                 main.compacted = True
                 meta = data.get("compactMetadata") or {}
-                post, pre = meta.get("postTokens"), meta.get("preTokens")
+                post, pre, took = meta.get("postTokens"), meta.get("preTokens"), meta.get("durationMs")
                 session.compact_post_tokens = post if isinstance(post, int) else None
                 if isinstance(post, int) and isinstance(pre, int) and post > 0 and pre > 0:
-                    self.summaries.append((pre, post))
+                    # By the record's id: a transcript read again from the start brings it again.
+                    self.summaries[data.get("uuid") or f"{session.id}@{record.when}"] = (pre, post)
+                if record.when is not None and isinstance(took, (int, float)):
+                    # The compaction's request isn't logged, but it read the cache back: like a
+                    # recap, it restarts the clock, from when it started.
+                    started = record.when - took / 1000
+                    if main.touched is not None and started > main.touched:
+                        main.touched = started
             elif data.get("subtype") == "away_summary" and record.when is not None:
                 # A recap resends the conversation: it reads the cache and restarts its clock.
                 started = record.when - RECAP_LAG
@@ -437,7 +444,7 @@ class Store:
             if not session.prefix and request.prompt:
                 session.prefix, session.prefix_model = request.prompt, model
             read = request.usage.get("read", 0)
-            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= session.prefix:
+            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= session.prefix_on(model):
                 # Right after /compact, only the tool list and system prompt were still
                 # cached: what this request read back is their exact size.
                 self.measured_prefix[(session.cwd, session.entrypoint)] = (read, model_key(model))
@@ -520,7 +527,7 @@ class Store:
         """Tokens /compact's summary will likely take for a conversation this
         size: the median of the summaries seen for conversations within 2× of
         it, else SUMMARY_SHARE of it, within SUMMARY_MIN and SUMMARY_MAX."""
-        near = [post for pre, post in self.summaries if conversation / 2 <= pre <= conversation * 2]
+        near = [post for pre, post in self.summaries.values() if conversation / 2 <= pre <= conversation * 2]
         if near:
             return round(median(near))
         return round(min(SUMMARY_MAX, max(SUMMARY_MIN, SUMMARY_SHARE * conversation)))

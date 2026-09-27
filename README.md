@@ -116,9 +116,9 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Action | When | Example |
 |---|---|---|
-| ⚡ **Compact before a break** | The conversation is 100k+ tokens and the cache expires within 10 minutes (within half its lifetime, if that's shorter) | *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* |
+| ⚡ **Compact before a break** | The conversation is 100k+ tokens, the cache expires within 10 minutes (within half its lifetime, if that's shorter), and compacting saves at least $0.005 a message | *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* |
 | ⚡ **Switch now** | A cheaper model is cheaper even counting the re-write | *"Switch to Haiku 4.5 now: it's already cheaper."* |
-| 💡 **Switch now** | Staying has cost as much as switching would (the rent-or-buy rule) | *"Switch to Haiku 4.5 now: since this tip appeared, staying has cost $0.21 more than Haiku 4.5 would have, more than switching costs ($0.08)."* |
+| 💡 **Switch now** | Staying has cost as much as switching would (the rent-or-buy rule) | *"Switch to Haiku 4.5 now: it would have saved $0.21 by now; switching costs $0.08."* |
 | 💡 **Lower the effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 a message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both | *"Try /effort medium: ≈$0.04 less a message, at no cost now."* |
 | 💡 **Stay** | A cheaper model saves at least $0.005 a message, but switching now costs extra | *"Stay on Opus 5.5 for now; switching is free after your next 1-hour break."* |
 

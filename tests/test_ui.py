@@ -9,7 +9,7 @@ import pytest
 from conftest import PROJECTS, T0, Transcript
 from rich.console import Console
 
-from usdash import app, ui
+from usdash import advice, app, ui
 from usdash.prices import ONE_HOUR
 from usdash.sessions import subscription_account
 from usdash.transcripts import account_file
@@ -17,7 +17,7 @@ from usdash.transcripts import account_file
 
 def screen(store, view, width=220, height=40) -> str:
     console = Console(record=True, width=width, height=height, color_system=None)
-    console.print(ui.render(store, view, height, width))
+    console.print(ui.render(store, view, height))
     return console.export_text()
 
 
@@ -178,6 +178,38 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
     assert "of 14" in text and "idle task 11" in text  # the oldest, at the bottom of the last page
     ui.press(store, view, "home")
     assert view.session_scroll == 0
+    # Keys between two frames each count: End then up is one above the end.
+    ui.press(store, view, "end")
+    ui.press(store, view, "up")
+    assert view.session_scroll == view.session_last - 1 > 0
+
+
+def test_the_last_session_can_always_be_scrolled_to(store):
+    # Two sections on the last page take two labels: at every height, the oldest can be reached.
+    two_sessions(store)
+    more = Transcript(session="cccc-3333", cwd="/home/user/shop")
+    more.turn(T0 + 100, text="another live one", write=40_000, out=2_000)
+    more.turn(T0 + 160, read=40_000, write=2_000, out=2_000)
+    old = Transcript(session="dddd-4444", cwd="/home/user/other")
+    old.turn(T0 - 5000, text="the oldest", write=30_000, ttl="5m")
+    more.into(store)
+    old.into(store)
+    for height in range(12, 60):
+        view = ui.View(now=NOW)
+        screen(store, view, height=height)
+        ui.press(store, view, "end")
+        assert "dddd" in screen(store, view, height=height), height
+
+
+def test_only_the_markers_are_dim(store):
+    two_sessions(store)
+    view = ui.View(now=NOW)
+    live, idle = store.sessions["aaaa-1111"], store.sessions["bbbb-2222"]
+    lines = [ui.prompt_line(live, view), *ui.advice_lines(advice.advise(store, live, NOW)), ui.comeback_line(store, idle)]
+    for line in lines:
+        assert not line.style, line.plain  # a base style would cover the amounts too
+    dim = [line.plain[span.start:span.end] for line in lines for span in line.spans if span.style == "dim"]
+    assert "└ " in dim and "   ↓ " in dim
 
 
 def test_r_swaps_views_and_each_keeps_its_scroll(store):
@@ -192,6 +224,7 @@ def test_r_swaps_views_and_each_keeps_its_scroll(store):
     ui.press(store, view, "down")
     ui.press(store, view, "view")
     assert (view.mode, view.scroll, view.session_scroll) == ("sessions", 1, 0)
+    screen(store, view, height=20)  # too short for all three sessions
     ui.press(store, view, "down")
     ui.press(store, view, "view")
     assert (view.mode, view.scroll, view.session_scroll) == ("requests", 1, 1)

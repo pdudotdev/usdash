@@ -70,7 +70,7 @@ def sessions() -> Store:
 def main() -> None:
     view = ui.View(now=T + 480 + 1380, subscription=True, prices_verified="2026-09-26")
     console = Console(record=True, width=WIDTH, height=HEIGHT, color_system="truecolor", file=io.StringIO())
-    console.print(ui.render(sessions(), view, HEIGHT, WIDTH))
+    console.print(ui.render(sessions(), view, HEIGHT))
     if "--text" in sys.argv:
         print(console.export_text().rstrip("\n"))
         return

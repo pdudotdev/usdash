@@ -108,15 +108,15 @@ Not counted anywhere exact: the new message you'll type, tool results, the reply
 ## 4. Advice
 
 ### 4.1 Action line, first match wins (live sessions only)
-1. `⚡ Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss.` when the conversation is 100k+ and at most min(10 min, half the lifetime) is left.
+1. `⚡ Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss.` when the conversation is 100k+, at most min(10 min, half the lifetime) is left, and it saves ≥ $0.005 a message (as the `/compact` row requires).
 2. `⚡ Switch to M now: it's already cheaper.` when a cheaper model's now-difference ≤ 0 (the one with the largest per-message saving).
-3. `💡 Switch to M now: since this tip appeared, staying has cost $R more than M would have, more than switching costs ($Z).` when rent-or-buy triggers for **any** cheaper model (today only the nearest is checked); if several, the largest saving.
+3. `💡 Switch to M now: it would have saved $R by now; switching costs $Z.` when rent-or-buy triggers for **any** cheaper model (today only the nearest is checked); if several, the largest saving.
 4. `💡 Try /effort X: ≈$s less a message, at no cost now.` when known and ≥ $0.005.
 5. `💡 Stay on <model> for now; switching is free after your next 1-hour break.` (`5-minute` on a 5-minute cache), only when some cheaper model saves ≥ $0.005 a message. Otherwise no action line: the option rows alone (on Haiku 4.5, that's `stay`, `↑` rows, `/compact`, `/effort`).
 
 ### 4.2 Option rows
 - `stay`: `re-sends Nk tokens: $X now, $Y after a break` (≈ only right after `/compact`).
-- One row per other priced model in `LADDER`, `↑` above the current one, `↓` below; for a model outside the ladder, by output price. Text: `$Z more now` / `$Z less now`, then `≈$s less/more a message`, then `· evens out after ≈N messages` when it saves per message and costs now.
+- One row per other priced model in `LADDER`, `↓` for a cheaper one (its output costs less: the models the switch actions consider), `↑` for the rest. Text: `$Z more now` / `$Z less now`, then `≈$s less/more a message`, then `· evens out after ≈N messages` when it saves per message and costs now.
 - `/compact`: shown when not compacted since the last request and it saves ≥ $0.005 a message.
 - `/effort`: always on a live session; per-message part only when known and ≥ $0.005.
 - Rows for unpriced models are left out. If the session's own model is unpriced, the live block shows only the last-prompt line.

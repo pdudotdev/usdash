@@ -103,7 +103,12 @@ def resend(store: Store, session: Session, model: str | None, warm: bool) -> flo
     ttl = session.ttl or FIVE_MINUTES
     if warm and model_key(model) == model_key(session.model):
         return prompt_cost(price, ctx.tokens, ctx.cached, ttl)
-    return convert_tokens(ctx.tokens, model_key(session.model), model_key(model)) * write_price(price, ttl) / 1e6
+    return prompt_cost(price, convert_tokens(ctx.tokens, model_key(session.model), model_key(model)), 0, ttl)
+
+
+def others(store: Store, model: str | None) -> list[str]:
+    """Every other priced model in LADDER, most capable first."""
+    return [m for m in LADDER if m != model_key(model) and m in store.prices]
 
 
 def cheaper(store: Store, model: str | None) -> list[str]:
@@ -111,12 +116,7 @@ def cheaper(store: Store, model: str | None) -> list[str]:
     price = store.prices.get(model_key(model))
     if not price:
         return []
-    return [m for m in LADDER if m != model_key(model) and m in store.prices and store.prices[m]["output"] < price["output"]]
-
-
-def others(store: Store, model: str | None) -> list[str]:
-    """Every other priced model in LADDER, most capable first."""
-    return [m for m in LADDER if m != model_key(model) and m in store.prices]
+    return [m for m in others(store, model) if store.prices[m]["output"] < price["output"]]
 
 
 def comeback(store: Store, session: Session) -> tuple[Context, list[tuple[str, float]]] | None:
@@ -132,15 +132,14 @@ def comeback(store: Store, session: Session) -> tuple[Context, list[tuple[str, f
     return ctx, [(m, cost) for m, cost in costs if cost is not None]
 
 
-def move_penalty(price_e: dict, price_l: dict, size_e: float, cached_e: float, size_l: float, cached_l: float,
-                 out_e: float, out_l: float, add_e: float, add_l: float, ttl: int) -> tuple[float, float, float]:
-    """(STAY, MOVE, s) for one message, from the token counts on each side
-    (research/CACHE-DECISIONS.md §3). add_* is what one later message adds."""
-    stay = prompt_cost(price_e, size_e, cached_e, ttl) + output_cost(price_e, out_e)
-    move = prompt_cost(price_l, size_l, cached_l, ttl) + output_cost(price_l, out_l)
+def message_saving(price_e: dict, price_l: dict, size_e: float, size_l: float, out_e: float, out_l: float,
+                   add_e: float, add_l: float, ttl: int) -> float:
+    """s: what a later message costs here minus there, once both have the
+    conversation cached (research/CACHE-DECISIONS.md §3). size_* is the
+    conversation and add_* what one message adds, in each side's tokens."""
     later_e = prompt_cost(price_e, size_e + add_e, size_e, ttl) + output_cost(price_e, out_e)
     later_l = prompt_cost(price_l, size_l + add_l, size_l, ttl) + output_cost(price_l, out_l)
-    return stay, move, later_e - later_l
+    return later_e - later_l
 
 
 def model_move(store: Store, session: Session, target: str, now: float) -> Move | None:
@@ -167,8 +166,8 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
     out_l = session.average_output(target)
     if out_l is None:
         out_l = convert_tokens(out_e, model_key(source), model_key(target))
-    _, _, saving = move_penalty(price_e, price_l, ctx.tokens, ctx.tokens, size_l, size_l, out_e, out_l,
-                                add, convert_tokens(add, model_key(source), model_key(target)), ttl)
+    saving = message_saving(price_e, price_l, ctx.tokens, size_l, out_e, out_l,
+                            add, convert_tokens(add, model_key(source), model_key(target)), ttl)
     return Move(target, stay, move, move - stay, saving, ctx.exact and not shared)
 
 

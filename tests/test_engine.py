@@ -5,15 +5,18 @@ import pytest
 from conftest import PRICES, T0, Transcript
 
 from usdash import engine
-from usdash.prices import FIVE_MINUTES, ONE_HOUR
+from usdash.prices import FIVE_MINUTES, ONE_HOUR, output_cost, prompt_cost
 
 OPUS, SONNET, HAIKU = PRICES["claude-opus-5-5"], PRICES["claude-sonnet-5"], PRICES["claude-haiku-4-5"]
 
 
 def penalty(price_e, price_l, size_e, cached_e, size_l, cached_l, out_e=0, out_l=0, add_e=1_000, add_l=1_000,
             ttl=FIVE_MINUTES):
-    stay, move, saving = engine.move_penalty(price_e, price_l, size_e, cached_e, size_l, cached_l, out_e, out_l,
-                                             add_e, add_l, ttl)
+    """(STAY, MOVE, MOVE − STAY, s) for one message, from the token counts on
+    each side (research/CACHE-DECISIONS.md §3)."""
+    stay = prompt_cost(price_e, size_e, cached_e, ttl) + output_cost(price_e, out_e)
+    move = prompt_cost(price_l, size_l, cached_l, ttl) + output_cost(price_l, out_l)
+    saving = engine.message_saving(price_e, price_l, size_e, size_l, out_e, out_l, add_e, add_l, ttl)
     return stay, move, move - stay, saving
 
 
@@ -183,7 +186,28 @@ def test_after_compact_only_the_tool_list_is_cached(store):
     t.into(store)
     assert engine.context(store, session) == engine.Context(40_000 + 2_500, 40_000, False)
     assert engine.compact(store, session, T0 + 200) is None  # nothing left to compact
-    assert store.summaries == [(43_000, 2_500)]
+    assert list(store.summaries.values()) == [(43_000, 2_500)]
+
+
+def test_a_compaction_read_twice_counts_once(store):
+    # A transcript rewritten from scratch is read again from its first line.
+    t = Transcript()
+    t.turn(T0, write=50_000)
+    t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 4_000, "preTokens": 50_000})
+    store.add_all(t.records)
+    store.add_all(t.records)
+    assert list(store.summaries.values()) == [(50_000, 4_000)]
+
+
+def test_compact_restarts_the_cache_clock_from_when_it_started(store):
+    session = opus_session(store, ttl="5m")  # last request at T0 + 120
+    t = Transcript()
+    # Its request isn't logged; the boundary is written when it ends, 20 seconds after it started.
+    t.record("system", T0 + 380, subtype="compact_boundary",
+             compactMetadata={"postTokens": 2_500, "preTokens": 43_000, "durationMs": 20_000})
+    t.into(store)
+    assert engine.cache_clock(session, T0 + 450) == (True, 360 + FIVE_MINUTES - 450, FIVE_MINUTES)
+    assert not engine.cache_clock(session, T0 + 360 + FIVE_MINUTES)[0]
 
 
 def test_compact_now_or_after_a_break(store):
@@ -203,7 +227,7 @@ def test_the_summary_size_is_learned_and_grows_with_the_conversation(store):
     # Nothing seen yet: 3% of the conversation, at least 3,800 and at most 16,000
     # (research/CACHE-DECISIONS.md §7: 3.8k at ~58k, 14k at 450k, 16k at 972k).
     assert [store.summary_size(n) for n in (58_000, 450_000, 972_000)] == [3_800, 13_500, 16_000]
-    store.summaries += [(58_000, 3_807), (450_000, 13_984)]
+    store.summaries.update({"u1": (58_000, 3_807), "u2": (450_000, 13_984)})
     assert store.summary_size(60_000) == 3_807
     assert store.summary_size(500_000) == 13_984
     assert store.summary_size(2_000_000) == 16_000  # none within 2×
@@ -227,6 +251,18 @@ def test_the_tool_list_is_measured_right_after_compact(store):
     big.turn(T0 + 60, read=90_000, write=500)
     big.into(store)
     assert ("/home/user/other", "cli") not in store.measured_prefix
+
+
+def test_the_tool_list_is_measured_after_a_switch_from_haiku(store):
+    # The first prompt was counted on Haiku's smaller tokenizer; the read after
+    # /compact on Opus is the same tool list in Opus tokens, so it's bigger.
+    t = Transcript()
+    t.turn(T0, model="claude-haiku-4-5", write=30_800)
+    t.turn(T0 + 60, write=60_000)
+    t.record("system", T0 + 90, subtype="compact_boundary", compactMetadata={"postTokens": 4_000})
+    t.turn(T0 + 120, read=36_829, write=4_500)
+    t.into(store)
+    assert store.measured_prefix[("/home/user/proj", "cli")] == (36_829, "claude-opus-5-5")
 
 
 def test_model_move_uses_what_the_target_has_cached(store):

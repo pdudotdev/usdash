@@ -235,7 +235,7 @@ B > X × 0.75 ÷ (1.25 − read/input)       → B > 0.652·X  (Sonnet 5, Haiku 
 | Cost of each request | `message.usage` on assistant records: `input_tokens` (uncached part only) × input price + `cache_read_input_tokens` × read + `cache_creation.ephemeral_5m_input_tokens` × 5-min write + `ephemeral_1h_input_tokens` × 1-hour write + `output_tokens` × output price. A write without the 5m/1h split counts as 5-minute |
 | One request, not several | A streamed reply is written as several records sharing a `message.id`; the last one written wins. Deduplicate by `message.id`, then `requestId`, then the record's `uuid`. **Not by `requestId` alone:** some sessions' records carry none, and one real session then read $0.04 instead of $1.33 |
 | **N** (conversation size) | usdash shows the part it can measure: **C**, the last request's prompt (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`). The whole of it is cached (on this machine the uncached remainder was at most 0.04% of a prompt), and resuming a session re-sends all of it (31 resumes: the first request after was 0.1–4% bigger, the new message). What the next message adds is only in per-message amounts, as the mean rise between the session's consecutive prompts on one model, over its last 20 messages. The mean, not the median: big tool results are a real cost, and the median undercounted the average about 2× here. Right after `/compact`: the tool list and system prompt plus the summary (`compactMetadata.postTokens` on the `compact_boundary` record) |
-| Tool list and system prompt | Measured when the transcripts reveal it: the request right after `/compact` reads back exactly that (36,829 tokens in four sessions here), per folder and app; a read bigger than the session's first prompt isn't the tool list (a forked or resumed conversation) and is ignored. Otherwise ≈ the smallest first prompt among this session and the other interactive sessions in its folder started from the same app (39.9k here): every first prompt also holds a first message, which may paste a whole file. A scripted run can bring a system prompt of its own, so it's compared with nothing else |
+| Tool list and system prompt | Measured when the transcripts reveal it: the request right after `/compact` reads back exactly that (36,829 tokens in four sessions here), per folder and app; a read bigger than the session's first prompt (both in the same model's tokens) isn't the tool list (a forked or resumed conversation) and is ignored. Otherwise ≈ the smallest first prompt among this session and the other interactive sessions in its folder started from the same app (39.9k here): every first prompt also holds a first message, which may paste a whole file. A scripted run can bring a system prompt of its own, so it's compared with nothing else |
 | The summary `/compact` writes | The median `postTokens` of earlier compactions of conversations within 2× the size; else 3% of the conversation, between 3,800 and 16,000 tokens. Seen here: 3,807 typical (~58k conversations), 13,984 at 450k, 16,088 at 972k. The compaction request itself isn't in the transcripts, so its price stays an estimate; the difference between compacting now and after a break (re-reading vs re-writing the conversation) is exact |
 | **W** | The last request's full prompt size, if its cache is still alive |
 | The session's cache lifetime | From its latest main-conversation write: 1 hour if it shows `ephemeral_1h_input_tokens > 0`, 5 minutes if `ephemeral_5m_input_tokens > 0` |
@@ -305,12 +305,11 @@ live session: one row per option
     (no amounts if the session's model has no price)
 
 and one action, the first that applies:
-    ⚡ C ≥ 100k, not compacted since the last request, and at most min(10 min, half the lifetime) left:
+    ⚡ C ≥ 100k, not compacted since the last request, c ≥ $0.005, and at most min(10 min, half the lifetime) left:
          "Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss."
     (below, "a cheaper L" is one that saves $0.005+ a message; if several qualify, the largest saving)
     ⚡ a cheaper L with Z ≤ 0:   "Switch to L now: it's already cheaper."
-    💡 a cheaper L with R ≥ Z:   "Switch to L now: since this tip appeared, staying has cost $R more than L
-                                 would have, more than switching costs ($Z)."
+    💡 a cheaper L with R ≥ Z:   "Switch to L now: it would have saved $R by now; switching costs $Z."
                                  (R counts from when switching to L first saved $0.005+ a message)
     💡 a lower effort saves $0.005+ a message (Opus 5.5 / Fable 5.1, with replies at that effort):
                                  "Try /effort X: ≈$s less a message, at no cost now."

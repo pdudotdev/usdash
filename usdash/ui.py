@@ -18,7 +18,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.text import Text
 
-from .advice import Advice, Memory, advise, clock, money, plural, tokens_text
+from .advice import Advice, Memory, advise, clock, money, plural, resends, tokens_text
 from .engine import cache_clock, comeback, context
 from .models import pretty_model
 from .sessions import Request, Session, Store, day_of, snippet
@@ -41,6 +41,7 @@ class View:
     mode: str = "sessions"  # or "requests"
     session_scroll: int = 0  # sessions hidden above the view
     session_page: int = 1  # sessions shown at the last render
+    session_last: int = 0  # the furthest the sessions could scroll at the last render
     scroll: int = 0  # feed rows hidden above the view (newest first)
     top: Request | None = None  # the request at the top of the view, while scrolled back
     page: int = 1
@@ -232,7 +233,7 @@ def session_cells(store: Store, session: Session, view: View) -> list[Text]:
 
 
 def prompt_line(session: Session, view: View) -> Text:
-    line = Text("└ ", style="dim")
+    line = Text.assemble(("└ ", "dim"))
     if session.last_prompt_at:
         line.append(f"{_ago(view.now - session.last_prompt_at)} · ", style="dim")
     line.append(f"\"{snippet(session.last_prompt, 200)}\"" if session.last_prompt else "no prompt yet", style="italic")
@@ -246,7 +247,7 @@ def advice_lines(advice: Advice) -> list[Text]:
         lines.append(Text.assemble("⚡ " if advice.urgent else "💡 ", (advice.action, "bold" if advice.urgent else "")))
     width = max((len(option.label) for option in advice.options), default=0)
     for option in advice.options:
-        line = Text(f"   {option.arrow or ' '} ", style="dim")
+        line = Text.assemble((f"   {option.arrow or ' '} ", "dim"))
         line.append(option.label.ljust(width), style=model_style(option.model) if option.model else "")
         line.append(f"  {option.text}")
         lines.append(line)
@@ -255,13 +256,13 @@ def advice_lines(advice: Advice) -> list[Text]:
 
 def comeback_line(store: Store, session: Session) -> Text:
     """'└ resuming re-sends 533k tokens: $4.27 on Opus 5.5, $2.13 on Sonnet 5, …'"""
-    line = Text("└ ", style="dim")
+    line = Text.assemble(("└ ", "dim"))
     found = comeback(store, session)
     if found is None:
         return line
     ctx, costs = found
     approx = "" if ctx.exact else "≈"
-    line.append(f"{'resuming' if session.ended else 'continuing'} re-sends {approx}{_tokens(ctx.tokens)} tokens")
+    line.append(f"{'resuming' if session.ended else 'continuing'} {resends(ctx)}")
     for i, (model, cost) in enumerate(costs):
         line.append(": " if i == 0 else ", ")
         line.append(f"{approx}{_money(cost)} on ")
@@ -306,6 +307,20 @@ def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
     return lines
 
 
+def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: int) -> tuple[list[Text], int]:
+    """The lines of the sessions from `start` on that fit in `room`, each
+    section under its label, and how many sessions that is: at least one (a
+    live block taller than the room is cut, not skipped)."""
+    lines, shown, section = [], 0, None
+    for entry, block in zip(entries[start:], blocks[start:]):
+        label = [Text("LIVE" if entry.live else "IDLE", style="bold dim")] if entry.live != section else []
+        if shown and len(lines) + len(label) + len(block) > room:
+            break
+        lines += label + block
+        section, shown = entry.live, shown + 1
+    return lines, shown
+
+
 def sessions_panel(store: Store, view: View, rows: int) -> Panel:
     """The sessions, scrolled by whole session: a live one's lines never split."""
     window = duration_text(view.window)
@@ -320,19 +335,15 @@ def sessions_panel(store: Store, view: View, rows: int) -> Panel:
     lines = header_lines(SESSION_COLUMNS, names, widths)
     blocks = [entry_lines(SESSION_COLUMNS, widths, entry) for entry in entries]
     room = max(1, rows - len(lines))
-    # The furthest the list can scroll: the last sessions that still fill the page (plus a section label).
-    last, used = len(blocks), 1
-    while last > 0 and used + len(blocks[last - 1]) <= room:
-        last, used = last - 1, used + len(blocks[last - 1])
+    # The furthest the list can scroll: the first session from which all the rest fit.
+    last = len(entries) - 1
+    while last > 0 and page_from(entries, blocks, last - 1, room)[1] == len(entries) - last + 1:
+        last -= 1
+    view.session_last = last
     view.session_scroll = max(0, min(view.session_scroll, last))
-    shown, section = 0, None
-    for entry, block in zip(entries[view.session_scroll:], blocks[view.session_scroll:]):
-        label = [Text("LIVE" if entry.live else "IDLE", style="bold dim")] if entry.live != section else []
-        if shown and len(lines) + len(label) + len(block) > rows:
-            break
-        lines += label + block
-        section, shown = entry.live, shown + 1
-    view.session_page = max(1, shown)
+    body, shown = page_from(entries, blocks, view.session_scroll, room)
+    lines += body
+    view.session_page = shown
     if shown < len(entries):
         first = view.session_scroll + 1
         title += f" · {first}–{view.session_scroll + shown} of {len(entries)}"
@@ -441,17 +452,17 @@ def press(store: Store, view: View, key: str) -> None:
     else:
         steps = {"up": -1, "down": 1, "pgup": -view.session_page, "pgdn": view.session_page}
         if key in steps:
-            view.session_scroll = max(0, view.session_scroll + steps[key])  # the panel caps it at the last page
+            view.session_scroll = max(0, min(view.session_scroll + steps[key], view.session_last))
         elif key == "home":
             view.session_scroll = 0
         elif key == "end":
-            view.session_scroll = len(store.sessions)
+            view.session_scroll = view.session_last
 
 
 # --- Whole screen ------------------------------------------------------------------
 
 
-def render(store: Store, view: View, height: int, width: int = 200) -> Layout:
+def render(store: Store, view: View, height: int) -> Layout:
     body = max(3, height - HEADER_HEIGHT)
     if view.mode == "requests":
         panel = feed_panel(store, view, max(1, body - 3))  # the panel's border and the column names

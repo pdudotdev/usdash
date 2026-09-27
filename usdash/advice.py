@@ -1,7 +1,7 @@
 """What to do in each live session, and what each option would cost.
 
 One action per session, the first that applies:
-  1. ⚡ /compact before a break: a big conversation whose cache expires soon
+  1. ⚡ /compact before a break: a big conversation whose cache expires soon, if compacting saves enough
   2. ⚡ switch now: a cheaper model is already cheaper, even with the re-write
   3. 💡 switch now: staying has cost as much as switching would (rent-or-buy)
   4. 💡 try a lower /effort: it keeps the cache, and this session's replies show the saving
@@ -37,7 +37,6 @@ class Option:
 
 @dataclass
 class Advice:
-    session: Session
     action: str | None  # what to do, if anything is worth doing
     urgent: bool = False  # act before the cache expires
     options: list[Option] = field(default_factory=list)
@@ -54,6 +53,11 @@ def tokens_text(value: float | None) -> str:
     if value is None:
         return "?"
     return f"{value / 1000:.0f}k" if value >= 10_000 else f"{value / 1000:.1f}k"
+
+
+def resends(ctx) -> str:
+    """'re-sends 42k tokens': the conversation the next request sends, ≈ right after /compact."""
+    return f"re-sends {'' if ctx.exact else '≈'}{tokens_text(ctx.tokens)} tokens"
 
 
 def clock(seconds: int) -> str:
@@ -137,7 +141,7 @@ def advise(store: Store, session: Session, now: float, memory: Memory | None = N
     ctx = context(store, session)
     if session.ended or ctx is None or not warm:
         return None
-    advice = Advice(session, None)
+    advice = Advice(None)
     if model_key(session.model) not in store.prices:
         return advice  # nothing to price
     memory = memory if memory is not None else Memory()
@@ -151,7 +155,7 @@ def advise(store: Store, session: Session, now: float, memory: Memory | None = N
 
     already = [m for m in worth if m.penalty <= 0]
     held = [m for m in worth if 0 < m.penalty <= extra[m.target]]
-    if costs and ctx.tokens >= COMPACT_FROM and left <= min(COMPACT_WARN, ttl // 2):
+    if costs and costs.saving >= MIN_SAVING and ctx.tokens >= COMPACT_FROM and left <= min(COMPACT_WARN, ttl // 2):
         advice.action, advice.urgent = (f"Taking a break? /compact first: ≈{money(costs.now)} now, "
                                         f"≈{money(costs.after_break)} once the cache expires in {clock(left)}."), True
     elif already:
@@ -160,8 +164,8 @@ def advise(store: Store, session: Session, now: float, memory: Memory | None = N
     elif held:
         best = max(held, key=lambda m: m.saving)
         there = pretty_model(best.target)
-        advice.action = (f"Switch to {there} now: since this tip appeared, staying has cost {money(extra[best.target])} "
-                         f"more than {there} would have, more than switching costs ({money(best.penalty)}).")
+        advice.action = (f"Switch to {there} now: it would have saved {money(extra[best.target])} by now; "
+                         f"switching costs {money(best.penalty)}.")
     elif effort:
         advice.action = f"Try /effort {effort[0]}: ≈{money(effort[1])} less a message, at no cost now."
     elif worth:
@@ -176,17 +180,16 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
     rows = []
     stay_now, stay_cold = resend(store, session, session.model, True), resend(store, session, session.model, False)
     if stay_now is not None and stay_cold is not None:
-        rows.append(Option("stay", f"re-sends {approx}{tokens_text(ctx.tokens)} tokens: {approx}{money(stay_now)} "
-                                   f"now, {approx}{money(stay_cold)} after a break"))
-    output = store.prices[model_key(session.model)]["output"]
+        rows.append(Option("stay", f"{resends(ctx)}: {approx}{money(stay_now)} now, "
+                                   f"{approx}{money(stay_cold)} after a break"))
+    down = cheaper(store, session.model)
     for target, move in moves.items():
         mark = "" if move.exact else "≈"
         text = f"{mark}{money(move.penalty)} {'more' if move.penalty >= 0 else 'less'} now"
         text += f", then ≈{money(move.saving)} {'less' if move.saving >= 0 else 'more'} a message"
         if move.penalty > 0 and move.saving > 0 and move.payback is not None:
             text += f" · evens out after ≈{plural(max(1, round(move.payback)), 'message')}"
-        arrow = "↑" if store.prices[target]["output"] > output else "↓"
-        rows.append(Option(pretty_model(target), text, arrow, target))
+        rows.append(Option(pretty_model(target), text, "↓" if target in down else "↑", target))
     if costs and costs.saving >= MIN_SAVING:
         rows.append(Option("/compact", f"≈{money(costs.now)} now, ≈{money(costs.after_break)} after a break; "
                                        f"then ≈{money(costs.saving)} less a message"))
@@ -196,6 +199,5 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
         else:
             rows.append(Option("/effort", "costs nothing now"))
     elif (rewrite := effort_rewrite(store, session, now)) is not None:
-        rows.append(Option("/effort", f"re-sends {approx}{tokens_text(ctx.tokens)} tokens: "
-                                      f"{approx}{money(rewrite)} more now"))
+        rows.append(Option("/effort", f"{resends(ctx)}: {approx}{money(rewrite)} more now"))
     return rows
