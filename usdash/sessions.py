@@ -171,7 +171,6 @@ class Session:
     last_prompt: str | None = None
     last_prompt_at: float | None = None
     last_activity: float | None = None
-    quota_seen: bool = False
     ended: bool = False  # Claude Code wrote its closing cost-state, and nothing since
     cost_state: float | None = None  # Claude Code's own total, written when the session closes
     compact_post_tokens: int | None = None
@@ -219,13 +218,6 @@ class Session:
     @property
     def short_id(self) -> str:
         return self.id[:4]
-
-    def billing(self, subscription_account: bool) -> str:
-        """'sub' when this session runs on the subscription (1-hour cache, or
-        rate-limit info on its replies), else 'api': an API key, usage credits
-        or a cloud provider, all billed per token with the 5-minute cache."""
-        on_plan = self.main.ttl == ONE_HOUR or self.quota_seen
-        return "sub" if subscription_account and on_plan else "api"
 
     @property
     def scripted(self) -> bool:
@@ -408,8 +400,6 @@ class Store:
         usage = message.get("usage")
         if not model or model == "<synthetic>" or not isinstance(usage, dict) or data.get("isApiErrorMessage"):
             return None
-        if data.get("quotaLimits") is not None:
-            session.quota_seen = True
         key = message.get("id") or data.get("requestId") or data.get("uuid")
         if not key:
             return None

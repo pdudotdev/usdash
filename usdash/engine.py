@@ -6,8 +6,8 @@ the transcript records that size, and the whole of it is cached
 results, the reply) isn't known yet, so it only goes into per-message
 amounts, which are averages from the session's history (≈ on screen).
 
-    P      the conversation the next request re-sends (the last prompt)
-    now    re-sending P right now: read back while the cache is warm, else written
+    C      the conversation the next request re-sends (the last prompt)
+    now    re-sending C right now: read back while the cache is warm, else written
     s      the difference per later message, once both setups are cached (≈)
     m      now-difference ÷ s: messages until a switch evens out (≈)
 
@@ -25,7 +25,7 @@ DEFAULT_OUTPUT = 500  # output tokens per message, before any history
 @dataclass
 class Context:
     """The main conversation as its next request re-sends it."""
-    tokens: int  # P
+    tokens: int  # C
     cached: int  # of those, what its cache holds while warm
     exact: bool  # False right after /compact: the tool list and summary are estimated
 
@@ -33,11 +33,11 @@ class Context:
 @dataclass
 class Move:
     target: str
-    stay: float  # re-sending P here, now
-    move: float  # re-sending P on the target, now (less what it already has cached)
+    stay: float  # re-sending C here, now
+    move: float  # re-sending C on the target, now (less what it already has cached)
     penalty: float  # move − stay: what switching costs now (negative: it's already cheaper)
     saving: float  # ≈ s: per later message, once both are cached
-    exact: bool  # False if another session's cached tool list, or an estimated P, went in
+    exact: bool  # False if another session's cached tool list, or an estimated C, went in
 
     @property
     def payback(self) -> float | None:
@@ -69,7 +69,7 @@ def typical_output(store: Store, session: Session, model: str | None, effort: st
 
 
 def context(store: Store, session: Session) -> Context | None:
-    """P: the last prompt, measured. Right after /compact, before the next
+    """C: the last prompt, measured. Right after /compact, before the next
     request, the conversation is the tool list and system prompt plus the
     summary instead, and only the first part is still cached."""
     last = session.last_request
@@ -93,7 +93,7 @@ def cache_clock(session: Session, now: float) -> tuple[bool, int, int]:
 
 
 def resend(store: Store, session: Session, model: str | None, warm: bool) -> float | None:
-    """$ to re-send P on `model`. Its cached part is read back only if `warm`
+    """$ to re-send C on `model`. Its cached part is read back only if `warm`
     and `model` is the session's own (no other model holds this
     conversation); everything else is written, with the session's cache
     lifetime."""
@@ -120,7 +120,7 @@ def others(store: Store, model: str | None) -> list[str]:
 
 
 def comeback(store: Store, session: Session) -> tuple[Context, list[tuple[str, float]]] | None:
-    """What coming back to an idle session costs: re-sending all of P, written
+    """What coming back to an idle session costs: re-sending all of C, written
     again, on its own model and on each cheaper one. Other sessions' cached
     tool lists aren't subtracted: a resumed session gets a fresh system
     prompt (git status, date), which may not match theirs."""
@@ -145,7 +145,7 @@ def move_penalty(price_e: dict, price_l: dict, size_e: float, cached_e: float, s
 
 def model_move(store: Store, session: Session, target: str, now: float) -> Move | None:
     """Switching the main conversation to `target` now. What it costs now is
-    exact (re-sending P there vs reading it back here), less the tool list if
+    exact (re-sending C there vs reading it back here), less the tool list if
     another session keeps it cached there (then ≈). Per later message (≈): an
     average message's growth and reply on each side; replies on the target
     are this session's own if it has used that model, else the same length as
@@ -196,7 +196,7 @@ def effort_saving(store: Store, session: Session, effort: str) -> float | None:
 def effort_rewrite(store: Store, session: Session, now: float) -> float | None:
     """What an effort change costs now on a model where it re-writes the
     conversation (all but Opus 5.5 and Fable 5.1, and those on a cloud
-    provider): writing P instead of reading it back. None where the cache is
+    provider): writing C instead of reading it back. None where the cache is
     kept; 0 once the cache has expired anyway."""
     if effort_keeps_cache(session.model):
         return None

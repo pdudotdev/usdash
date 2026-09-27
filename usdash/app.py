@@ -1,8 +1,8 @@
 """usdash: a live terminal dashboard of your own Claude Code costs and prompt caches.
 
-    usdash                  # today's sessions, then live
-    usdash --since 24h      # load more history first
-    usdash --window 8h      # show sessions active this recently (default 3h)
+    usdash                  # the last 24 hours of sessions, then live
+    usdash --since 2d       # load more history first
+    usdash --window 8h      # show sessions active this recently (default 24h)
     usdash --once           # print one screen and exit (no live view)
 
 Read-only: it reads Claude Code's transcripts on this machine and nothing
@@ -118,7 +118,8 @@ class App:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
-    parser.add_argument("--since", type=duration, help="history to load first, e.g. 24h (default: since midnight; never less than --window)")
+    parser.add_argument("--since", type=duration,
+                        help="history to load first, e.g. 2d (default: --window, or since midnight if that's earlier)")
     parser.add_argument("--window", type=duration, default=24 * 3600,
                         help="show sessions active this recently, e.g. 3h or 2d (default: 24h)")
     parser.add_argument("--projects", type=Path, default=None,

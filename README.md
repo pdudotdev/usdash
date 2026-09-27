@@ -51,9 +51,9 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **CONTEXT TOKENS** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
 | **COST TODAY** · **COST TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too). Once it closes, Claude Code's own figure follows: `(CC $…)` |
 
-▫️ **A live session** (its cache is still warm) opens up:
+▫️ **A live session** (its cache is still warm, and it isn't closed) opens up:
 - `└` what you last typed in that window, and how long ago
-- the action: what to do now (`⚡` when it can't wait until the cache expires)
+- the action: what to do now (`⚡` when acting right away is clearly cheaper)
 - one row per option, with what it costs:
 
 ```
@@ -168,7 +168,7 @@ usdash                    # the last 24 hours, then live
 
 | Option | Meaning | Default |
 |---|---|---|
-| `--since 24h` | How much history to load first (`m`, `h` or `d`); never less than `--window` | since midnight |
+| `--since 2d` | How much history to load first (`m`, `h` or `d`); never less than `--window` | `--window`, or since midnight if that's earlier |
 | `--window 8h` | Show sessions active this recently | `24h` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |
@@ -196,7 +196,6 @@ Some requests Claude Code makes never appear in its transcripts: session titles,
 Sessions appear, their cache lifetime and costs are read the same way, and Bedrock model ids like `us.anthropic.claude-opus-5-5` are recognised. But:
 - Prices are Anthropic's list prices, which match the **global** endpoints (`global.`). Claude Code's default Bedrock ids use geographic prefixes (`us.`, `eu.`, `apac.`) in most regions, and those cost **10% more**. The same 10% applies to Google Cloud's regional and multi-region endpoints
 - Application inference profile ARNs aren't mapped to a model, so those requests show no cost
-- These sessions are tagged `api` (billed per token), which is right, though they aren't billed through an API key
 - Not yet checked with a real Bedrock or Google Cloud transcript: whether Claude Code records the provider's model id or the plain model name. If it's the plain name, the effort tip would wrongly say an effort change keeps the cache there
 
 ▫️ **What's exact and what's an estimate (`≈`):**
@@ -239,7 +238,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 
 ▫️ **The rent-or-buy rule**
 
-Switching model costs a one-time re-write; staying costs a little extra on every message. usdash suggests switching when it's already cheaper, when the cache has expired (then it's free), or once staying has cost as much as switching would. That never costs more than about twice the best choice in hindsight.
+Switching model costs a one-time re-write; staying costs a little extra on every message. usdash says to switch when it's already cheaper, or once staying has cost as much as switching would; until then it says to stay, and that switching is free after a break long enough for the cache to expire. That never costs more than about twice the best choice in hindsight.
 
 Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to Sonnet 5 cost $0.143; staying on Opus cost about $0.02.
 

@@ -1,4 +1,4 @@
-"""Sessions from records: dedupe, request starts, re-writes, names and billing."""
+"""Sessions from records: dedupe, request starts, re-writes, names and the account."""
 import json
 
 import pytest
@@ -74,27 +74,13 @@ def test_models_missing_from_pricing_are_counted_not_priced(store):
     assert store.unpriced == {"claude-mystery-9": 1}
 
 
-# --- Cache lifetime and billing ---------------------------------------------------
+# --- Cache lifetime and the account -----------------------------------------------
 
 
 def test_cache_lifetime_comes_from_the_writes(fixture_store):
     assert fixture_store.sessions[NO_REQUEST_IDS].ttl == FIVE_MINUTES
     assert fixture_store.sessions[VSCODE].ttl == ONE_HOUR
     assert fixture_store.sessions[DESKTOP_SESSION].ttl == ONE_HOUR
-
-
-def test_billing_label(fixture_store):
-    assert fixture_store.sessions[DESKTOP_SESSION].billing(subscription_account=True) == "sub"
-    # A 5-minute cache means an API key or usage credits, even on a subscription account.
-    assert fixture_store.sessions[NO_REQUEST_IDS].billing(subscription_account=True) == "api"
-    assert fixture_store.sessions[DESKTOP_SESSION].billing(subscription_account=False) == "api"
-
-
-def test_rate_limit_info_marks_a_subscription_session(store):
-    t = Transcript()
-    t.turn(T0, ttl="5m", write=40_000, quotaLimits={"rateLimitType": "five_hour"})
-    t.into(store)
-    assert store.sessions["sess-1"].billing(subscription_account=True) == "sub"
 
 
 @pytest.mark.parametrize(
