@@ -140,13 +140,13 @@ def test_a_model_switch_mid_session_does_not_count_as_the_tool_list(store):
     first_prompt = 40_002
     assert store.sessions["sess-a"].prefix == first_prompt
     # Haiku has A's tool list cached (A's first prompt, in Haiku's tokens), not A's whole conversation.
-    assert store.shared_prefix("/home/user/proj", "claude-haiku-4-5", T0 + 90) == round(first_prompt * 0.77)
+    assert store.shared_prefix(store.sessions["sess-a"], "claude-haiku-4-5", T0 + 90) == round(first_prompt * 0.77)
     # Session B, warm on Opus at 50k: moving it to Haiku reads only the tool list
     # back and writes the rest. (Counting A's whole Haiku conversation as cached
     # priced all of B's ~42k Haiku tokens as cheap reads.)
     b = session_on(store, prompts=(40_000, 45_000, 50_000), ttl="5m", session="sess-b", out=500)
     move = engine.model_move(store, b, "claude-haiku-4-5", LAST_START + 30)
     size = 55_000 * 0.77  # the next prompt, in Haiku's tokens
-    shared = round(first_prompt * 0.77)
-    expected = (shared * 0.10 + (size - shared) * 1.25 + 500 * 5) / 1e6  # B's replies are 500 tokens
+    shared = round(40_000 * 0.77)  # the smaller first prompt: B's 40,000, not A's 40,002
+    expected = (shared * 0.10 + (size - shared) * 1.25 + 500 * 0.77 * 5) / 1e6  # B's 500-token replies, in Haiku's tokens
     assert move.move == pytest.approx(expected)

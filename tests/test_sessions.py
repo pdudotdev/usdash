@@ -383,3 +383,16 @@ def test_on_a_one_hour_cache_the_same_subagent_run_costs_nothing_extra(store):
     t.into(store)
     parent = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
     assert parent.reason is None
+
+
+def test_requests_from_a_file_found_late_go_in_their_place_in_the_feed(store):
+    main = Transcript()
+    main.turn(T0, write=40_000)
+    main.turn(T0 + 60, read=40_000, write=1_000)
+    main.into(store)
+    late = Transcript()  # a subagent's transcript, found at the tailer's next scan
+    late.user("look around", T0 + 20, subagent="a1")
+    late.reply(T0 + 30, subagent="a1", write=5_000, ttl="5m")
+    late.into(store)
+    assert [r.end for r in store.feed] == [T0 + 70, T0 + 30, T0 + 10]  # newest first
+    assert store.added == 3

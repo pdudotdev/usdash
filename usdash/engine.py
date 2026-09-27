@@ -14,13 +14,11 @@ it, §6 for /compact). Symbols as there:
     m  = P ÷ s            messages until moving pays back
 """
 from dataclasses import dataclass
-from statistics import median
 
 from .models import convert_tokens, effort_keeps_cache, model_key
 from .prices import FIVE_MINUTES, output_cost, prompt_cost
 from .sessions import Session, Store
 
-DEFAULT_GROWTH = 1_000  # tokens a message adds, before a session has history
 DEFAULT_OUTPUT = 500  # output tokens per message, before any history
 # The summary /compact writes, and what it re-sends (research/CACHE-DECISIONS.md §6).
 COMPACT_SUMMARY = 3_000
@@ -55,18 +53,6 @@ class Move:
         return self.penalty / self.saving if self.saving > 0 else None
 
 
-def growth(session: Session) -> int:
-    """Typical tokens one message adds to the conversation: the median rise
-    between consecutive main-conversation prompts (kept until the session changes)."""
-    if session._growth[0] == session.revision:
-        return session._growth[1]
-    prompts = [r.prompt for r in session.main_requests()]
-    rises = [b - a for a, b in zip(prompts, prompts[1:]) if b > a]
-    value = int(median(rises)) if rises else DEFAULT_GROWTH
-    session._growth = (session.revision, value)
-    return value
-
-
 def typical_output(store: Store, session: Session, model: str | None, effort: str | None = None,
                    default: float = DEFAULT_OUTPUT) -> float:
     """output(M): the session's own average on this model and effort, else on
@@ -95,7 +81,7 @@ def conversation(session: Session, now: float) -> tuple[int, int, bool, int, int
         prefix = round(session.prefix_on(last.model))
         size = prefix + (session.compact_post_tokens or COMPACT_SUMMARY)
         return size, prefix if warm else 0, warm, max(left, 0), ttl
-    size = last.prompt + growth(session)
+    size = last.prompt + session.growth()
     return size, last.prompt if warm else 0, warm, max(left, 0), ttl
 
 
@@ -133,14 +119,15 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
         return None
     size, cached, warm, left, ttl = conversation(session, now)
     size_l = convert_tokens(size, model_key(source), model_key(target))
-    shared = min(store.shared_prefix(session.cwd, target, now), size_l)
-    add = growth(session)
+    shared = min(store.shared_prefix(session, target, now), size_l)
+    add = session.growth()
     out_e = typical_output(store, session, source, session.effort)
     # Replies on the target: this session's own, if it has used that model; else
-    # the same length as now. Other sessions' replies on it come from other
-    # tasks (a scripted "say OK" run makes a model look nearly free).
+    # the same length as now, in the target's tokens. Other sessions' replies on
+    # it come from other tasks.
     out_l = session.average_output(target)
-    out_l = out_e if out_l is None else out_l
+    if out_l is None:
+        out_l = convert_tokens(out_e, model_key(source), model_key(target))
     stay, move, saving = move_penalty(
         price_e, price_l, size, cached, size_l, shared, out_e, out_l,
         add, convert_tokens(add, model_key(source), model_key(target)), ttl,
@@ -155,7 +142,9 @@ def effort_move(store: Store, session: Session, effort: str, now: float) -> Move
     price = store.prices.get(model_key(model))
     if not price or not effort_keeps_cache(model) or session.last_request is None:
         return None
-    before = session.average_output(model, session.effort) or store.average_output(model, session.effort)
+    before = session.average_output(model, session.effort)
+    if before is None:
+        before = store.average_output(model, session.effort)
     after = store.average_output(model, effort)
     if before is None or after is None:
         return None

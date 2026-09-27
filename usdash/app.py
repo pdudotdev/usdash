@@ -83,11 +83,10 @@ def start_of_today(now: float) -> float:
 
 def history_start(now: float, since: int | None, window: int) -> float:
     """Where to start reading: --since ago if given, else midnight, but never
-    later than the start of the window, so a session from before midnight that
-    is still inside the window (and maybe still warm) is shown."""
-    if since:
-        return now - since
-    return min(start_of_today(now), now - window)
+    later than the start of the window, so every session the window lists
+    (some maybe still warm) is loaded."""
+    start = now - since if since else start_of_today(now)
+    return min(start, now - window)
 
 
 class App:
@@ -118,7 +117,7 @@ class App:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
-    parser.add_argument("--since", type=duration, help="history to load first, e.g. 24h (default: since midnight)")
+    parser.add_argument("--since", type=duration, help="history to load first, e.g. 24h (default: since midnight; never less than --window)")
     parser.add_argument("--window", type=duration, default=3 * 3600,
                         help="show sessions active this recently, e.g. 30m or 8h (default: 3h)")
     parser.add_argument("--projects", type=Path, default=None,

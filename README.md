@@ -152,7 +152,7 @@ usdash                    # today's sessions, then live
 
 | Option | Meaning | Default |
 |---|---|---|
-| `--since 24h` | How much history to load first (`m`, `h` or `d`) | since midnight |
+| `--since 24h` | How much history to load first (`m`, `h` or `d`); never less than `--window` | since midnight |
 | `--window 8h` | Show sessions active this recently | `3h` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |

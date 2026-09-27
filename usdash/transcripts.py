@@ -107,7 +107,6 @@ class Tailer:
     scan_every: float = 5.0
     clock: object = time.monotonic
     files: dict[Path, _Followed] = field(default_factory=dict)
-    known: list[Path] = field(default_factory=list)
     last_scan: float | None = None
     unknown_types: Counter = field(default_factory=Counter)
     bad_lines: int = 0
@@ -118,11 +117,11 @@ class Tailer:
         return sorted([*self.root.glob("*/*.jsonl"), *self.root.glob("*/*/subagents/*.jsonl")])
 
     def poll(self) -> list[Record]:
-        """Everything written since the last poll, in the order it happened."""
+        """Everything written since the last poll, oldest first. A file found
+        at a scan can hold lines older than ones an earlier poll returned."""
         now = self.clock()
         if self.last_scan is None or now - self.last_scan >= self.scan_every:
-            self.known, self.last_scan = self.transcripts(), now
-            paths = self.known
+            paths, self.last_scan = self.transcripts(), now
         else:
             paths = list(self.files)  # between scans: only the files already being followed
         records = []

@@ -12,6 +12,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
 from .models import convert_tokens, effort_keeps_cache, model_key, pretty_model
 from .prices import FIVE_MINUTES, ONE_HOUR, request_cost, usage_parts, write_price
@@ -25,10 +26,23 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
 SNIPPET = 60
+DEFAULT_GROWTH = 1_000  # tokens a message adds, before a session has history
 
 
 def day_of(when: float) -> str:
     return datetime.fromtimestamp(when).strftime("%Y-%m-%d")
+
+
+def memo(owner, key, compute):
+    """`compute()`, kept until `owner.revision` changes (a Session or the Store:
+    both bump it whenever a request is added or replaced)."""
+    revision, values = owner._memo
+    if revision != owner.revision:
+        values = {}
+        owner._memo = (owner.revision, values)
+    if key not in values:
+        values[key] = compute()
+    return values[key]
 
 
 @dataclass
@@ -164,8 +178,7 @@ class Session:
     prefix: int = 0
     prefix_model: str | None = None
     revision: int = 0  # bumped on every change to its requests
-    _main: tuple = field(default=(-1, []), repr=False)
-    _growth: tuple = field(default=(-1, 0), repr=False)  # engine.growth's last answer
+    _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
     # (model family, effort) -> [output tokens, requests], main chain only
     outputs: dict[tuple, list] = field(default_factory=lambda: defaultdict(lambda: [0, 0]))
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -238,11 +251,18 @@ class Session:
         return convert_tokens(self.prefix, model_key(self.prefix_model), model_key(model))
 
     def main_requests(self) -> list[Request]:
-        """The main conversation's requests, oldest first (kept until the next change)."""
-        if self._main[0] != self.revision:
-            ordered = sorted((r for r in self.requests.values() if not r.subagent), key=lambda r: r.start)
-            self._main = (self.revision, ordered)
-        return self._main[1]
+        """The main conversation's requests, oldest first."""
+        return memo(self, "main", lambda: sorted(
+            (r for r in self.requests.values() if not r.subagent), key=lambda r: r.start))
+
+    def growth(self) -> int:
+        """Typical tokens one message adds to the conversation: the median rise
+        between consecutive main-conversation prompts."""
+        def compute() -> int:
+            prompts = [r.prompt for r in self.main_requests()]
+            rises = [b - a for a, b in zip(prompts, prompts[1:]) if b > a]
+            return int(median(rises)) if rises else DEFAULT_GROWTH
+        return memo(self, "growth", compute)
 
     def output_totals(self, model: str | None, effort: str | None = None) -> tuple[int, int]:
         """(output tokens, requests) in the main conversation on this model (and effort, if given)."""
@@ -273,7 +293,7 @@ class Store:
         self.first: float | None = None
         self.added = 0  # requests ever added to the feed (it drops the oldest once full)
         self.revision = 0  # bumped on every change to any request
-        self._outputs: tuple = (-1, {})  # (revision, (model, effort) -> average output)
+        self._memo: tuple = (-1, None)  # see memo()
 
     def session(self, session_id: str) -> Session:
         if session_id not in self.sessions:
@@ -395,10 +415,26 @@ class Store:
                 session.prefix, session.prefix_model = request.prompt, model
         session.last_activity = max(session.last_activity or 0, request.end)
         if old is None:
-            self.feed.appendleft(request)
+            self._to_feed(request)
             self.added += 1
             return request
         return None
+
+    def _to_feed(self, request: Request) -> None:
+        """Newest first. A transcript file found late (the tailer looks for new
+        files every few seconds) can bring requests older than ones already
+        in the feed; they go in their place, not on top."""
+        feed, at = self.feed, 0
+        while at < len(feed) and feed[at].end > request.end:
+            at += 1
+        if at == 0:
+            feed.appendleft(request)
+            return
+        if len(feed) == feed.maxlen:
+            if at == len(feed):
+                return  # older than everything the feed still keeps
+            feed.pop()
+        feed.insert(at, request)
 
     def _classify(self, request: Request, price: dict | None) -> None:
         prev = request.prev
@@ -436,32 +472,36 @@ class Store:
 
     # --- Across sessions --------------------------------------------------------
 
-    def shared_prefix(self, cwd: str | None, model: str | None, now: float) -> int:
-        """Tokens a model likely already has cached for a session in `cwd`: the
-        tool list and system prompt, if any session there used that model
-        within its cache lifetime (research/CACHE-DECISIONS.md §7)."""
-        family, best = model_key(model), 0
-        for session in self.sessions.values():
-            if session.cwd != cwd or not session.prefix:
+    def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
+        """Tokens `model` likely already has cached for `session`: the tool list
+        and system prompt, if any session in the same folder used that model
+        within its cache lifetime (research/CACHE-DECISIONS.md §7).
+
+        That shared part is inside every one of those sessions' first prompts,
+        and inside this session's own, so the smallest of them is the estimate:
+        a first message that pasted a big file can't make it look bigger."""
+        family, sizes = model_key(model), []
+        folder = memo(self, ("folder", session.cwd), lambda: [
+            s for s in self.sessions.values() if s.cwd == session.cwd and s.prefix])
+        for other in folder:
+            chain = other.chains.get(other.id)
+            if chain is None or model_key(chain.model) != family or chain.touched is None:
                 continue
-            for chain_id, chain in session.chains.items():
-                if chain_id != session.id or model_key(chain.model) != family or chain.touched is None:
-                    continue
-                if now - chain.touched < (chain.ttl or FIVE_MINUTES):
-                    best = max(best, round(session.prefix_on(model)))
-        return best
+            if now - chain.touched < (chain.ttl or FIVE_MINUTES):
+                sizes.append(round(other.prefix_on(model)))
+        if sizes and session.prefix:
+            sizes.append(round(session.prefix_on(model)))
+        return min(sizes, default=0)
 
     def average_output(self, model: str | None, effort: str | None = None) -> float | None:
-        """Output tokens per main-conversation request on this model (and effort), across all sessions."""
-        if self._outputs[0] != self.revision:
-            self._outputs = (self.revision, {})
-        key = (model_key(model), effort)
-        cache = self._outputs[1]
-        if key not in cache:
-            totals = [session.output_totals(model, effort) for session in self.sessions.values()]
+        """Output tokens per main-conversation request on this model (and effort),
+        across interactive sessions. Scripted runs are left out: a `claude -p
+        'say OK'` would make a model or effort look nearly free."""
+        def compute() -> float | None:
+            totals = [s.output_totals(model, effort) for s in self.sessions.values() if not s.scripted]
             tokens, count = sum(t for t, _ in totals), sum(n for _, n in totals)
-            cache[key] = tokens / count if count else None
-        return cache[key]
+            return tokens / count if count else None
+        return memo(self, ("output", model_key(model), effort), compute)
 
     def apply_desktop(self, desktop: dict[str, dict]) -> None:
         """Titles and archive state from the Desktop app's own session files."""

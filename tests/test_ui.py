@@ -173,8 +173,10 @@ def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
         (datetime(2026, 9, 28, 0, 30).timestamp(), None, 3 * 3600, datetime(2026, 9, 27, 21, 30).timestamp()),
         # 15:00: midnight is further back than the window.
         (datetime(2026, 9, 28, 15, 0).timestamp(), None, 3 * 3600, datetime(2026, 9, 28, 0, 0).timestamp()),
-        # --since wins.
+        # --since further back than the window wins.
         (datetime(2026, 9, 28, 15, 0).timestamp(), 86400, 3 * 3600, datetime(2026, 9, 27, 15, 0).timestamp()),
+        # --since shorter than the window: the window still loads, so every listed session is there.
+        (datetime(2026, 9, 28, 15, 0).timestamp(), 3600, 3 * 3600, datetime(2026, 9, 28, 12, 0).timestamp()),
     ],
 )
 def test_history_reaches_back_to_the_window_after_midnight(now, since, window, start):

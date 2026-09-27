@@ -108,7 +108,7 @@ def test_five_minute_sessions_expire_in_five_minutes(store):
 
 def test_growth_and_typical_output(store):
     session = opus_session(store, prompts=(40_000, 43_000, 44_000), out=800)
-    assert engine.growth(session) == 2_000  # median of +3k and +1k
+    assert session.growth() == 2_000  # median of +3k and +1k
     assert engine.typical_output(store, session, "claude-opus-5-5", "high") == 800
     assert engine.typical_output(store, session, "claude-haiku-4-5") == engine.DEFAULT_OUTPUT
     assert engine.typical_output(store, session, "claude-haiku-4-5", default=800) == 800
@@ -117,9 +117,10 @@ def test_growth_and_typical_output(store):
 def test_a_model_with_no_history_is_assumed_to_reply_at_the_same_length(store):
     session = opus_session(store, out=3_000)
     move = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
-    # Haiku writes 3,000 tokens too: output at $5 instead of $20, plus the input side
-    # (43k read + 1k written on Opus's 1-hour cache vs 33,110 + 770 on Haiku's).
-    output = 3_000 * (20 - 5)
+    # Haiku writes the same reply, 3,000 Opus tokens = 2,310 Haiku tokens, at $5 instead
+    # of $20, plus the input side (43k read + 1k written on Opus's 1-hour cache vs
+    # 33,110 + 770 on Haiku's).
+    output = 3_000 * 20 - 2_310 * 5
     prompt = 43_000 * 0.2 + 1_000 * 8 - (33_110 * 0.1 + 770 * 2)
     assert move.saving == pytest.approx((output + prompt) / 1e6, abs=1e-5)
 
@@ -154,11 +155,11 @@ def test_model_move_uses_what_the_target_has_cached(store):
     other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="5m")
     other.into(store)
     warm_target = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
-    assert store.shared_prefix("/home/user/proj", "claude-haiku-4-5", T0 + 130) == 30_002
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 30_002
     assert warm_target.move < cold_target.move
     assert warm_target.penalty == pytest.approx(cold_target.penalty - 30_002 * (1.25 - 0.1) / 1e6)
     # Its cache expires too.
-    assert store.shared_prefix("/home/user/proj", "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
 
 
 def test_effort_move_on_opus_5_5_keeps_the_cache(store):
@@ -190,7 +191,40 @@ def test_other_sessions_short_replies_dont_make_a_model_look_cheap(store):
     scripted.turn(T0, model="claude-haiku-4-5", write=30_000, out=5)  # a "say OK" run
     scripted.into(store)
     move = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
-    # Haiku is assumed to reply at this session's length (2,000 tokens), not 5.
+    # Haiku is assumed to reply at this session's length (2,000 Opus tokens = 1,540 Haiku tokens), not 5.
     later_opus = (43_000 * 0.2 + 1_000 * 8 + 2_000 * 20) / 1e6
-    later_haiku = (33_110 * 0.1 + 770 * 2 + 2_000 * 5) / 1e6
+    later_haiku = (33_110 * 0.1 + 770 * 2 + 1_540 * 5) / 1e6
     assert move.saving == pytest.approx(later_opus - later_haiku, abs=1e-5)
+
+
+def test_scripted_runs_dont_make_a_lower_effort_look_cheap(store):
+    session = opus_session(store, out=2_000)
+    scripted = Transcript(session="sess-2", entrypoint="sdk-cli")
+    scripted.turn(T0, effort="low", write=40_000, out=5)  # claude -p 'say OK'
+    scripted.into(store)
+    assert engine.effort_move(store, session, "low", T0 + 130) is None  # no interactive history at low
+    interactive = Transcript(session="sess-3")
+    interactive.turn(T0, effort="low", write=40_000, out=800)
+    interactive.into(store)
+    move = engine.effort_move(store, session, "low", T0 + 130)
+    assert move.saving == pytest.approx((2_000 - 800) * 20 / 1e6)
+
+
+def test_a_session_whose_replies_logged_no_output_keeps_its_own_average(store):
+    session = opus_session(store, out=0)
+    other = Transcript(session="sess-2")
+    other.turn(T0, write=40_000, out=3_000)  # high
+    other.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
+    other.into(store)
+    # 0 is this session's real average at high, not "no history": medium can't beat it.
+    assert engine.effort_move(store, session, "medium", T0 + 130).saving == pytest.approx(-800 * 20 / 1e6)
+
+
+def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
+    session = opus_session(store, ttl="5m")  # first prompt 40,000
+    pasted = Transcript(session="sess-2", entrypoint="sdk-cli")
+    pasted.turn(T0 + 100, model="claude-haiku-4-5", write=80_000, ttl="5m")  # claude -p "$(cat big.log)"
+    pasted.into(store)
+    # Haiku has at most what both first prompts share: this session's 40,000, in Haiku's tokens.
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == round(40_000 * 0.77)
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
