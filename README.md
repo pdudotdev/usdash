@@ -8,28 +8,12 @@ A live terminal dashboard for **your own Claude Code costs**. It reads the trans
 
 It only reads files. Nothing is routed through it, nothing leaves your machine, and it changes nothing in Claude Code.
 
-▫️ **Same idea as an ARP cache:**
-- [x] **A fresh entry** → reused without asking again. Here: the conversation is read back from the prompt cache at a tenth of the input price, or less
-- [x] **The aging timer** → restarted by every use, expires when idle. Here: 5 minutes or 1 hour after the last request started
-- [x] **A miss** → a full lookup. Here: the whole conversation is written again, at 1.25× to 2× the input price
+▫️ **Why the prompt cache matters:**
+- [x] **While it's warm**, each message reads the conversation back at a tenth of the input price, or less
+- [x] **It expires** 5 minutes or 1 hour after the last request started, and each request restarts that clock
+- [x] **After a miss**, the whole conversation is written again, at 1.25× to 2× the input price
 
-```
-    terminal (claude)      VS Code extension      Desktop app Code tab      scripts (claude -p)
-__________▼_______________________▼________________________▼_________________________▼__________
-\                     ~/.claude/projects/<folder>/<session>.jsonl  (+ subagents/)              /
- \            the transcripts Claude Code writes anyway: every reply with its token usage     /
-  \__________________________________________________________________________________________/
-                                               │
-                                               ▼
-                    usdash: one request per reply → cost at list price → re-writes and why
-                            → a cache clock per session → next-message price → advice
-                                               │
-                     ┌─────────────────┬───────┴─────────┬──────────────────┐
-                     ▼                 ▼                 ▼                  ▼
-                   today's         sessions:          advice,          every request,
-                  spend and      name, where,       in dollars         re-writes marked
-                  hit rate      cache countdown
-```
+![How usdash works: Claude Code in the terminal, VS Code, the Desktop app and scripts writes transcripts to ~/.claude/projects; usdash turns each reply into a request with its cost, cache misses, a cache clock per session, the next message's price and advice, shown as a header, sessions, advice and a request feed](docs/how-it-works.svg)
 
 ## 📖 **Table of Contents**
 - 💲 **usdash**
@@ -238,6 +222,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 | [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
+| [`docs/`](docs/) | The README's pictures: the dashboard and how usdash works |
 | [`tests/`](tests/) | Automated tests on redacted real transcripts and synthetic ones, plus the manual sanity suite in [`tests/sanity/`](tests/sanity/manual.py) |
 | [`.github/workflows/tests.yml`](.github/workflows/tests.yml) | Runs the automated tests on every push and pull request |
 

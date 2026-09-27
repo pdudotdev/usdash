@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 504" width="820" height="504" role="img" aria-labelledby="title desc">
+  <title id="title">How usdash works</title>
+  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at list prices, cache misses and why, a cache clock per session, the next message's price, and advice in dollars. It shows a header, the sessions, advice and a feed of requests.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #c5c8c6; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .label { font-size: 15px; font-weight: 600; }
+    .sub { font-size: 12px; fill: #868887; }
+    .step { font-size: 13px; }
+    .card { fill: #323232; stroke-width: 1.5; }
+    .flow { stroke: #868887; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#868887"/>
+    </marker>
+  </defs>
+
+  <rect width="820" height="504" rx="12" fill="#292929"/>
+
+  <!-- Where you run Claude Code -->
+  <g text-anchor="middle">
+    <rect class="card" x="26" y="24" width="180" height="52" rx="8" stroke="#398280"/>
+    <text class="label" x="116" y="46">Terminal</text>
+    <text class="sub mono" x="116" y="65">claude</text>
+    <rect class="card" x="222" y="24" width="180" height="52" rx="8" stroke="#398280"/>
+    <text class="label" x="312" y="46">VS Code</text>
+    <text class="sub" x="312" y="65">extension</text>
+    <rect class="card" x="418" y="24" width="180" height="52" rx="8" stroke="#398280"/>
+    <text class="label" x="508" y="46">Desktop app</text>
+    <text class="sub" x="508" y="65">Code tab</text>
+    <rect class="card" x="614" y="24" width="180" height="52" rx="8" stroke="#398280"/>
+    <text class="label" x="704" y="46">Scripts</text>
+    <text class="sub mono" x="704" y="65">claude -p</text>
+  </g>
+  <path class="flow" d="M116,78 V110"/>
+  <path class="flow" d="M312,78 V110"/>
+  <path class="flow" d="M508,78 V110"/>
+  <path class="flow" d="M704,78 V110"/>
+
+  <!-- What Claude Code writes anyway -->
+  <rect class="card" x="26" y="112" width="768" height="64" rx="8" stroke="#d0b344"/>
+  <g text-anchor="middle">
+    <text class="mono" x="410" y="139" font-size="14" style="fill: #d0b344">~/.claude/projects/&lt;folder&gt;/&lt;session&gt;.jsonl  + subagents/</text>
+    <text class="sub" x="410" y="161" font-size="13">the transcripts Claude Code writes anyway: every reply, with its model, effort and token usage</text>
+  </g>
+  <path class="flow" d="M410,178 V210"/>
+
+  <!-- usdash -->
+  <rect class="card" x="26" y="212" width="768" height="156" rx="8" stroke="#98a84b"/>
+  <text x="46" y="240" font-size="16" font-weight="700" style="fill: #98a84b">💲 usdash</text>
+  <text class="sub" x="774" y="240" text-anchor="end">reads new lines every second · read-only, nothing leaves your machine</text>
+  <g text-anchor="middle">
+    <rect x="46" y="256" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="156" y="279">one request per reply</text>
+    <rect x="300" y="256" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="410" y="279">its cost at list prices</text>
+    <rect x="554" y="256" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="664" y="279">cache misses, and why</text>
+    <rect x="46" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="156" y="341">a cache clock per session</text>
+    <rect x="300" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="410" y="341">the next message's price</text>
+    <rect x="554" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
+    <text class="step" x="664" y="341">advice, in dollars</text>
+  </g>
+  <path class="flow" d="M268,274 H296"/>
+  <path class="flow" d="M522,274 H550"/>
+  <path class="flow" d="M664,294 V305 H156 V314"/>
+  <path class="flow" d="M268,336 H296"/>
+  <path class="flow" d="M522,336 H550"/>
+  <path class="flow" d="M116,370 V400"/>
+  <path class="flow" d="M312,370 V400"/>
+  <path class="flow" d="M508,370 V400"/>
+  <path class="flow" d="M704,370 V400"/>
+
+  <!-- What you see -->
+  <g text-anchor="middle">
+    <rect class="card" x="26" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
+    <text class="label" x="116" y="426">Header</text>
+    <text class="sub" x="116" y="447">today's spend, hit rate,</text>
+    <text class="sub" x="116" y="463">what cache misses added</text>
+    <rect class="card" x="222" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
+    <text class="label" x="312" y="426">Sessions</text>
+    <text class="sub" x="312" y="447">cache countdown,</text>
+    <text class="sub" x="312" y="463">next message's price</text>
+    <rect class="card" x="418" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
+    <text class="label" x="508" y="426">Advice</text>
+    <text class="sub" x="508" y="447">switch model, /compact,</text>
+    <text class="sub" x="508" y="463">lower effort, in dollars</text>
+    <rect class="card" x="614" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
+    <text class="label" x="704" y="426">Request feed</text>
+    <text class="sub" x="704" y="447">every request, with</text>
+    <text class="sub" x="704" y="463">cache misses marked ⟳</text>
+  </g>
+</svg>
