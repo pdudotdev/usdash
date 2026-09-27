@@ -68,6 +68,19 @@ def test_old_files_wait_until_they_change_then_are_read_whole(tmp_path):
     assert [r.type for r in tailer.poll()] == ["custom-title", "user"]
 
 
+def test_a_followed_sessions_subagents_are_read_however_old(tmp_path):
+    # The subagents finished before the window; the session went on after it started.
+    main = tmp_path / "p" / "s1.jsonl"
+    sub = tmp_path / "p" / "s1" / "subagents" / "agent-a.jsonl"
+    other = tmp_path / "p" / "s2" / "subagents" / "agent-b.jsonl"  # its session isn't followed
+    for path in (sub, other):
+        write(path, {"type": "assistant", "timestamp": "2026-09-26T11:00:00Z"})
+        os.utime(path, (1_000_000, 1_000_000))
+    write(main, {"type": "user", "timestamp": "2026-09-26T12:00:00Z"})
+    records = Tailer(tmp_path, since=2_000_000).poll()
+    assert [(r.session, r.subagent) for r in records] == [("s1", "a"), ("s1", None)]
+
+
 def test_a_missing_folder_is_not_an_error(tmp_path):
     assert Tailer(tmp_path / "nowhere").poll() == []
 

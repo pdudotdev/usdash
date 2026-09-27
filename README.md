@@ -6,7 +6,7 @@
 
 A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, what your next message will cost, and when switching model, lowering effort or compacting saves money.
 
-It only reads files. Nothing is routed through it, nothing leaves your machine, and it changes nothing in Claude Code.
+It only reads files, plus Anthropic's public pricing page once at start (`--offline` skips even that). Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
 
 ▫️ **Why the prompt cache matters:**
 - [x] **While it's warm**, each message reads the conversation back at a tenth of the input price, or less
@@ -35,23 +35,24 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 ▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
 
-![usdash: today's spend; a live session with its cache countdown, the action to take and the price of each option; an idle session, three folded script runs and a closed session, each with what coming back to it costs](docs/dashboard.svg)
+![usdash: today's spend; a live session with its cache countdown, the action to take and the price of each option; an idle session, three folded script runs and an exited session, each with what coming back to it costs](docs/dashboard.svg)
 
-▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the request list). The second line says what the dollars are: API list prices, and on a subscription account, what the same use would cost on an API key. The bottom edge says how far back the loaded history goes.
+▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the request list). The second line says what the dollars are: Anthropic's current API list prices (if the pricing page can't be read at start, the last prices read from it, with their date), on a subscription account what the same use would cost on an API key, and that amounts can read low because the transcripts miss background requests ([Limitations](#️-limitations)).
 
 ▫️ **Each session, and how to tell which window it is:**
 
 | Shown | What it is |
 |---|---|
 | **ID** | The first 4 characters of the session id (as in `/status` and `claude --resume`), in a fixed colour per session |
-| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else Claude Code's automatic title, else the first thing you typed. Tagged with where it runs: `vscode`, `desktop`, or a script's entrypoint such as `sdk-cli`; nothing for the terminal |
-| **WHERE** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `Desktop (no folder)` for a Desktop session without one |
+| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else Claude Code's automatic title, else the first thing you typed |
+| **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `Desktop (no folder)` for a Desktop session without one |
+| **WHERE** | Where it runs: `CLI` (a terminal), `IDE` (the VS Code extension), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs) |
 | **MODEL** | The model and effort of the last request |
-| **CACHE** | `● mm:ss` while the prompt cache is warm, `○ cold · 2h` once it has expired, `closed · 3h` after `/exit`, with how long ago it was last used |
-| **CONTEXT TOKENS** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
-| **COST TODAY** · **COST TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too). Once it closes, Claude Code's own figure follows: `(CC $…)` |
+| **CACHE** | `● mm:ss` while the prompt cache is warm; `○ expired · 2h` once it has run out, in a session that's still open; `exited · 3h` after you quit it (`/exit` or closing the window). The age is how long ago the session was last used. Either way, the next message re-writes the whole conversation |
+| **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
+| **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
 
-▫️ **A live session** (its cache is still warm, and it isn't closed) opens up:
+▫️ **A live session** (its cache is still warm, and you haven't quit it) opens up:
 - `└` what you last typed in that window, and how long ago
 - the action: what to do now (`⚡` when acting right away is clearly cheaper)
 - one row per option, with what it costs:
@@ -67,13 +68,13 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 `stay` is what continuing costs: the conversation read back from the cache now, or written again after a break. Each other model (`↑` more capable, `↓` cheaper) shows what switching costs now, how much more or less each later message costs, and after how many messages a cheaper one evens out. `/effort` costs nothing on Opus 5.5 and Fable 5.1, which keep the cache; elsewhere it shows what re-writing the conversation costs.
 
-▫️ **An idle session** (cold or closed) gets one line, with what coming back to it costs on its own model and on each cheaper one:
+▫️ **An idle session** (its cache expired, or you quit it) gets one line, with what coming back to it costs on its own model and on each cheaper one:
 
 ```
 └ resuming re-sends 420k tokens: $3.36 on Opus 5.5, $1.68 on Sonnet 5, $0.65 on Haiku 4.5
 ```
 
-(`continuing` for a session you haven't closed.) A folder's closed script runs (`claude -p`, SDKs) fold into one row, so a loop of them doesn't bury your sessions.
+(`continuing` for a session you haven't quit.) A folder's finished script runs (`claude -p`, SDKs) fold into one row, so a loop of them doesn't bury your sessions.
 
 ▫️ **Exact or ≈:** an amount without `≈` is exact: the conversation's size as its last request sent it (the transcript records it), at list prices. What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of those. Amounts with `≈` are averages from the session's history, or depend on a size usdash can only estimate; see [Limitations](#️-limitations).
 
@@ -89,7 +90,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **NOTE** | `🤖 subagent` for a subagent's request; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
-- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles
+- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its one request goes to Anthropic's pricing page, at start (none with `--offline`)
 - [x] **Every surface on the machine:** terminal, VS Code extension, Desktop app Code tab, scripts
 - [x] **Subscription or API key:** the cache lifetime of each session is read from its own usage data (1 hour or 5 minutes)
 - [x] **Advice in dollars:** switching model, lowering effort, `/compact`, with the rent-or-buy rule deciding when a switch pays off
@@ -106,7 +107,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 ▫️ **Every reply:**
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
-3. Its cost is its tokens at list prices from [`usdash/pricing.yaml`](usdash/pricing.yaml)
+3. Its cost is its tokens at Anthropic's list prices: read from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) at start, else the last copy read (`~/.cache/usdash/prices.json`), else [`usdash/pricing.yaml`](usdash/pricing.yaml). A page that doesn't read as expected (other columns, prices out of line with each other) is ignored. Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage
 4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, Claude Code upgrade, or effort change
 5. The session's cache clock, what re-sending it costs, and its advice are recomputed
 
@@ -137,9 +138,9 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | 3 | `/rename checkout bug` | The name becomes `checkout bug` |
 | 4 | Keep working on Opus 5.5 | *"Stay on Opus 5.5 for now; switching is free after your next 1-hour break."*, and a price for each option |
 | 5 | `/model sonnet`, then send a message | Press `r`: a red row `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`. The header's `cache misses added` total goes up |
-| 6 | Step away until the cache expires | The session moves to IDLE, `○ cold · 1h`, with a line saying what continuing costs on each model |
+| 6 | Step away until the cache expires | The session moves to IDLE, `○ expired · 1h`, with a line saying what continuing costs on each model |
 | 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look again | `⚡` *"Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in 8:00."* |
-| 8 | `/exit` | `closed · 1m`, Claude Code's own figure `(CC $…)` after the session's cost, and what resuming costs |
+| 8 | `/exit` | `exited · 1m`, TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
 
 ## 🚀 Installation & Usage
 
@@ -172,6 +173,7 @@ usdash                    # the last 24 hours, then live
 | `--window 8h` | Show sessions active this recently | `24h` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |
+| `--offline` | Don't read Anthropic's pricing page at start; use the last prices read (the header shows their date) | off |
 
 ↑/↓, the mouse wheel or `j`/`k` scroll the sessions a session at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `r` switches to every request and back; there the same keys scroll the list, and while you're scrolled back its rows stay put and the title counts the new ones above them. `q` quits.
 
@@ -189,8 +191,10 @@ usdash                    # the last 24 hours, then live
 | Amazon Bedrock, Google Cloud | Partly: see below |
 | Windows | Not tested; use WSL |
 
-▫️ **Totals read a little low:**
-Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, and `/compact`'s own summarising request. When a session closes, Claude Code writes its own total, shown as `(CC $…)`. On the machine usdash was built on, usdash's totals were 6–18% below Claude Code's for most sessions, and 35% below for one long session with many subagents.
+▫️ **Amounts read low until a session exits:**
+Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.
+
+▫️ **Fast mode:** what a fast request cost is priced at fast mode's rates, but the advice's amounts for what comes next assume standard speed.
 
 ▫️ **Amazon Bedrock and Google Cloud:**
 Sessions appear, their cache lifetime and costs are read the same way, and Bedrock model ids like `us.anthropic.claude-opus-5-5` are recognised. But:
@@ -251,7 +255,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 | File | Role |
 |---|---|
 | [`usdash/`](usdash/) | The dashboard: transcript reader, sessions, cost engine, advice, screen |
-| [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices, with the date they were verified |
+| [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
 | [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
 | [`research/REDESIGN-PLAN.md`](research/REDESIGN-PLAN.md) | The plan for the session-first screen, and its assumptions checked against real transcripts |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |

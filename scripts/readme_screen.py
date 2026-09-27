@@ -22,7 +22,7 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 OUT = ROOT / "docs" / "dashboard.svg"
-WIDTH, HEIGHT = 140, 24
+WIDTH, HEIGHT = 140, 25
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
 
@@ -68,7 +68,7 @@ def sessions() -> Store:
 
 
 def main() -> None:
-    view = ui.View(now=T + 480 + 1380, subscription=True, prices_verified="2026-09-26")
+    view = ui.View(now=T + 480 + 1380, subscription=True)
     console = Console(record=True, width=WIDTH, height=HEIGHT, color_system="truecolor", file=io.StringIO())
     console.print(ui.render(sessions(), view, HEIGHT))
     if "--text" in sys.argv:

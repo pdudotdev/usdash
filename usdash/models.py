@@ -50,6 +50,13 @@ def pretty_model(model_id: str | None) -> str:
     return f"{match.group(1).capitalize()} {match.group(2).replace('-', '.')}"
 
 
+def model_version(family: str | None) -> tuple[int, int] | None:
+    """A family key's version: 'claude-opus-4-6' -> (4, 6), 'claude-opus-5' -> (5, 0),
+    'claude-3-5-haiku' -> (3, 5); None if it has none."""
+    match = re.fullmatch(r"claude-(?:[a-z]+-)?(\d+)(?:-(\d{1,2}))?(?:-[a-z]+)?", family or "")
+    return (int(match.group(1)), int(match.group(2) or 0)) if match else None
+
+
 def convert_tokens(tokens: float, source: str | None, target: str | None) -> float:
     """A token count on one model's tokenizer -> roughly the same text on another's."""
     small_source, small_target = source in SMALL_TOKENIZER, target in SMALL_TOKENIZER

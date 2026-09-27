@@ -4,9 +4,11 @@
     usdash --since 2d       # load more history first
     usdash --window 8h      # show sessions active this recently (default 24h)
     usdash --once           # print one screen and exit (no live view)
+    usdash --offline        # don't read the pricing page; use the last prices read
 
-Read-only: it reads Claude Code's transcripts on this machine and nothing
-leaves it. Scroll the request feed with the arrow keys, the mouse wheel or
+Read-only: it reads Claude Code's transcripts on this machine, and nothing
+about them leaves it. At start it reads Anthropic's pricing page (one
+request, sending nothing about you), unless --offline. Scroll the request feed with the arrow keys, the mouse wheel or
 j/k, a page with space/b, jump to the newest with g and the oldest with G;
 q quits.
 """
@@ -24,7 +26,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 
-from .prices import load_prices, prices_verified
+from .prices import current_prices, fetch_prices, load_prices, prices_verified
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
 from .ui import View, press, render, track_feed
@@ -78,6 +80,20 @@ def duration(text: str) -> int:
     return int(match.group(1)) * {"m": 60, "h": 3600, "d": 86400}[match.group(2)]
 
 
+def prices_label(as_of: str | None, offline: bool) -> str:
+    """How the header names the prices: read from the pricing page now, or
+    the last ones read, with their date and why they weren't refreshed."""
+    if as_of is None:
+        return "current API list prices"
+    try:
+        day = datetime.strptime(as_of, "%Y-%m-%d")
+        as_of = f"{day:%b} {day.day}"
+    except ValueError:
+        pass
+    why = "offline" if offline else "couldn't refresh them"
+    return f"API list prices of {as_of} ({why})"
+
+
 def start_of_today(now: float) -> float:
     return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
@@ -91,12 +107,13 @@ def history_start(now: float, since: int | None, window: int) -> float:
 
 
 class App:
-    def __init__(self, projects: Path, since: float, window: int, clock=time.time) -> None:
+    def __init__(self, projects: Path, since: float, window: int, clock=time.time,
+                 prices: dict | None = None, label: str | None = None) -> None:
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
-        self.store = Store(load_prices())
+        self.store = Store(prices or load_prices())
         self.view = View(now=clock(), subscription=subscription_account(), window=window,
-                         prices_verified=prices_verified())
+                         prices=label or prices_label(prices_verified(), offline=True))
         self.desktop_read = 0.0
 
     def poll(self) -> bool:
@@ -125,12 +142,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--projects", type=Path, default=None,
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")
+    parser.add_argument("--offline", action="store_true",
+                        help="don't read Anthropic's pricing page at start; use the last prices read")
     args = parser.parse_args(argv)
 
     now = time.time()
     since = history_start(now, args.since, args.window)
     projects = (args.projects or default_projects_dir()).expanduser()
-    app = App(projects, since, args.window)
+    prices, as_of = current_prices((lambda: None) if args.offline else fetch_prices)
+    app = App(projects, since, args.window, prices=prices, label=prices_label(as_of, args.offline))
     if not projects.is_dir():
         print(f"usdash: no Claude Code transcripts at {projects} (use --projects)", file=sys.stderr)
     app.poll()

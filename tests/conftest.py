@@ -25,6 +25,12 @@ DESKTOP_SESSION = "92880323-95fc-4d70-81a3-fd13ff9ee971"  # Desktop app Code tab
 RECAP = "61cc6050-12d0-451b-9ae5-49d54c851af6"  # CLI with an away_summary recap
 
 
+@pytest.fixture(autouse=True)
+def saved_prices_elsewhere(tmp_path, monkeypatch):
+    """Keep the pricing page's saved copy out of the real cache folder."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+
 @pytest.fixture(scope="session")
 def fixture_store() -> Store:
     store = Store(PRICES)

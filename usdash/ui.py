@@ -23,7 +23,8 @@ from .engine import cache_clock, comeback, context
 from .models import pretty_model
 from .sessions import Request, Session, Store, day_of, snippet
 
-MODEL_STYLES = {"Opus": "magenta", "Sonnet": "blue", "Haiku": "green", "Fable": "yellow"}
+MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
+APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
 HEADER_HEIGHT = 4
 GAP = "  "
@@ -36,7 +37,7 @@ class View:
     now: float
     subscription: bool = False
     window: int = 24 * 3600  # sessions idle longer than this are hidden
-    prices_verified: str = "?"
+    prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
     unknown_types: int = 0
     mode: str = "sessions"  # or "requests"
     session_scroll: int = 0  # sessions hidden above the view
@@ -97,15 +98,14 @@ def model_style(model: str | None) -> str:
 def model_text(model: str | None, effort: str | None = None) -> Text:
     text = Text(pretty_model(model), style=model_style(model))
     if effort:
-        text.append(f" {effort}", style="dim")
+        text.append(f" {effort}")
     return text
 
 
-def surface(session: Session) -> str | None:
-    """Where a session runs, when not a plain terminal: 'vscode', 'desktop' or a scripted entrypoint."""
-    if session.scripted:
-        return session.entrypoint or "script"
-    return {"claude-vscode": "vscode", "claude-desktop": "desktop"}.get(session.entrypoint or "")
+def app_name(session: Session) -> str:
+    """Where a session runs: CLI, IDE (the VS Code extension), Desktop, or
+    script (`claude -p`, the SDKs); '?' if its transcript doesn't say."""
+    return "script" if session.scripted else APPS.get(session.entrypoint or "", "?")
 
 
 def visible_sessions(store: Store, view: View) -> list[Session]:
@@ -135,17 +135,17 @@ def header(store: Store, view: View) -> Panel:
         parts = ", ".join(f"{reason} {_money(cost)}" for reason, cost in sorted(rewrites.items(), key=lambda i: -i[1]))
         # What requests paid to write the conversation again instead of reading it back (the feed's ⟳ rows).
         line.append(f"  ·  ⟳ cache misses added {_money(total)} ({parts})", style="red")
-    prices = f"API list prices ({view.prices_verified})"
     detail = Text(
-        f"What this would cost at {prices}; your subscription isn't billed per token" if view.subscription
-        else f"Estimated at {prices}",
+        f"At {view.prices}; your subscription isn't billed per token" if view.subscription
+        else f"Estimated at {view.prices}",
         style="dim", no_wrap=True, overflow="ellipsis",
     )
+    # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
+    # summary); an exited session's TOTAL is Claude Code's own, which counts them.
+    detail.append("  ·  amounts can read low: transcripts miss background requests")
     if view.unknown_types:
         detail.append(f"  ·  {view.unknown_types} records of unknown types (newer Claude Code?)", style="yellow")
-    since = f"history from {datetime.fromtimestamp(store.first):%a %H:%M}" if store.first else "waiting for transcripts"
-    return Panel(Group(line, detail), title=Text("💲 usdash · live", style="bold"),
-                 subtitle=Text(since, style="dim"), title_align="left")
+    return Panel(Group(line, detail), title=Text("💲 usdash · live", style="bold"), title_align="left")
 
 
 # --- Tables ------------------------------------------------------------------------
@@ -192,10 +192,8 @@ def header_lines(columns, names: list[list[str]], widths: list[int], trailing: s
 # --- Sessions ----------------------------------------------------------------------
 
 # Which session first, then its state and its numbers: a narrow terminal cuts from the right.
-# The last, unnamed column is Claude Code's own total once a session closes: apart, so it
-# doesn't widen the one before.
-SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("WHERE", False), ("MODEL", False), ("CACHE", False),
-                   ("CONTEXT\nTOKENS", True), ("COST\nTODAY", True), ("COST\nTOTAL", True), ("", False))
+SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("PROJECT", False), ("WHERE", False), ("MODEL", False),
+                   ("CACHE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True))
 
 
 @dataclass
@@ -210,10 +208,10 @@ def cache_cell(session: Session, view: View) -> Text:
     warm, left, _ = cache_clock(session, view.now)
     age = age_text(view.now - (session.last_activity or view.now))
     if session.ended:
-        return Text(f"closed · {age}", style="dim")
+        return Text(f"exited · {age}", style="dim")
     if warm:
         return Text(f"● {clock(left)}", style="green")
-    return Text(f"○ cold · {age}", style="red")
+    return Text(f"○ expired · {age}", style="red")
 
 
 def today_cell(cost: float) -> Text:
@@ -222,14 +220,11 @@ def today_cell(cost: float) -> Text:
 
 def session_cells(store: Store, session: Session, view: View) -> list[Text]:
     name = Text(snippet(session.name, 26) or "", style="bold")
-    if tag := surface(session):
-        name.append(f" {tag}", style="dim")
     ctx = context(store, session)
     size = Text(("" if ctx is None or ctx.exact else "≈") + _tokens(ctx.tokens if ctx else None))
-    own_total = Text(f"(CC {_money(session.cost_state)})" if session.cost_state is not None else "", style="dim")
-    return [session_tag(session), name, Text(snippet(session.where, 18) or "", style="dim"),
-            model_text(session.model, session.effort), cache_cell(session, view), size,
-            today_cell(session.cost_by_day.get(day_of(view.now), 0.0)), Text(_money(session.cost_total)), own_total]
+    return [session_tag(session), name, Text(snippet(session.project, 18) or "", style="dim"),
+            Text(app_name(session), style="dim"), model_text(session.model, session.effort), cache_cell(session, view), size,
+            today_cell(session.cost_by_day.get(day_of(view.now), 0.0)), Text(_money(session.total))]
 
 
 def prompt_line(session: Session, view: View) -> Text:
@@ -275,11 +270,11 @@ def script_runs(runs: list[Session], view: View) -> Entry:
     latest = max(runs, key=lambda s: s.last_activity or 0)
     today = sum(s.cost_by_day.get(day_of(view.now), 0.0) for s in runs)
     name = Text(plural(len(runs), "run"), style="bold")
-    name.append(f" {surface(latest)}", style="dim")
     age = age_text(view.now - (latest.last_activity or view.now))
-    return Entry(False, [Text(""), name, Text(snippet(latest.where, 18) or "", style="dim"),
-                         model_text(latest.model), Text(f"closed · {age}", style="dim"), Text(""),
-                         today_cell(today), Text(_money(sum(s.cost_total for s in runs))), Text("")])
+    return Entry(False, [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
+                         Text(app_name(latest), style="dim"), model_text(latest.model),
+                         Text(f"exited · {age}", style="dim"), Text(""),
+                         today_cell(today), Text(_money(sum(s.total for s in runs)))])
 
 
 def session_entries(store: Store, view: View) -> list[Entry]:
@@ -309,14 +304,18 @@ def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
 
 def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: int) -> tuple[list[Text], int]:
     """The lines of the sessions from `start` on that fit in `room`, each
-    section under its label, and how many sessions that is: at least one (a
-    live block taller than the room is cut, not skipped)."""
+    section under its label and a dim line between sessions, and how many
+    sessions that is: at least one (a live block taller than the room is cut,
+    not skipped)."""
     lines, shown, section = [], 0, None
     for entry, block in zip(entries[start:], blocks[start:]):
-        label = [Text("LIVE" if entry.live else "IDLE", style="bold dim")] if entry.live != section else []
-        if shown and len(lines) + len(label) + len(block) > room:
+        if entry.live != section:
+            head = [Text("LIVE" if entry.live else "IDLE", style="bold dim")]
+        else:
+            head = [Text("─" * 500, style="dim", no_wrap=True, overflow="crop")]  # cut at the panel's edge
+        if shown and len(lines) + len(head) + len(block) > room:
             break
-        lines += label + block
+        lines += head + block
         section, shown = entry.live, shown + 1
     return lines, shown
 
@@ -329,8 +328,8 @@ def sessions_panel(store: Store, view: View, rows: int) -> Panel:
     title = f"sessions · last {window} · {live} live · {len(entries) - live} idle"
     subtitle = Text("↑↓/wheel/j/k: scroll · r: every request · q: quit", style="dim")
     if not entries:
-        return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"), title=title,
-                     title_align="left", subtitle=subtitle, subtitle_align="right")
+        return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"),
+                     title=Text(title, style="bold"), title_align="left", subtitle=subtitle, subtitle_align="right")
     names, widths = column_widths(SESSION_COLUMNS, [entry.cells for entry in entries])
     lines = header_lines(SESSION_COLUMNS, names, widths)
     blocks = [entry_lines(SESSION_COLUMNS, widths, entry) for entry in entries]
@@ -349,7 +348,8 @@ def sessions_panel(store: Store, view: View, rows: int) -> Panel:
         title += f" · {first}–{view.session_scroll + shown} of {len(entries)}"
     if view.session_scroll:
         subtitle = Text("g: back to the top", style="bold yellow")
-    return Panel(Group(*lines[:rows]), title=title, subtitle=subtitle, title_align="left", subtitle_align="right")
+    return Panel(Group(*lines[:rows]), title=Text(title, style="bold"), subtitle=subtitle, title_align="left",
+                 subtitle_align="right")
 
 
 # --- Feed --------------------------------------------------------------------------
@@ -404,7 +404,8 @@ def feed_panel(store: Store, view: View, rows: int) -> Panel:
         title = f"requests · {total}" if total > len(shown) else "requests"
         subtitle = Text("↑↓/wheel/j/k: scroll · space/b: page · g/G: newest/oldest · r: sessions · q: quit",
                         style="dim")
-    return Panel(Group(*lines), title=title, subtitle=subtitle, title_align="left", subtitle_align="right")
+    return Panel(Group(*lines), title=Text(title, style="bold"), subtitle=subtitle, title_align="left",
+                 subtitle_align="right")
 
 
 # --- Scrolling ---------------------------------------------------------------------

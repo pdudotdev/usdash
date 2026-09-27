@@ -99,7 +99,8 @@ class Tailer:
 
     Files last written before `since` are left alone until they change (a
     resumed session), and are then read from the start: the session's name
-    and history are in its early lines."""
+    and history are in its early lines. A followed session's subagent files
+    are read whatever their age."""
     root: Path
     since: float = 0.0
     # How often to look for new transcript files. In between, only the files
@@ -114,7 +115,8 @@ class Tailer:
     def transcripts(self) -> list[Path]:
         if not self.root.is_dir():
             return []
-        return sorted([*self.root.glob("*/*.jsonl"), *self.root.glob("*/*/subagents/*.jsonl")])
+        # Main transcripts first: whether a subagent's file is read depends on its session's.
+        return sorted(self.root.glob("*/*.jsonl")) + sorted(self.root.glob("*/*/subagents/*.jsonl"))
 
     def poll(self) -> list[Record]:
         """Everything written since the last poll, oldest first. A file found
@@ -132,7 +134,7 @@ class Tailer:
                 continue
             state = self.files.get(path)
             if state is None:
-                if stat.st_mtime < self.since:
+                if stat.st_mtime < self.since and not self._session_followed(path):
                     continue
                 state = self.files[path] = _Followed()
             if stat.st_size < state.offset:
@@ -144,6 +146,11 @@ class Tailer:
         # several files should still arrive in the order it happened.
         records.sort(key=lambda record: record.at)
         return records
+
+    def _session_followed(self, path: Path) -> bool:
+        """Whether this is a subagent's transcript of a session being followed:
+        its requests are part of that session's cost, however long ago they ran."""
+        return path.parent.name == "subagents" and path.parent.parent.with_suffix(".jsonl") in self.files
 
     def _read(self, path: Path, state: _Followed) -> list[Record]:
         try:

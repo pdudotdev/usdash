@@ -192,8 +192,8 @@ def test_a_recap_restarts_the_cache_clock(fixture_store, store):
 
 def test_names_from_each_surface(fixture_store):
     cli, vscode, desktop = (fixture_store.sessions[s] for s in (NO_REQUEST_IDS, VSCODE, DESKTOP_SESSION))
-    assert (cli.name, cli.where, cli.entrypoint) == ("Test plan vs test case", "company-client", "cli")
-    assert (vscode.name, vscode.where, vscode.entrypoint) == ("Pong reply", "llm-trunk", "claude-vscode")
+    assert (cli.name, cli.project, cli.entrypoint) == ("Test plan vs test case", "company-client", "cli")
+    assert (vscode.name, vscode.project, vscode.entrypoint) == ("Pong reply", "llm-trunk", "claude-vscode")
     # The name set in the Desktop app, also written to the transcript as a custom title.
     assert (desktop.name, desktop.entrypoint) == ("Three-word greeting", "claude-desktop")
     assert desktop.desktop_title == "Three-word greeting"
@@ -260,7 +260,7 @@ def test_where(store, cwd, branch, where):
     t = Transcript(cwd=cwd, branch=branch)
     t.user("hi", T0)
     t.into(store)
-    assert store.sessions["sess-1"].where == where
+    assert store.sessions["sess-1"].project == where
 
 
 def test_desktop_titles_and_archived_sessions(tmp_path, store):
@@ -284,9 +284,12 @@ def test_closing_and_resuming(store):
     t.into(store)
     session = store.sessions["sess-1"]
     assert session.ended and session.cost_state == 0.5
+    assert session.total == 0.5  # Claude Code's own, above the transcripts' $0.32
     t.turn(T0 + 600, write=40_000)
     t.into(store)
     assert not session.ended
+    # Resumed: Claude Code's total so far, plus what the transcripts show since; never lower.
+    assert session.total == pytest.approx(0.5 + (40_000 * 8 + 2 * 4 + 100 * 20) / 1e6)
 
 
 def test_scripted_sessions(store):

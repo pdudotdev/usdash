@@ -16,7 +16,7 @@ from pathlib import Path
 from statistics import median
 
 from .models import convert_tokens, effort_keeps_cache, model_key, pretty_model
-from .prices import FIVE_MINUTES, ONE_HOUR, request_cost, usage_parts, write_price
+from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, request_cost, usage_parts, write_price
 from .transcripts import Record, account_file
 
 FEED_HISTORY = 10_000
@@ -172,7 +172,8 @@ class Session:
     last_prompt_at: float | None = None
     last_activity: float | None = None
     ended: bool = False  # Claude Code wrote its closing cost-state, and nothing since
-    cost_state: float | None = None  # Claude Code's own total, written when the session closes
+    cost_state: float | None = None  # Claude Code's own total, written when the session exits
+    cost_at_state: float = 0.0  # cost_total when Claude Code last wrote it
     compact_post_tokens: int | None = None
     requests: dict[str, Request] = field(default_factory=dict)
     chains: dict[str, ChainState] = field(default_factory=lambda: defaultdict(ChainState))
@@ -201,7 +202,8 @@ class Session:
         )
 
     @property
-    def where(self) -> str:
+    def project(self) -> str:
+        """The folder it runs in, plus @branch unless it's main, master or a detached HEAD."""
         cwd = self.cwd or ""
         if "/Library/Application Support/Claude/" in cwd:
             folder = "Desktop (no folder)"
@@ -213,7 +215,7 @@ class Session:
 
     @property
     def label(self) -> str:
-        return f"{self.name} · {self.where}"
+        return f"{self.name} · {self.project}"
 
     @property
     def short_id(self) -> str:
@@ -294,6 +296,17 @@ class Session:
         total, count = self.output_totals(model, effort)
         return total / count if count else None
 
+    @property
+    def total(self) -> float:
+        """What the session has cost since it started: Claude Code's own total
+        at its last exit, which counts requests the transcripts never log
+        (titles, prompt suggestions, /compact's summary, ...), plus what the
+        transcripts show since. It carries across resumes. Only the
+        transcripts, if it never exited."""
+        if self.cost_state is None:
+            return self.cost_total
+        return self.cost_state + self.cost_total - self.cost_at_state
+
 
 class Store:
     """All sessions, the live feed, and each day's totals."""
@@ -310,7 +323,6 @@ class Store:
         # (folder, entrypoint) -> (tokens, model family): the tool list and system prompt as a
         # request right after /compact read them back from the cache
         self.measured_prefix: dict[tuple, tuple[int, str | None]] = {}
-        self.first: float | None = None
         self.revision = 0  # bumped on every change to any request
         self._memo: tuple = (-1, None)  # see memo()
 
@@ -331,8 +343,6 @@ class Store:
         """Take in one record; returns a request when it's one not seen before."""
         session = self.session(record.session)
         data, kind = record.data, record.type
-        if record.when is not None:
-            self.first = min(self.first or record.when, record.when)
         uuid = data.get("uuid")
         if uuid:
             message_id = (data.get("message") or {}).get("id") if kind == "assistant" else None
@@ -363,7 +373,7 @@ class Store:
         elif kind == "last-prompt" and data.get("lastPrompt") and not session.last_prompt:
             session.last_prompt = " ".join(str(data["lastPrompt"]).split())
         elif kind == "cost-state" and isinstance(data.get("totalCostUSD"), (int, float)):
-            session.cost_state = float(data["totalCostUSD"])
+            session.cost_state, session.cost_at_state = float(data["totalCostUSD"]), session.cost_total
             session.ended = True
         elif kind == "system" and not record.subagent:
             main = session.main
@@ -430,6 +440,8 @@ class Store:
         price = self.prices.get(model_key(model))
         if price is None:
             self.unpriced[model_key(model)] += 1 if old is None else 0
+        else:
+            price = as_paid(price, usage, model_key(model))  # fast mode, US-only inference
         request.cost = request_cost(usage, price) if price else None
         self._classify(request, price)
         self._account(session, request, +1)

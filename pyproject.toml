@@ -9,7 +9,7 @@ description = "A live terminal dashboard of your own Claude Code token costs and
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"
-dependencies = ["rich>=13", "pyyaml>=6"]
+dependencies = ["rich>=13", "pyyaml>=6", "certifi"]
 
 [project.scripts]
 usdash = "usdash.app:main"

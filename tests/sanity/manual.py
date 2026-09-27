@@ -17,8 +17,8 @@ to go back to the sessions.
 |---|---|---|---|
 | 1 | Open two Claude Code windows in the same repo (say `shop`), and a third in a worktree of it on another branch (`git worktree add ../shop-fix -b fix`). Send a different message in each | Three live sessions. You can tell which is which from SESSION (your first words, until Claude Code titles the session), WHERE (`shop`, `shop-fix@fix`) and the `└` line (what you last typed there), without looking at the ID | Rows must map to your windows, not to session ids |
 | 2 | In one window, `/rename parser work` | Its SESSION becomes `parser work` within a second or two | A rename beats the automatic title |
-| 3 | One session each in the terminal, the VS Code extension and the Desktop app's Code tab | All three appear within about 5 seconds of their first message. VS Code is tagged `vscode`; Desktop is tagged `desktop` and shows the sidebar's title | All local surfaces write to the same transcripts folder |
-| 4 | In one folder, run `claude -p "say hi"` twice | One IDLE row: `2 runs sdk-cli`, `closed · …`, with their summed cost | A loop of script runs mustn't bury the real sessions |
+| 3 | One session each in the terminal, the VS Code extension and the Desktop app's Code tab | All three appear within about 5 seconds of their first message. WHERE says `CLI`, `IDE` and `Desktop`, and the Desktop one shows the sidebar's title | All local surfaces write to the same transcripts folder |
+| 4 | In one folder, run `claude -p "say hi"` twice | One IDLE row: `2 runs`, WHERE `script`, `exited · …`, with their summed cost | A loop of script runs mustn't bury the real sessions |
 | 5 | Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal | That session appears; your laptop's sessions don't | usdash shows the sessions of the machine it runs on |
 | 6 | In the Desktop app, archive a session that usdash lists | It leaves the list within about 10 seconds; its requests stay in the request list | Archived sessions are done with |
 | 7 | Restart with `usdash --window 30m` while one session has been idle for more than 30 minutes | The pane title says `last 30m`, and the idle session isn't listed | `--window` decides which sessions are listed |
@@ -28,10 +28,10 @@ to go back to the sessions.
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
 | 8 | Send a message, then watch the session | It's under LIVE. CACHE shows `● 59:xx` on a subscription, `● 4:xx` on an API key, counting down, and back near the top after each message. Its `stay` row reads `re-sends …k tokens: $… now, $… after a break`, with the same token count as CONTEXT TOKENS | The lifetime comes from the session's own usage, counted from the request's start |
-| 9 | Leave a session idle past its cache lifetime | It moves to IDLE with `○ cold · …`, and its line reads `└ continuing re-sends …k tokens: $… on <its model>, …` | A break re-writes the conversation whatever you do, so a cheaper model re-writes for less |
-| 10 | Quit a session (`/exit`) | `closed · 1m`, `(CC $…)` after COST TOTAL, a `└ resuming re-sends …` line, and no advice | Claude Code writes its own total when a session closes |
+| 9 | Leave a session idle past its cache lifetime | It moves to IDLE with `○ expired · …`, and its line reads `└ continuing re-sends …k tokens: $… on <its model>, …` | A break re-writes the conversation whatever you do, so a cheaper model re-writes for less |
+| 10 | Quit a session (`/exit`) | `exited · 1m`, TOTAL switches to Claude Code's own figure (usually a little higher), a `└ resuming re-sends …` line, and no advice | Claude Code writes its own total, which counts the requests transcripts miss, when a session exits |
 | 11 | `claude --resume` the session from test 10 and send a message | The same ID comes back under LIVE, with a countdown | Resuming appends to the same transcript |
-| 12 | Look at the header | `TODAY $…` and the share of input read from cache. On a subscription account, the second line says `What this would cost at API list prices (…); your subscription isn't billed per token`; on an API-key account, `Estimated at API list prices (…)` | A subscription isn't billed per token: its dollars are for comparison |
+| 12 | Look at the header | `TODAY $…` and the share of input read from cache. On a subscription account, the second line says `At current API list prices; your subscription isn't billed per token`; on an API-key account, `Estimated at current API list prices`; then `amounts can read low: transcripts miss background requests` | A subscription isn't billed per token: its dollars are for comparison |
 
 ### Re-writes and advice
 
@@ -42,7 +42,7 @@ to go back to the sessions.
 | 15 | In an Opus 5.5 session, `/effort low` and send a message. Then do the same in a Sonnet 5 session | Opus 5.5: its next row has no `⟳` note, and CACHED stays high. Sonnet 5: `⟳ re-wrote …: effort change`, and before the change its `/effort` row said `re-sends …k tokens: $… more now` | Only Opus 5.5 and Fable 5.1 keep the cache when effort changes |
 | 16 | On Opus 5.5 at high effort, send a few messages that need some thought. `/effort low` and send a couple more, then `/effort high` and send one | `💡 Try /effort low: ≈$… less a message, at no cost now.` and an `/effort low` row, if the low-effort replies were at least ~250 output tokens shorter (the $0.005 threshold) | The estimate compares this session's own replies at each effort |
 | 17 | In a session over 100k tokens, wait until less than 10 minutes of cache remain (2.5 minutes on a 5-minute cache) | `⚡ Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in m:ss.` | /compact reads the cache while it's warm and re-writes everything after a break |
-| 18 | `/compact` | Before you send anything: CONTEXT TOKENS shows `≈` (the tool list plus the summary), the `stay` amounts drop, and the `/compact` row is gone. After the next message: CONTEXT TOKENS shows its new size without `≈`, and that request's row reads most of its prompt from cache | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
+| 18 | `/compact` | Before you send anything: CONTEXT shows `≈` (the tool list plus the summary), the `stay` amounts drop, and the `/compact` row is gone. After the next message: CONTEXT shows its new size without `≈`, and that request's row reads most of its prompt from cache | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
 | 19 | In a clean folder, start sessions A and B, with no file edits in between. Build up some context in B on Opus 5.5. In A, `/model haiku` and send a message. Right away, `/compact` in B | B's action says `Switch to Haiku 4.5 now: it's already cheaper.` Then `/model haiku` in B and send a message: B's new row has CACHED well above 0% and no `⟳` note | Sessions in the same folder share the cached tool list and system prompt on each model |
 
 ### Request list
@@ -76,7 +76,10 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | 30 | Run `usdash` with no options while a session from yesterday afternoon (under 24 hours ago) and one from two days ago exist | The title says `last 24h`; yesterday's session is listed, the older one isn't | The default window is 24 hours |
 | 31 | In a warm Opus 5.5 session, note the `↓ Haiku 4.5` row's "evens out after ≈N messages", then keep sending messages without a break | After about N messages (often a few more: the switch costs more as the conversation grows), the action becomes `Switch to Haiku 4.5 now: it would have saved $… by now; switching costs $….` | The rent-or-buy rule checks every cheaper model, not only the nearest |
 
-**Overall pass:** a closed session's COST TOTAL is close to Claude Code's own `(CC $…)`, usually a little lower (background requests aren't in the transcripts; the README's Limitations has the measured gap). On an API key, a session's COST TOTAL is also close to `/cost` in that session. Nothing in the header says `records of unknown types`.
+| 32 | Start usdash with the network off, then again with `--offline` | The header says `API list prices of <date> (couldn't refresh them)`, then `(offline)`, with the date of the last prices read, and the amounts don't change | It falls back to the last prices it read, and says how fresh they are |
+| 33 | Start usdash with the network on, then look at `~/.cache/usdash/prices.json` | The header says `current API list prices`; the file has today's date and the page's models | The copy it falls back to is refreshed on every start |
+
+**Overall pass:** after `/exit`, a session's TOTAL is Claude Code's own figure. On an API key, a session's TOTAL is also close to `/cost` in that session (a little lower while it's open: background requests aren't in the transcripts; the README's Limitations has the measured gap). Nothing in the header says `records of unknown types`.
 """
 
 if __name__ == "__main__":

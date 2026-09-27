@@ -50,11 +50,11 @@ def test_sessions_are_told_apart_by_name_place_and_id(store):
     two_sessions(store)
     text = screen(store, ui.View(now=NOW, subscription=True))
     a = block(text, "aaaa")
-    assert "Fix checkout totals" in a[0] and "shop@checkout-fix" in a[0] and "Opus 5.5 high" in a[0]
+    assert "Fix checkout totals" in a[0] and "shop@checkout-fix  CLI" in a[0] and "Opus 5.5 high" in a[0]
     assert "● 50:00" in a[0] and " sub" not in a[0]  # the countdown shows the lifetime; no billing tag
     assert '└ 10m ago · "ok, fix it and add a test"' in a[1]  # what was last typed in that window
     b = block(text, "bbbb")
-    assert "Release notes vscode" in b[0] and "shop " in b[0] and "○ cold · 10m" in b[0]
+    assert "Release notes" in b[0] and "shop               IDE" in b[0] and "○ expired · 10m" in b[0]
 
 
 def test_sections_and_counts(store):
@@ -85,27 +85,27 @@ def test_an_idle_session_shows_what_coming_back_costs(store):
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    assert "closed · 10m" in b[0] and b[1].strip("│ ").startswith("└ resuming re-sends 30k tokens: ")
+    assert "exited · 10m" in b[0] and b[1].strip("│ ").startswith("└ resuming re-sends 30k tokens: ")
 
 
 def test_the_session_numbers_say_what_they_are(store):
     two_sessions(store)
     lines = screen(store, ui.View(now=NOW)).splitlines()
     i = next(n for n, line in enumerate(lines) if "SESSION" in line and "CACHE" in line)
-    assert lines[i - 1].split() == ["│", "CONTEXT", "COST", "COST", "│"]
-    assert lines[i].split()[-4:] == ["TOKENS", "TODAY", "TOTAL", "│"]
+    assert lines[i].split()[1:-1] == ["ID", "SESSION", "PROJECT", "WHERE", "MODEL", "CACHE", "CONTEXT", "TODAY", "TOTAL"]
+    assert lines[i - 1].startswith("╭─ sessions")  # one line of names
 
 
-def test_claude_codes_own_total_does_not_widen_the_total_column(store):
+def test_an_exited_sessions_total_is_claude_codes_own(store):
     two_sessions(store)
     closing = Transcript(session="bbbb-2222")
-    closing.record("cost-state", totalCostUSD=12.345)
+    closing.record("cost-state", totalCostUSD=12.345)  # it counts requests the transcripts never log
     closing.into(store)
     lines = screen(store, ui.View(now=NOW)).splitlines()
+    exited = next(line for line in lines if "bbbb" in line and "Release notes" in line)
+    assert exited.split()[-3:] == ["$0.08", "$12.35", "│"]  # TODAY from the transcripts, TOTAL Claude Code's
     open_row = next(line for line in lines if "aaaa" in line and "Fix checkout totals" in line)
-    closed_row = next(line for line in lines if "bbbb" in line and "Release notes" in line)
-    # Both totals end in the same place; Claude Code's figure comes after, in its own column.
-    assert len(open_row.rstrip(" │")) == closed_row.index("  (CC $12.35)")
+    assert open_row.split()[-2] == "$0.42" and "(CC" not in "\n".join(lines)
 
 
 def test_context_is_approximate_right_after_compact(store):
@@ -136,10 +136,10 @@ def test_closed_script_runs_fold_into_one_row(store):
     still_open.turn(T0 + 200, text="summarize the log", write=20_000, ttl="5m")
     still_open.into(store)
     text = screen(store, ui.View(now=T0 + 3600))
-    rows = [line for line in text.splitlines() if "sdk-cli" in line]
+    rows = [line for line in text.splitlines() if " script " in line]
     assert len(rows) == 2
-    assert "3 runs sdk-cli" in rows[1] and "jobs" in rows[1] and "closed · " in rows[1]
-    assert "summarize the log sdk-cli" in rows[0]  # an open run shows like any session
+    assert "3 runs" in rows[1] and "jobs" in rows[1] and "exited · " in rows[1]
+    assert "summarize the log" in rows[0]  # an open run shows like any session
     assert text.count("└ ") == 1  # only the open run has a line under it
     assert "0 live · 2 idle" in text
 
@@ -169,7 +169,7 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
         idle.into(store)
     view = ui.View(now=NOW)
     text = screen(store, view, height=30)
-    assert "· 1–7 of 14" in text and len(block(text, "aaaa")) == 8  # the live one, whole, and six idle
+    assert "· 1–5 of 14" in text and len(block(text, "aaaa")) == 8  # the live one, whole, and four idle
     ui.press(store, view, "down")
     text = screen(store, view, height=30)
     assert "aaaa" not in text and "· 2–" in text and "g: back to the top" in text
@@ -238,9 +238,10 @@ def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
     text = screen(store, ui.View(now=T0 + 60 + 7300))
     assert "TODAY $" in text and "of input read from cache" in text
     assert "⟳ cache misses added $" in text and "(cache expired $" in text
-    assert "Estimated at API list prices (" in text and "subscription" not in text  # an API-key account
+    assert "Estimated at current API list prices  ·  amounts can read low: transcripts miss background requests" in text
+    assert "subscription" not in text  # an API-key account
     subscription = screen(store, ui.View(now=T0 + 60 + 7300, subscription=True))
-    assert "What this would cost at API list prices (?); your subscription isn't billed per token" in subscription
+    assert "At current API list prices; your subscription isn't billed per token  ·  amounts can" in subscription
     feed = screen(store, ui.View(now=T0 + 60 + 7300, mode="requests"))
     assert "⟳ re-wrote 42k: cache expired (idle 120 min)" in feed
 
@@ -253,8 +254,9 @@ def test_the_requests_view_marks_subagents(fixture_store):
 def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store):
     last = max(s.last_activity for s in fixture_store.sessions.values())
     text = screen(fixture_store, ui.View(now=last + 60, window=10 ** 9), height=80)
-    assert "closed · " in text and "(CC $" in text and "└ resuming re-sends" in text
-    assert "Three-word greeting desktop" in text and "List .claude/skills" in text
+    assert "exited · " in text and "└ resuming re-sends" in text
+    assert "List .claude/skills" in text
+    assert "Desktop" in next(line for line in text.splitlines() if "Three-word greeting" in line)
 
 
 def test_scrolling_the_feed(store):
@@ -335,7 +337,7 @@ def test_bad_duration(text):
 def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))  # no account file: API wording
     monkeypatch.setenv("COLUMNS", "200")
-    app.main(["--projects", str(PROJECTS), "--since", "3650d", "--window", "3650d", "--once"])
+    app.main(["--projects", str(PROJECTS), "--since", "3650d", "--window", "3650d", "--once", "--offline"])
     out = capsys.readouterr().out
     assert "usdash · live" in out and "Test plan vs test case" in out and "Pong reply" in out
 
@@ -367,9 +369,9 @@ def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
     t.record("system", T0 + 7310, subtype="compact_boundary", compactMetadata={"postTokens": 2_000})
     t.turn(T0 + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
     t.into(store)
-    text = screen(store, ui.View(now=T0 + 7400, prices_verified="2026-09-26"), width=90)
+    text = screen(store, ui.View(now=T0 + 7400, prices=app.prices_label("2026-09-26", offline=False)), width=90)
     assert "cache misses added" in text
-    assert "Estimated at API list prices (2026-09-26)" in text
+    assert "Estimated at API list prices of Sep 26 (couldn't refresh them)" in text
 
 
 @pytest.mark.parametrize(
@@ -399,6 +401,6 @@ def test_the_default_window_is_24_hours(capsys, monkeypatch, tmp_path):
         (folder / f"{session}.jsonl").write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("COLUMNS", "200")
-    app.main(["--projects", str(tmp_path / "projects"), "--once"])
+    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
     out = capsys.readouterr().out
     assert "sessions · last 24h" in out and "from yesterday" in out and "from the day before" not in out
