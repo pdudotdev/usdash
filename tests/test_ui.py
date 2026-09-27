@@ -1,0 +1,145 @@
+"""The screen, rendered to text, and the CLI."""
+import json
+
+import pytest
+from conftest import PROJECTS, T0, Transcript
+from rich.console import Console
+
+from usdash import app, ui
+from usdash.prices import ONE_HOUR
+
+
+def screen(store, view, width=220, height=40) -> str:
+    console = Console(record=True, width=width, height=height, color_system=None)
+    console.print(ui.render(store, view, height, width))
+    return console.export_text()
+
+
+def two_sessions(store):
+    a = Transcript(session="aaaa-1111", cwd="/home/user/shop", branch="checkout-fix")
+    a.record("ai-title", aiTitle="Fix checkout totals")
+    a.turn(T0, text="why is the total off by one cent", write=40_000, out=2_000)
+    a.turn(T0 + 60, text="ok, fix it and add a test", read=40_000, write=2_000, out=2_000)
+    b = Transcript(session="bbbb-2222", cwd="/home/user/shop", entrypoint="claude-vscode")
+    b.record("custom-title", customTitle="Release notes")
+    b.turn(T0 + 30, text="draft the notes", model="claude-sonnet-5", write=30_000, ttl="5m")
+    a.into(store)
+    b.into(store)
+
+
+def test_sessions_are_told_apart_by_name_place_prompt_and_id(store):
+    two_sessions(store)
+    text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True))
+    lines = text.splitlines()
+    i = next(n for n, line in enumerate(lines) if "Fix checkout totals" in line and "aaaa" in line)
+    assert "shop@checkout-fix" in lines[i]
+    assert "Opus 5.5 high" in lines[i] and "● 50:00" in lines[i] and " sub " in lines[i]
+    assert '└ 10m ago · "ok, fix it and add a test"' in lines[i + 1]  # what was last typed in that window
+    j = next(n for n, line in enumerate(lines) if "Release notes" in line and "bbbb" in line)
+    assert "vscode api" in lines[j] and "○ cold" in lines[j] and "shop " in lines[j]
+    assert '└ 10m ago · "draft the notes"' in lines[j + 1]
+
+
+def test_a_narrow_terminal_keeps_the_last_prompt_and_cuts_the_least_useful_numbers(store):
+    two_sessions(store)
+    text = screen(store, ui.View(now=T0 + 60 + 600), width=100)
+    assert '└ 10m ago · "ok, fix it and add a test"' in text
+    row = next(line for line in text.splitlines() if "Fix checkout totals" in line and "aaaa" in line)
+    assert "● 50:00" in row and "now ·" in row
+
+
+def test_advice_names_the_session_not_just_its_id(store):
+    two_sessions(store)
+    text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True))
+    line = next(line for line in text.splitlines() if "Warm on Opus 5.5" in line)
+    assert "aaaa Fix checkout totals · shop@checkout-fix: Warm on Opus 5.5 for 50:00 more" in line
+    assert "(uses less of your plan)" in line
+
+
+def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
+    two_sessions(store)
+    t = Transcript(session="aaaa-1111", cwd="/home/user/shop", branch="checkout-fix")
+    t.turn(T0 + 60 + 7200, text="back", write=44_000)  # after a 2-hour break
+    t.into(store)
+    text = screen(store, ui.View(now=T0 + 60 + 7300))
+    assert "TODAY $" in text and "est." in text and "of input read from cache" in text
+    assert "re-writes cost $" in text and "(cache expired $" in text
+    assert "⟳ re-wrote 42k: cache expired (idle 120 min)" in text
+    assert "API-equivalent" not in text  # an API-key account
+
+
+def test_feed_marks_subagents_and_closed_sessions_show_claude_codes_total(fixture_store):
+    last = max(s.last_activity for s in fixture_store.sessions.values())
+    text = screen(fixture_store, ui.View(now=last + 60, window=10 ** 9), height=80)
+    assert "🤖 subagent" in text
+    assert "closed" in text and "(CC $" in text and "if resumed: $" in text
+    assert "Three-word greeting desktop" in text
+    assert "List .claude/skills" in text
+
+
+def test_idle_and_archived_sessions_are_hidden(store):
+    two_sessions(store)
+    store.sessions["bbbb-2222"].archived = True
+    text = screen(store, ui.View(now=T0 + 60 + 600))
+    assert "Release notes vscode" not in text  # gone from the sessions pane (its requests stay in the feed)
+    assert "Fix checkout totals sub" in text or "Fix checkout totals api" in text
+    text = screen(store, ui.View(now=T0 + 60 + 5 * 3600))
+    assert "no Claude Code activity in the last 3h" in text
+
+
+def test_scrolling_the_feed(store):
+    t = Transcript()
+    for i in range(30):
+        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
+    t.into(store)
+    view = ui.View(now=T0 + 1800)
+    ui.track_feed(store, view)  # the app does this after every poll
+    screen(store, view, height=30)
+    assert view.page < 30
+    ui.press(store, view, "down")
+    assert view.scroll == 1
+    ui.press(store, view, "end")
+    assert view.scroll == 30 - view.page
+    more = Transcript()
+    more.turn(T0 + 1900, read=41_000, write=100)
+    more.into(store)
+    ui.track_feed(store, view)
+    assert view.unseen == 1  # the rows in view stay put
+    ui.press(store, view, "home")
+    assert (view.scroll, view.unseen) == (0, 0)
+
+
+def test_parse_keys():
+    assert app.parse_keys("\x1b[Aj q\x1b[6~x") == ["up", "down", "pgdn", "quit", "pgdn"]
+
+
+@pytest.mark.parametrize(("text", "seconds"), [("30m", 1800), ("2h", 7200), ("1d", 86400)])
+def test_duration(text, seconds):
+    assert app.duration(text) == seconds
+
+
+def test_bad_duration():
+    with pytest.raises(Exception):
+        app.duration("soon")
+
+
+def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))  # no account file: API wording
+    monkeypatch.setenv("COLUMNS", "200")
+    app.main(["--projects", str(PROJECTS), "--since", "3650d", "--window", "3650d", "--once"])
+    out = capsys.readouterr().out
+    assert "usdash · live" in out and "Test plan vs test case" in out and "Pong reply" in out
+
+
+def test_claude_config_dir_moves_the_account_file(monkeypatch, tmp_path):
+    (tmp_path / ".claude.json").write_text(json.dumps({"oauthAccount": {"organizationType": "claude_max"}}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    assert app.claude_json() == tmp_path / ".claude.json"
+    assert app.App(PROJECTS, since=0, window=ONE_HOUR, clock=lambda: T0).view.subscription
+
+
+def test_long_advice_wraps_instead_of_being_cut(store):
+    two_sessions(store)
+    text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True), width=100)
+    assert "after that it's free." in text
+    assert "…" not in "".join(line for line in text.splitlines() if "Warm on" in line)
