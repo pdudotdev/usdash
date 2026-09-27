@@ -20,6 +20,14 @@ def screen(store, view, width=220, height=40) -> str:
     return console.export_text()
 
 
+def advice_pane(text: str) -> str:
+    """The advice pane's lines, joined back into one text (long advice wraps)."""
+    lines = text.splitlines()
+    start = next(n for n, line in enumerate(lines) if "advice ·" in line)
+    end = next(n for n in range(start + 1, len(lines)) if lines[n].startswith("╰"))
+    return " ".join(line.strip("│ ") for line in lines[start + 1:end])
+
+
 def two_sessions(store):
     a = Transcript(session="aaaa-1111", cwd="/home/user/shop", branch="checkout-fix")
     a.record("ai-title", aiTitle="Fix checkout totals")
@@ -53,6 +61,14 @@ def test_a_narrow_terminal_keeps_the_last_prompt_and_cuts_the_least_useful_numbe
     assert "● 50:00" in row and "now ·" in row
 
 
+def test_the_session_numbers_say_what_they_are(store):
+    two_sessions(store)
+    lines = screen(store, ui.View(now=T0 + 60 + 600)).splitlines()
+    i = next(n for n, line in enumerate(lines) if "NEXT MESSAGE" in line)
+    assert lines[i - 1].split() == ["│", "CONTEXT", "COST", "COST", "│"]
+    assert lines[i].split()[-5:] == ["TOKENS", "TODAY", "ALL", "DAYS", "│"]
+
+
 def test_claude_codes_own_total_does_not_widen_the_total_column(store):
     two_sessions(store)
     closing = Transcript(session="bbbb-2222")
@@ -68,9 +84,9 @@ def test_claude_codes_own_total_does_not_widen_the_total_column(store):
 def test_advice_names_the_session_not_just_its_id(store):
     two_sessions(store)
     text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True))
-    line = next(line for line in text.splitlines() if "Warm on Opus 5.5" in line)
-    assert "aaaa Fix checkout totals · shop@checkout-fix: Warm on Opus 5.5 for 50:00 more" in line
-    assert "(uses less of your plan)" in line
+    tips = advice_pane(text)
+    assert "aaaa Fix checkout totals · shop@checkout-fix: Switching to Sonnet 5 now costs $" in tips
+    assert "in 50:00.  (uses less of your plan)" in tips
 
 
 def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
@@ -242,5 +258,6 @@ def test_history_reaches_back_to_the_window_after_midnight(now, since, window, s
 def test_long_advice_wraps_instead_of_being_cut(store):
     two_sessions(store)
     text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True), width=100)
-    assert "after that it's free." in text
-    assert "…" not in "".join(line for line in text.splitlines() if "Warm on" in line)
+    tips = advice_pane(text)
+    assert "Switching is free once Opus 5.5's cache expires, in 50:00." in tips
+    assert "…" not in tips

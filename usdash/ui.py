@@ -155,10 +155,13 @@ def cache_text(store: Store, session: Session, view: View) -> tuple[Text, Text]:
     return cache, Text(f"{_money(state.next_cold)} (re-writes {_tokens(state.size)})", style="red")
 
 
-# The numbers come first, most useful first: a narrow terminal cuts from the right. The last,
-# unnamed column is Claude Code's own total once a session closes: apart, so it doesn't widen TOTAL.
+# The numbers come first, most useful first: a narrow terminal cuts from the right. Names on two
+# lines say what a number is without widening its column. The last, unnamed column is Claude
+# Code's own total once a session closes: apart, so it doesn't widen the one before.
 SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("WHERE", False), ("MODEL", False), ("CACHE", False),
-                   ("NEXT MESSAGE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True), ("", False))
+                   ("NEXT MESSAGE", False), ("CONTEXT\nTOKENS", True), ("COST\nTODAY", True),
+                   ("COST\nALL DAYS", True), ("", False))
+SESSION_HEADER_ROWS = max(name.count("\n") + 1 for name, _ in SESSION_COLUMNS)
 
 
 def session_row(store: Store, session: Session, view: View) -> tuple[list[Text], Text]:
@@ -254,18 +257,25 @@ def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
 
 
 def grid_lines(columns, rows: list[tuple[list[Text], Text | None]], note_below: bool = False) -> list[Text]:
-    """Lay rows out in columns sized to what's shown. A row's note either runs
-    on after the last column (the feed's NOTE) or gets its own line under the
-    row, starting at the second column; the panel cuts whatever doesn't fit."""
-    widths = [len(name) for name, _ in columns]
+    """Lay rows out in columns sized to what's shown. A column name can take
+    two lines ("COST\nTODAY"); the names line up at the bottom. A row's note
+    either runs on after the last column (the feed's NOTE) or gets its own line
+    under the row, starting at the second column; the panel cuts whatever
+    doesn't fit."""
+    names = [name.split("\n") for name, _ in columns]
+    depth = max(len(parts) for parts in names)
+    names = [[""] * (depth - len(parts)) + parts for parts in names]
+    widths = [max(len(part) for part in parts) for parts in names]
     for cells, _ in rows:
         for i, cell in enumerate(cells):
             widths[i] = max(widths[i], cell.cell_len)
-    header = [Text(name, style="dim") for name, _ in columns]
     has_notes = not note_below and any(note for _, note in rows)
+    header = [([Text(parts[level], style="dim") for parts in names],
+               Text("NOTE", style="dim") if has_notes and level == depth - 1 else None) for level in range(depth)]
     lines = []
-    for cells, note in [(header, Text("NOTE", style="dim") if has_notes else None), *rows]:
-        line = Text(no_wrap=True, overflow="ellipsis")
+    for n, (cells, note) in enumerate([*header, *rows]):
+        # A cut row ends in "…"; a cut header is just cropped, or its top line would be a lone "…".
+        line = Text(no_wrap=True, overflow="crop" if n < depth else "ellipsis")
         trailing = note if not note_below else None
         for i, cell in enumerate(cells):
             pad = " " * (widths[i] - cell.cell_len)
@@ -353,7 +363,7 @@ def render(store: Store, view: View, height: int, width: int = 200) -> Layout:
     advice.sort(key=lambda item: not item.urgent)
     lines = advice_lines(advice[:MAX_ADVICE_ROWS], view.subscription)
     session_rows = min(max(len(sessions), 1), MAX_SESSION_ROWS)
-    sessions_height = 2 * session_rows + 3 + (1 if len(sessions) > session_rows else 0)
+    sessions_height = 2 * session_rows + 2 + SESSION_HEADER_ROWS + (1 if len(sessions) > session_rows else 0)
     inside = max(20, width - 4)  # the panel's border and padding
     measure = Console(width=inside)
     advice_height = max(sum(len(line.wrap(measure, inside)) for line in lines), 1) + 2

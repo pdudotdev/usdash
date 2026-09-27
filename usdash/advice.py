@@ -129,15 +129,18 @@ def switch_advice(store: Store, session: Session, now: float, memory: Memory) ->
                       f"(saves {money(-best.penalty)} now, {money(best.saving)} per message).", urgent=True)
     since = memory.start(session, nearest.target, now)
     extra = held_extra(store, session, nearest.target, since)
+    there = pretty_model(nearest.target)
     if extra > 0 and extra >= nearest.penalty:
         return Advice(session, "switch",
-                      f"Switching to {pretty_model(nearest.target)} pays off now: since this tip appeared, staying on "
-                      f"{here} cost {money(extra)} more, and switching costs {money(nearest.penalty)}.")
-    payback = nearest.payback
-    after = f"pays back after ~{payback:.0f} messages" if payback is not None else "doesn't pay back"
+                      f"Switch to {there} now: since this tip appeared, staying on {here} has cost {money(extra)} "
+                      f"more than {there} would have, which covers the {money(nearest.penalty)} switch.")
+    back = ""
+    if nearest.payback is not None:
+        n = max(1, round(nearest.payback))
+        back = f"; its cheaper messages make that back in ~{n} message{'' if n == 1 else 's'}"
     return Advice(session, "switch",
-                  f"Warm on {here} for {clock(nearest.left)} more. Switching to {pretty_model(nearest.target)} now "
-                  f"costs +{money(nearest.penalty)} ({after}); after that it's free.")
+                  f"Switching to {there} now costs {money(nearest.penalty)} extra{back}. "
+                  f"Switching is free once {here}'s cache expires, in {clock(nearest.left)}.")
 
 
 def compact_advice(store: Store, session: Session, now: float, memory: Memory) -> Advice | None:

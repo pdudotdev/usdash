@@ -1,4 +1,6 @@
 """Advice lines: when each rule speaks up, and what it says."""
+import re
+
 import pytest
 from conftest import T0, Transcript
 
@@ -23,8 +25,9 @@ LAST_START = T0 + 120
 def test_warm_opus_says_what_switching_costs_now_and_that_it_is_free_later(store):
     session = session_on(store, out=2_000)
     (tip,) = [a for a in advice.advise(store, session, LAST_START + 600) if a.kind == "switch"]
-    assert tip.text.startswith("Warm on Opus 5.5 for 50:00 more. Switching to Sonnet 5 now costs +$")
-    assert "pays back after ~" in tip.text and tip.text.endswith("after that it's free.")
+    assert tip.text.startswith("Switching to Sonnet 5 now costs $")
+    assert "; its cheaper messages make that back in ~" in tip.text
+    assert tip.text.endswith(" Switching is free once Opus 5.5's cache expires, in 50:00.")
 
 
 def test_cold_cache_says_switching_costs_nothing_extra(store):
@@ -52,7 +55,7 @@ def test_rent_or_buy_counts_from_when_the_tip_first_appeared(store):
     memory = advice.Memory()
     session = session_on(store, out=3_000)
     first = advice.switch_advice(store, session, LAST_START + 10, memory)
-    assert first.text.startswith("Warm on Opus 5.5")
+    assert first.text.startswith("Switching to Sonnet 5 now costs $")
     # The user keeps going on Opus: every message costs more than on Sonnet.
     t = Transcript()
     prompt = 42_000
@@ -61,10 +64,11 @@ def test_rent_or_buy_counts_from_when_the_tip_first_appeared(store):
         prompt += 1_000
     t.into(store)
     later = advice.switch_advice(store, session, LAST_START + 20 * 40, memory)
-    assert later.text.startswith("Switching to Sonnet 5 pays off now: since this tip appeared, staying on Opus 5.5 cost $")
+    assert later.text.startswith("Switch to Sonnet 5 now: since this tip appeared, staying on Opus 5.5 has cost $")
+    assert re.search(r" more than Sonnet 5 would have, which covers the \$\d+\.\d\d switch\.$", later.text)
     # Without the memory, the count starts now: no history yet.
     fresh = advice.switch_advice(store, session, LAST_START + 20 * 40, advice.Memory())
-    assert fresh.text.startswith("Warm on Opus 5.5")
+    assert fresh.text.startswith("Switching to Sonnet 5 now costs $")
 
 
 def test_no_switch_advice_on_the_cheapest_model(store):

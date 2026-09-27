@@ -27,7 +27,7 @@ The checks work on a subscription or an API key unless they say otherwise.
 |---|---|---|---|
 | 8 | Send a message, then watch the CACHE column | `● 59:xx` on a subscription (`sub`), `● 4:xx` on an API key (`api`), counting down, and back near the top after each message. NEXT MESSAGE shows `$… now · $… cold` | The lifetime comes from the session's own usage, counted from the request's start |
 | 9 | Leave a session idle past its cache lifetime | CACHE shows `○ cold`; NEXT MESSAGE turns red and says how much it re-writes. On Opus or Sonnet, the advice says switching model costs nothing extra now | A break re-writes the conversation whatever you do, so a cheaper model re-writes for less |
-| 10 | Quit a session (`/exit`) | Its CACHE shows `closed`, NEXT MESSAGE shows `if resumed: $…`, TOTAL adds `(CC $…)`, and it gets no advice | Claude Code writes its own total when a session closes |
+| 10 | Quit a session (`/exit`) | Its CACHE shows `closed`, NEXT MESSAGE shows `if resumed: $…`, `(CC $…)` appears after COST ALL DAYS, and it gets no advice | Claude Code writes its own total when a session closes |
 | 11 | `claude --resume` the session from test 10 and send a message | The same row (same ID) comes back, with a countdown instead of `closed` | Resuming appends to the same transcript |
 | 12 | Look at the header | `TODAY $… est.` and the share of input read from cache. On a subscription account, the second line starts with `API-equivalent prices`; on an API-key account it doesn't | A subscription isn't billed per token: its dollars are for comparison |
 
@@ -35,12 +35,12 @@ The checks work on a subscription or an API key unless they say otherwise.
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 13 | In a warm Opus 5.5 session, read the advice line | `Warm on Opus 5.5 for mm:ss more. Switching to Sonnet 5 now costs +$… (pays back after ~N messages); after that it's free.` The line names the session, not just its id | Switching model re-writes the whole conversation; after the cache expires it's free |
+| 13 | In a warm Opus 5.5 session, read the advice line | `Switching to Sonnet 5 now costs $… extra; its cheaper messages make that back in ~N messages. Switching is free once Opus 5.5's cache expires, in mm:ss.` The line names the session, not just its id | Switching model re-writes the whole conversation; after the cache expires it's free |
 | 14 | `/model sonnet`, then send a message | The feed shows `⟳ re-wrote …: model switch from Opus 5.5 (+$…)` in red, and the header's `cache misses added` total goes up | Each model has its own cache |
 | 15 | In an Opus 5.5 session, `/effort low` and send a message. Then do the same in a Sonnet 5 session | Opus 5.5: no `⟳` note on its next row, and CACHED stays high. Sonnet 5: `⟳ re-wrote …: effort change` | Only Opus 5.5 and Fable 5.1 keep the cache when effort changes |
 | 16 | On Opus 5.5 at high effort, send a few messages that need some thought. `/effort low` and send a couple more, then `/effort high` and send one | `💡 … Lower /effort to low: ≈$… less per message, no cache cost on Opus 5.5.`, if the low-effort replies were at least ~250 output tokens shorter (the $0.005 threshold) | The estimate compares this session's own replies at each effort |
 | 17 | In a session over 100k tokens, wait until less than 10 minutes of cache remain (2.5 minutes on a 5-minute cache) | `⚡ … Context …k, cache expires in m:ss: /compact now ≈$…; after a break ≈$…` | /compact reads the cache while it's warm and re-writes everything after a break |
-| 18 | `/compact` | Before you send anything, NEXT MESSAGE drops to about the price of the tool list plus the summary, and the /compact tip is gone. The next row reads most of its prompt from cache, and CONTEXT drops | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
+| 18 | `/compact` | Before you send anything, NEXT MESSAGE drops to about the price of the tool list plus the summary, and the /compact tip is gone. The next row reads most of its prompt from cache, and CONTEXT TOKENS drops | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
 | 19 | In a clean folder, start sessions A and B, with no file edits in between. Build up some context in B on Opus 5.5. In A, `/model haiku` and send a message. Right away, `/compact` in B | B's advice says `Switch to Haiku 4.5 now: already cheaper …`. Then `/model haiku` in B and send a message: B's new row has CACHED well above 0% and no `⟳` note | Sessions in the same folder share the cached tool list and system prompt on each model |
 
 ### Request feed
@@ -64,7 +64,7 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | 25 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them re-writes. The parent's CACHE runs down to `○ cold` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
 | 26 | 1-hour cache: repeat test 25 | The parent stays warm, and its next row has no `⟳ re-wrote` note | The parent's 1-hour cache outlasts a 10-minute subagent |
 
-**Overall pass:** a closed session's TOTAL is close to Claude Code's own `(CC $…)`, usually a little lower (background requests aren't in the transcripts; the README's Limitations has the measured gap). On an API key, a session's TOTAL is also close to `/cost` in that session. Nothing in the header says `records of unknown types`.
+**Overall pass:** a closed session's COST ALL DAYS is close to Claude Code's own `(CC $…)`, usually a little lower (background requests aren't in the transcripts; the README's Limitations has the measured gap). On an API key, a session's COST ALL DAYS is also close to `/cost` in that session. Nothing in the header says `records of unknown types`.
 """
 
 if __name__ == "__main__":

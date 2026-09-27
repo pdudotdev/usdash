@@ -286,10 +286,11 @@ show next_now and next_cold, and the time left before the cache expires
 model switch, to each cheaper model L (skipped when it saves under $0.005 per message):
     if not alive:   "Cache expired, so switching model costs nothing extra now: next message $x on L, vs $y here"
     elif P ≤ 0:     "Switch to L now: already cheaper (saves $−P now, $s per message)"
-    elif R ≥ P:     "Switching to L pays off now: since this tip appeared, staying cost $R more"
+    elif R ≥ P:     "Switch to L now: since this tip appeared, staying on E has cost $R more than L would have,
+                     which covers the $P switch"
                     (R counts from when the tip first appeared, per session and L)
-    else:           "Warm here for mm:ss more. Switching to L now costs +$P (pays back after ~m messages);
-                     after that it's free"          (L = the nearest cheaper model)
+    else:           "Switching to L now costs $P extra; its cheaper messages make that back in ~m messages.
+                     Switching is free once E's cache expires, in mm:ss"          (L = the nearest cheaper model)
 
 lower effort (Opus 5.5 / Fable 5.1, not on a cloud provider; needs replies at the lower effort, in this session
               or in one that used both efforts):

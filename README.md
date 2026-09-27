@@ -50,7 +50,8 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **MODEL** | The model and effort of the last request |
 | **CACHE** | `● mm:ss` while the prompt cache is warm, `○ cold` once it has expired, `closed` after `/exit` |
 | **NEXT MESSAGE** | While warm: what the next message costs now, and after the cache expires. Once cold: what it costs, and how much of the conversation it writes again. Once closed: what it would cost if resumed |
-| **CONTEXT** · **TODAY** · **TOTAL** | The conversation's size, and its cost today and in all. A closed session also shows Claude Code's own total, `(CC $…)` |
+| **CONTEXT TOKENS** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far) |
+| **COST TODAY** · **COST ALL DAYS** | What the session has cost today, and since it started (a resumed session counts its earlier days too). Once it closes, Claude Code's own figure follows: `(CC $…)` |
 
 ▫️ **Advice:** one line per session when there's something worth saying. `⚡` means act before the cache expires; `💡` is worth knowing. The rules are in [How It Works](#-how-it-works).
 
@@ -93,11 +94,11 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Rule | Shown when | Example |
 |---|---|---|
-| **Switch model** | A cheaper model saves at least $0.005 per message | Cold: *"Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5."* Warm: *"Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.16 (pays back after ~5 messages); after that it's free."* |
+| **Switch model** | A cheaper model saves at least $0.005 per message | Cold: *"Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5."* Warm: *"Switching to Sonnet 5 now costs $0.16 extra; its cheaper messages make that back in ~5 messages. Switching is free once Opus 5.5's cache expires, in 35:00."* |
 | **Compact before a break** | The conversation is 100k+ tokens, the cache is warm, and it expires within 10 minutes (within half its lifetime, if that's shorter) | *"Context 140k, cache expires in 5:00: /compact now ≈$0.09; after a break ≈$0.76."* |
 | **Lower effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 per message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both efforts | *"Lower /effort to medium: ≈$0.04 less per message, no cache cost on Opus 5.5."* |
 
-The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). While the cache is warm, it also says *"Switch to Haiku 4.5 now: already cheaper"* when moving costs less even now (for example right after `/compact`, if another session in the same folder keeps Haiku's copy of the tool list cached), and *"Switching to Sonnet 5 pays off now"* once staying has cost as much as switching would.
+The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). While the cache is warm, it also says *"Switch to Haiku 4.5 now: already cheaper"* when moving costs less even now (for example right after `/compact`, if another session in the same folder keeps Haiku's copy of the tool list cached), and *"Switch to Sonnet 5 now: since this tip appeared, staying on Opus 5.5 has cost $… more than Sonnet 5 would have, which covers the $… switch"* once staying has cost as much as switching would.
 
 ## 🧪 Example Session
 
@@ -106,11 +107,11 @@ The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). Wh
 | 1 | Start `claude` in `shop` on branch `checkout-fix` and ask a question | A new row: your first words as its name, `shop@checkout-fix`, `● 59:5x` on a subscription (`● 4:5x` on an API key) |
 | 2 | Wait for Claude Code to title the session | The name changes to that title |
 | 3 | `/rename checkout bug` | The name becomes `checkout bug` |
-| 4 | Keep working on Opus 5.5 | Advice: *"Warm on Opus 5.5 for mm:ss more. Switching to Sonnet 5 now costs +$… (pays back after ~N messages); after that it's free."* |
+| 4 | Keep working on Opus 5.5 | Advice: *"Switching to Sonnet 5 now costs $… extra; its cheaper messages make that back in ~N messages. Switching is free once Opus 5.5's cache expires, in mm:ss."* |
 | 5 | `/model sonnet`, then send a message | A red feed row: `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`, and the header's `cache misses added` total goes up |
 | 6 | Step away until the cache expires | CACHE shows `○ cold`; advice says switching now costs nothing extra |
 | 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look at the advice | `⚡` *"Context 140k, cache expires in 8:00: /compact now ≈$0.09; after a break ≈$0.76."* |
-| 8 | `/exit` | CACHE shows `closed`, and TOTAL adds Claude Code's own figure `(CC $…)` |
+| 8 | `/exit` | CACHE shows `closed`, and Claude Code's own figure `(CC $…)` appears after the session's cost |
 
 ## 🚀 Installation & Usage
 
