@@ -53,10 +53,9 @@ class Move:
         return self.penalty / self.saving if self.saving > 0 else None
 
 
-def typical_output(store: Store, session: Session, model: str | None, effort: str | None = None,
-                   default: float = DEFAULT_OUTPUT) -> float:
+def typical_output(store: Store, session: Session, model: str | None, effort: str | None = None) -> float:
     """output(M): the session's own average on this model and effort, else on
-    this model, else across all sessions, else `default`."""
+    this model, else across interactive sessions, else DEFAULT_OUTPUT."""
     for value in (
         session.average_output(model, effort) if effort else None,
         session.average_output(model),
@@ -65,10 +64,10 @@ def typical_output(store: Store, session: Session, model: str | None, effort: st
     ):
         if value is not None:
             return value
-    return default
+    return DEFAULT_OUTPUT
 
 
-def conversation(session: Session, now: float) -> tuple[int, int, bool, int, int]:
+def conversation(store: Store, session: Session, now: float) -> tuple[int, int, bool, int, int]:
     """(N, W, warm, seconds left, ttl) for the main conversation."""
     main, last = session.main, session.last_request
     ttl = main.ttl or FIVE_MINUTES
@@ -78,7 +77,7 @@ def conversation(session: Session, now: float) -> tuple[int, int, bool, int, int
     warm = left > 0
     if main.compacted:
         # After /compact only the tool list and system prompt are still cached.
-        prefix = round(session.prefix_on(last.model))
+        prefix = round(store.tool_list(session, last.model))
         size = prefix + (session.compact_post_tokens or COMPACT_SUMMARY)
         return size, prefix if warm else 0, warm, max(left, 0), ttl
     size = last.prompt + session.growth()
@@ -88,7 +87,7 @@ def conversation(session: Session, now: float) -> tuple[int, int, bool, int, int
 def cache_state(store: Store, session: Session, now: float) -> CacheState | None:
     if session.last_request is None:
         return None
-    size, cached, warm, left, ttl = conversation(session, now)
+    size, cached, warm, left, ttl = conversation(store, session, now)
     price = store.prices.get(model_key(session.model))
     if price is None:
         return CacheState(warm, left, ttl, size, cached, None, None)
@@ -117,7 +116,7 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
     price_e, price_l = store.prices.get(model_key(source)), store.prices.get(model_key(target))
     if not price_e or not price_l or session.last_request is None:
         return None
-    size, cached, warm, left, ttl = conversation(session, now)
+    size, cached, warm, left, ttl = conversation(store, session, now)
     size_l = convert_tokens(size, model_key(source), model_key(target))
     shared = min(store.shared_prefix(session, target, now), size_l)
     add = session.growth()
@@ -137,18 +136,24 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
 
 def effort_move(store: Store, session: Session, effort: str, now: float) -> Move | None:
     """Lowering effort on a model that keeps its cache across the change:
-    only the output changes, so the saving starts with the next message."""
+    only the output changes, so the saving starts with the next message.
+
+    Replies at the lower effort: this session's own, if it has used that
+    effort; else its replies now, scaled by how much shorter replies got at
+    that effort in sessions that used both. Other sessions' replies on their
+    own come from other tasks and would mislead."""
     model = session.model
     price = store.prices.get(model_key(model))
     if not price or not effort_keeps_cache(model) or session.last_request is None:
         return None
     before = session.average_output(model, session.effort)
-    if before is None:
-        before = store.average_output(model, session.effort)
-    after = store.average_output(model, effort)
+    after = session.average_output(model, effort)
+    if after is None and before is not None:
+        ratio = store.output_ratio(model, session.effort, effort)
+        after = before * ratio if ratio is not None else None
     if before is None or after is None:
         return None
-    size, cached, warm, left, ttl = conversation(session, now)
+    size, cached, warm, left, ttl = conversation(store, session, now)
     base = prompt_cost(price, size, cached, ttl)
     stay, move = base + output_cost(price, before), base + output_cost(price, after)
     return Move(f"effort:{effort}", stay, move, move - stay, stay - move, warm, left)
@@ -162,7 +167,7 @@ def compact_cost(store: Store, session: Session, now: float) -> tuple[float, flo
     last = session.last_request
     if not price or last is None or session.main.compacted:
         return None
-    size, cached, _, _, _ = conversation(session, now)
+    size, cached, _, _, _ = conversation(store, session, now)
     summary = output_cost(price, COMPACT_SUMMARY)
     return (prompt_cost(price, size, cached, FIVE_MINUTES) + summary,
             prompt_cost(price, size, 0, FIVE_MINUTES) + summary)

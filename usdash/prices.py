@@ -66,9 +66,3 @@ def prompt_cost(price: dict, tokens: float, cached: float, ttl: int = FIVE_MINUT
 
 def output_cost(price: dict, tokens: float) -> float:
     return tokens * price["output"] / 1_000_000
-
-
-def hold_or_move(penalty: float, held: float) -> bool:
-    """True to stay on the warm setup: moving still costs more than staying has
-    (the rent-or-buy rule; research/CACHE-DECISIONS.md §5)."""
-    return penalty > held

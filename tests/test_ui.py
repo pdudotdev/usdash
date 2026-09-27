@@ -1,5 +1,7 @@
 """The screen, rendered to text, and the CLI."""
+import argparse
 import json
+from collections import deque
 from datetime import datetime
 
 import pytest
@@ -85,7 +87,7 @@ def test_idle_and_archived_sessions_are_hidden(store):
     store.sessions["bbbb-2222"].archived = True
     text = screen(store, ui.View(now=T0 + 60 + 600))
     assert "Release notes vscode" not in text  # gone from the sessions pane (its requests stay in the feed)
-    assert "Fix checkout totals sub" in text or "Fix checkout totals api" in text
+    assert "Fix checkout totals api" in text
     text = screen(store, ui.View(now=T0 + 60 + 5 * 3600))
     assert "no Claude Code activity in the last 3h" in text
 
@@ -112,6 +114,44 @@ def test_scrolling_the_feed(store):
     assert (view.scroll, view.unseen) == (0, 0)
 
 
+def test_a_late_row_below_the_view_is_not_new_above(store):
+    t = Transcript()
+    for i in range(30):
+        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
+    t.into(store)
+    view = ui.View(now=T0 + 1800, page=5)
+    ui.press(store, view, "pgdn")
+    shown = list(store.feed)[5:10]
+    late = Transcript()  # a subagent's transcript, found late: older than every row in view
+    late.user("look around", T0 + 5, subagent="a1")
+    late.reply(T0 + 8, subagent="a1", write=5_000, ttl="5m")
+    late.into(store)
+    ui.track_feed(store, view)
+    assert (view.scroll, view.unseen) == (5, 0)
+    assert list(store.feed)[5:10] == shown
+
+
+def test_a_row_the_full_feed_drops_moves_nothing(store):
+    store.feed = deque(maxlen=5)
+    t = Transcript()
+    for i in range(8):
+        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
+    t.into(store)
+    view = ui.View(now=T0 + 600)
+    ui.press(store, view, "down")
+    late = Transcript()  # older than everything the feed still keeps
+    late.user("look around", T0 + 5, subagent="a1")
+    late.reply(T0 + 8, subagent="a1", write=5_000, ttl="5m")
+    late.into(store)
+    ui.track_feed(store, view)
+    assert (len(store.feed), view.scroll, view.unseen) == (5, 1, 0)
+    newer = Transcript()  # a new row pushes the oldest out
+    newer.turn(T0 + 600, read=41_000, write=100)
+    newer.into(store)
+    ui.track_feed(store, view)
+    assert (len(store.feed), view.scroll, view.unseen) == (5, 2, 1)
+
+
 def test_parse_keys():
     assert app.parse_keys("\x1b[Aj q\x1b[6~x") == ["up", "down", "pgdn", "quit", "pgdn"]
 
@@ -121,9 +161,10 @@ def test_duration(text, seconds):
     assert app.duration(text) == seconds
 
 
-def test_bad_duration():
-    with pytest.raises(Exception):
-        app.duration("soon")
+@pytest.mark.parametrize("text", ["soon", "0m", "5", "2w"])
+def test_bad_duration(text):
+    with pytest.raises(argparse.ArgumentTypeError):
+        app.duration(text)
 
 
 def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):

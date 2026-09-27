@@ -8,6 +8,7 @@ record written wins. The main conversation and each subagent are separate
 """
 import json
 import re
+from bisect import bisect_left
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +36,8 @@ def day_of(when: float) -> str:
 
 def memo(owner, key, compute):
     """`compute()`, kept until `owner.revision` changes (a Session or the Store:
-    both bump it whenever a request is added or replaced)."""
+    both bump it whenever a request is added or replaced, and the Store also
+    when a session's folder or entrypoint changes)."""
     revision, values = owner._memo
     if revision != owner.revision:
         values = {}
@@ -255,6 +257,20 @@ class Session:
         return memo(self, "main", lambda: sorted(
             (r for r in self.requests.values() if not r.subagent), key=lambda r: r.start))
 
+    def cached_on(self, model: str | None, now: float) -> bool:
+        """Whether the main conversation still has a cache on `model`: the model
+        it's on, or one it left less than a cache lifetime ago."""
+        family = model_key(model)
+        if family == model_key(self.model):
+            touched, ttl = self.main.touched, self.main.ttl  # recaps restart this clock too
+        else:
+            last = memo(self, ("last on", family), lambda: next(
+                (r for r in reversed(self.main_requests()) if model_key(r.model) == family), None))
+            if last is None:
+                return False
+            touched, ttl = last.start, last.ttl or self.main.ttl
+        return touched is not None and now - touched < (ttl or FIVE_MINUTES)
+
     def growth(self) -> int:
         """Typical tokens one message adds to the conversation: the median rise
         between consecutive main-conversation prompts."""
@@ -291,7 +307,6 @@ class Store:
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # models missing from pricing.yaml
         self.first: float | None = None
-        self.added = 0  # requests ever added to the feed (it drops the oldest once full)
         self.revision = 0  # bumped on every change to any request
         self._memo: tuple = (-1, None)  # see memo()
 
@@ -320,8 +335,11 @@ class Store:
             session.uuids[uuid] = (record.when, message_id, data.get("parentUuid"))
         if kind in ("user", "assistant") and not record.subagent:
             for attr, key in (("cwd", "cwd"), ("branch", "gitBranch"), ("entrypoint", "entrypoint"), ("version", "version")):
-                if data.get(key):
-                    setattr(session, attr, data[key])
+                value = data.get(key)
+                if value and value != getattr(session, attr):
+                    setattr(session, attr, value)
+                    if attr in ("cwd", "entrypoint"):
+                        self.revision += 1  # memo()s group sessions by these
         if kind == "assistant":
             return self._add_assistant(session, record)
         if kind == "user":
@@ -416,20 +434,16 @@ class Store:
         session.last_activity = max(session.last_activity or 0, request.end)
         if old is None:
             self._to_feed(request)
-            self.added += 1
             return request
         return None
 
     def _to_feed(self, request: Request) -> None:
-        """Newest first. A transcript file found late (the tailer looks for new
-        files every few seconds) can bring requests older than ones already
-        in the feed; they go in their place, not on top."""
-        feed, at = self.feed, 0
-        while at < len(feed) and feed[at].end > request.end:
-            at += 1
-        if at == 0:
-            feed.appendleft(request)
-            return
+        """Newest first, by when each request started (its end moves on as
+        later blocks of the reply come in). A transcript file found late (the
+        tailer looks for new files every few seconds) can bring requests older
+        than ones already in the feed; they go in their place, not on top."""
+        feed = self.feed
+        at = bisect_left(feed, -request.start, key=lambda r: -r.start)
         if len(feed) == feed.maxlen:
             if at == len(feed):
                 return  # older than everything the feed still keeps
@@ -472,26 +486,36 @@ class Store:
 
     # --- Across sessions --------------------------------------------------------
 
-    def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
-        """Tokens `model` likely already has cached for `session`: the tool list
-        and system prompt, if any session in the same folder used that model
-        within its cache lifetime (research/CACHE-DECISIONS.md §7).
+    def folder(self, cwd: str | None) -> list[Session]:
+        """The sessions in this folder that have sent a main-conversation request."""
+        return memo(self, ("folder", cwd), lambda: [s for s in self.sessions.values() if s.cwd == cwd and s.prefix])
 
-        That shared part is inside every one of those sessions' first prompts,
-        and inside this session's own, so the smallest of them is the estimate:
-        a first message that pasted a big file can't make it look bigger."""
-        family, sizes = model_key(model), []
-        folder = memo(self, ("folder", session.cwd), lambda: [
-            s for s in self.sessions.values() if s.cwd == session.cwd and s.prefix])
-        for other in folder:
-            chain = other.chains.get(other.id)
-            if chain is None or model_key(chain.model) != family or chain.touched is None:
-                continue
-            if now - chain.touched < (chain.ttl or FIVE_MINUTES):
-                sizes.append(round(other.prefix_on(model)))
-        if sizes and session.prefix:
-            sizes.append(round(session.prefix_on(model)))
-        return min(sizes, default=0)
+    def tool_list(self, session: Session, model: str | None) -> float:
+        """Claude Code's tool list and system prompt as `session` sends them,
+        in `model`'s tokens. Every first prompt is those plus a first message,
+        which may paste a whole file, so the estimate is the smallest first
+        prompt among this session and the other interactive ones in its folder
+        started from the same app. A scripted run can bring a system prompt of
+        its own, so it's compared with nothing else."""
+        peers = [session] if session.scripted else [
+            s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
+        return min((s.prefix_on(model) for s in peers if s.prefix), default=0.0)
+
+    def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
+        """Tokens `model` likely already has cached for `session`: its tool list
+        and system prompt, if a session in the same folder used that model
+        within its cache lifetime (research/CACHE-DECISIONS.md §7). This
+        session counts too, if it left that model a moment ago; only its tool
+        list, as the rest may be too far back to be found (§6, round trips).
+
+        Another session shares at most its own first prompt (a scripted run's
+        can be small, with a system prompt of its own), so the best match
+        among those still cached is the estimate."""
+        own, shared = self.tool_list(session, model), 0.0
+        for other in self.folder(session.cwd):
+            if other.cached_on(model, now):
+                shared = max(shared, min(own, other.prefix_on(model)))
+        return round(shared)
 
     def average_output(self, model: str | None, effort: str | None = None) -> float | None:
         """Output tokens per main-conversation request on this model (and effort),
@@ -502,6 +526,18 @@ class Store:
             tokens, count = sum(t for t, _ in totals), sum(n for _, n in totals)
             return tokens / count if count else None
         return memo(self, ("output", model_key(model), effort), compute)
+
+    def output_ratio(self, model: str | None, effort: str | None, other: str | None) -> float | None:
+        """How long replies on this model are at effort `other`, compared with
+        `effort`: from the interactive sessions that used both, so that each
+        compares a task with itself. None if none did."""
+        def compute() -> float | None:
+            pairs = [(s.average_output(model, effort), s.average_output(model, other))
+                     for s in self.sessions.values() if not s.scripted]
+            pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
+            base = sum(a for a, _ in pairs)
+            return sum(b for _, b in pairs) / base if base else None
+        return memo(self, ("ratio", model_key(model), effort, other), compute)
 
     def apply_desktop(self, desktop: dict[str, dict]) -> None:
         """Titles and archive state from the Desktop app's own session files."""

@@ -92,9 +92,10 @@ def test_compact_advice_on_a_five_minute_cache(store):
 
 def test_effort_advice_on_opus_5_5(store):
     session = session_on(store, out=3_000)
-    medium = Transcript(session="sess-2")
-    medium.turn(T0, effort="medium", write=40_000, out=800)
-    medium.into(store)
+    both = Transcript(session="sess-2")  # replies got ~73% shorter at medium there
+    both.turn(T0, write=40_000, out=3_000)
+    both.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
+    both.into(store)
     tip = advice.effort_advice(store, session, LAST_START + 10, advice.Memory())
     assert tip.text == "Lower /effort to medium: ≈$0.044 less per message, no cache cost on Opus 5.5."
 
@@ -123,8 +124,9 @@ def test_money_and_clock():
 def test_effort_advice_skips_a_level_that_saves_too_little(store):
     session = session_on(store, out=3_000)
     other = Transcript(session="sess-2")
-    other.turn(T0, effort="medium", write=40_000, out=2_950)  # saves $0.001 per message
-    other.turn(T0 + 60, effort="low", read=40_000, write=500, out=800)  # saves $0.044
+    other.turn(T0, write=40_000, out=3_000)
+    other.turn(T0 + 60, effort="medium", read=40_000, write=500, out=2_950)  # saves $0.001 per message
+    other.turn(T0 + 120, effort="low", read=40_500, write=500, out=800)  # saves $0.044
     other.into(store)
     tip = advice.effort_advice(store, session, LAST_START + 10, advice.Memory())
     assert tip.text.startswith("Lower /effort to low: ≈$0.044 less per message")

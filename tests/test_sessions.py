@@ -3,7 +3,7 @@ import json
 
 import pytest
 from conftest import (
-    COMPACTED, DESKTOP_SESSION, NO_REQUEST_IDS, PRICES, RECAP, T0, VSCODE, Transcript,
+    COMPACTED, DESKTOP_SESSION, NO_REQUEST_IDS, RECAP, T0, VSCODE, Transcript,
 )
 
 from usdash.prices import FIVE_MINUTES, ONE_HOUR
@@ -311,10 +311,6 @@ def test_scripted_sessions(store):
     assert [store.sessions[s].scripted for s in "abcd"] == [False, False, False, True]
 
 
-def test_prices_are_shared(fixture_store):
-    assert fixture_store.prices is PRICES
-
-
 # --- Long turns and long subagents (research/CACHE-DECISIONS.md §6) --------------------
 
 
@@ -395,4 +391,21 @@ def test_requests_from_a_file_found_late_go_in_their_place_in_the_feed(store):
     late.reply(T0 + 30, subagent="a1", write=5_000, ttl="5m")
     late.into(store)
     assert [r.end for r in store.feed] == [T0 + 70, T0 + 30, T0 + 10]  # newest first
-    assert store.added == 3
+
+
+def test_the_feed_is_in_order_of_when_requests_started(store):
+    main = Transcript()
+    main.user("go", T0)
+    main.reply(T0 + 100, message_id="msg_a")  # its first block
+    main.into(store)
+    sub = Transcript()
+    sub.user("look around", T0 + 50, subagent="a1")
+    sub.reply(T0 + 101, subagent="a1")
+    sub.into(store)
+    main.reply(T0 + 110, message_id="msg_a")  # its last block: the end moves on, the start doesn't
+    main.into(store)
+    late = Transcript()  # a long subagent request, found late
+    late.user("dig deeper", T0 + 20, subagent="a2")
+    late.reply(T0 + 105, subagent="a2")
+    late.into(store)
+    assert [r.start for r in store.feed] == [T0 + 50, T0 + 20, T0]

@@ -1,6 +1,7 @@
 """Model ids, prices and the cost of a logged request."""
+import re
+
 import pytest
-import yaml
 
 from usdash import prices
 from usdash.models import convert_tokens, model_key, on_cloud_provider, pretty_model
@@ -46,8 +47,7 @@ def test_every_model_has_every_price_and_1h_writes_cost_twice_input():
 
 
 def test_pricing_file_says_when_it_was_verified():
-    assert yaml.safe_load(prices.PRICING.read_text())["verified"]
-    assert prices.prices_verified() != "?"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", prices.prices_verified())  # shown in the header
 
 
 def test_request_cost_uses_the_transcript_convention():
@@ -79,8 +79,3 @@ def test_tokenizer_conversion():
     assert convert_tokens(50_000, "claude-opus-5-5", "claude-haiku-4-5") == pytest.approx(38_500)
     assert convert_tokens(38_500, "claude-haiku-4-5", "claude-opus-5-5") == pytest.approx(50_000)
     assert convert_tokens(50_000, "claude-opus-5-5", "claude-sonnet-5") == 50_000
-
-
-def test_hold_or_move():
-    assert prices.hold_or_move(penalty=0.10, held=0.05)
-    assert not prices.hold_or_move(penalty=0.10, held=0.10)

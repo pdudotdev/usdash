@@ -111,7 +111,6 @@ def test_growth_and_typical_output(store):
     assert session.growth() == 2_000  # median of +3k and +1k
     assert engine.typical_output(store, session, "claude-opus-5-5", "high") == 800
     assert engine.typical_output(store, session, "claude-haiku-4-5") == engine.DEFAULT_OUTPUT
-    assert engine.typical_output(store, session, "claude-haiku-4-5", default=800) == 800
 
 
 def test_a_model_with_no_history_is_assumed_to_reply_at_the_same_length(store):
@@ -164,9 +163,10 @@ def test_model_move_uses_what_the_target_has_cached(store):
 
 def test_effort_move_on_opus_5_5_keeps_the_cache(store):
     session = opus_session(store, out=3_000)
-    medium = Transcript(session="sess-2")
-    medium.turn(T0, effort="medium", write=40_000, out=800)
-    medium.into(store)
+    both = Transcript(session="sess-2")  # replies got ~73% shorter at medium there
+    both.turn(T0, write=40_000, out=3_000)
+    both.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
+    both.into(store)
     move = engine.effort_move(store, session, "medium", T0 + 130)
     assert move.saving == pytest.approx((3_000 - 800) * 20 / 1e6)  # $0.044, as in research/CACHE-DECISIONS.md §6
     assert move.penalty == pytest.approx(-move.saving)
@@ -200,11 +200,13 @@ def test_other_sessions_short_replies_dont_make_a_model_look_cheap(store):
 def test_scripted_runs_dont_make_a_lower_effort_look_cheap(store):
     session = opus_session(store, out=2_000)
     scripted = Transcript(session="sess-2", entrypoint="sdk-cli")
-    scripted.turn(T0, effort="low", write=40_000, out=5)  # claude -p 'say OK'
+    scripted.turn(T0, write=40_000, out=2_000)
+    scripted.turn(T0 + 60, effort="low", read=40_000, write=500, out=5)  # claude -p 'say OK'
     scripted.into(store)
     assert engine.effort_move(store, session, "low", T0 + 130) is None  # no interactive history at low
     interactive = Transcript(session="sess-3")
-    interactive.turn(T0, effort="low", write=40_000, out=800)
+    interactive.turn(T0, write=40_000, out=2_000)
+    interactive.turn(T0 + 60, effort="low", read=40_000, write=500, out=800)
     interactive.into(store)
     move = engine.effort_move(store, session, "low", T0 + 130)
     assert move.saving == pytest.approx((2_000 - 800) * 20 / 1e6)
@@ -217,7 +219,7 @@ def test_a_session_whose_replies_logged_no_output_keeps_its_own_average(store):
     other.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
     other.into(store)
     # 0 is this session's real average at high, not "no history": medium can't beat it.
-    assert engine.effort_move(store, session, "medium", T0 + 130).saving == pytest.approx(-800 * 20 / 1e6)
+    assert engine.effort_move(store, session, "medium", T0 + 130).saving == 0
 
 
 def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
@@ -228,3 +230,79 @@ def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
     # Haiku has at most what both first prompts share: this session's 40,000, in Haiku's tokens.
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == round(40_000 * 0.77)
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
+
+
+def test_a_lower_effort_uses_the_sessions_own_replies_there(store):
+    t = Transcript()
+    t.turn(T0, effort="low", write=40_000, out=300)
+    t.turn(T0 + 60, read=40_000, write=1_000, out=600)  # now on high
+    t.into(store)
+    other = Transcript(session="sess-2")  # another task, with long replies at low
+    other.turn(T0, effort="low", write=40_000, out=5_000)
+    other.into(store)
+    move = engine.effort_move(store, store.sessions["sess-1"], "low", T0 + 70)
+    assert move.saving == pytest.approx((600 - 300) * 20 / 1e6)
+
+
+def test_other_sessions_replies_at_a_lower_effort_count_only_as_a_ratio(store):
+    session = opus_session(store, out=6_000)  # long replies at high
+    short = Transcript(session="sess-2")
+    short.turn(T0, effort="low", write=40_000, out=500)  # another task, only at low
+    short.into(store)
+    assert engine.effort_move(store, session, "low", T0 + 130) is None
+    both = Transcript(session="sess-3")
+    both.turn(T0, write=40_000, out=1_000)
+    both.turn(T0 + 60, effort="low", read=40_000, write=500, out=500)  # half as long at low
+    both.into(store)
+    move = engine.effort_move(store, session, "low", T0 + 130)
+    assert move.saving == pytest.approx((6_000 - 3_000) * 20 / 1e6)
+
+
+def test_a_small_warm_script_does_not_shrink_what_another_session_shares(store):
+    session = opus_session(store, ttl="5m")  # first prompt 40,000
+    other = Transcript(session="sess-2")
+    other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="5m")
+    other.into(store)
+    script = Transcript(session="sess-3", entrypoint="sdk-cli")  # its own, smaller system prompt
+    script.turn(T0 + 100, model="claude-haiku-4-5", write=2_000, ttl="5m")
+    script.into(store)
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 30_002
+
+
+def test_the_model_a_session_just_left_still_has_its_tool_list(store):
+    t = Transcript()
+    t.turn(T0, model="claude-haiku-4-5", write=30_000, ttl="5m")
+    t.turn(T0 + 60, write=40_000, ttl="5m")  # /model opus
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 299) == 30_002
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + FIVE_MINUTES) == 0
+
+
+def test_after_compact_a_pasted_first_message_is_not_counted_as_cached(store):
+    t = Transcript()
+    t.turn(T0, write=80_000)  # the first message pasted a big file
+    t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 4_000})
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert engine.cache_state(store, session, T0 + 60).cached == 80_002  # nothing to compare it with
+    other = Transcript(session="sess-2")  # the same app in the same folder, with a short first message
+    other.turn(T0 + 5, write=40_000)
+    other.into(store)
+    script = Transcript(session="sess-3", entrypoint="sdk-cli")  # a system prompt of its own
+    script.turn(T0 + 5, write=2_000)
+    script.into(store)
+    state = engine.cache_state(store, session, T0 + 60)
+    assert (state.size, state.cached) == (40_002 + 4_000, 40_002)
+
+
+def test_a_session_moving_folder_moves_what_it_shares(store):
+    session = opus_session(store, ttl="5m")
+    other = Transcript(session="sess-2", cwd="/home/user/other")
+    other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="5m")
+    other.into(store)
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 0
+    other.cwd = session.cwd  # resumed from this folder: a prompt, no reply yet
+    other.user("carry on", T0 + 120)
+    other.into(store)
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 30_002

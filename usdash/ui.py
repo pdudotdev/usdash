@@ -36,9 +36,9 @@ class View:
     prices_verified: str = "?"
     unknown_types: int = 0
     scroll: int = 0  # feed rows hidden above the view (newest first)
+    top: Request | None = None  # the request at the top of the view, while scrolled back
     page: int = 1
     unseen: int = 0
-    seen_feed: int = 0
     memory: Memory = field(default_factory=Memory)  # when each switch tip first appeared
 
 
@@ -237,7 +237,7 @@ def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
     prompt = request.prompt
     cached = request.usage.get("read", 0) / prompt if prompt else 0
     cells = [
-        Text(datetime.fromtimestamp(request.end).strftime("%H:%M:%S"), style="dim"),
+        Text(datetime.fromtimestamp(request.start).strftime("%H:%M:%S"), style="dim"),  # the feed's order
         session_tag(session),
         Text(snippet(session.name, 24) or "", style=session_style(session.id)),
         model_text(request.model, request.effort),
@@ -291,7 +291,7 @@ def feed_lines(rows: list[tuple[list[Text], Text | None]]) -> list[Text]:
 
 def feed_panel(store: Store, view: View, rows: int) -> Panel:
     view.page = max(1, rows)
-    view.scroll = min(view.scroll, max_scroll(store, view))
+    scroll_to(store, view, view.scroll)
     shown = list(itertools.islice(store.feed, view.scroll, view.scroll + view.page))
     lines = feed_lines([feed_row(store, request) for request in shown])
     total = len(store.feed)
@@ -313,27 +313,37 @@ def max_scroll(store: Store, view: View) -> int:
     return max(0, len(store.feed) - view.page)
 
 
+def scroll_to(store: Store, view: View, row: int) -> None:
+    """Show the feed from `row` down, and remember the request there (see track_feed)."""
+    view.scroll = max(0, min(row, max_scroll(store, view)))
+    view.top = store.feed[view.scroll] if view.scroll else None
+    if not view.scroll:
+        view.unseen = 0
+
+
 def track_feed(store: Store, view: View) -> None:
-    """New rows arrived: while scrolled back, keep the rows in view where they are."""
-    added = store.added - view.seen_feed
-    view.seen_feed = store.added
-    if view.scroll and added > 0:
-        view.scroll = min(view.scroll + added, max_scroll(store, view))
-        view.unseen += added
+    """New rows arrived: while scrolled back, keep the rows in view where they
+    are. A row can land anywhere (a transcript found late brings older
+    requests), so follow the request at the top of the view, and count as new
+    only the rows that landed above it."""
+    if not view.scroll or view.top is None:
+        return
+    row = next((i for i, request in enumerate(store.feed) if request is view.top), None)
+    if row is None:  # it fell off the end of the full feed
+        row = max_scroll(store, view)
+    view.unseen += max(0, row - view.scroll)
+    scroll_to(store, view, row)
 
 
 def press(store: Store, view: View, key: str) -> None:
     """Scroll the feed: up/down a row, pgup/pgdn a page, home/end to either end."""
     steps = {"up": -1, "down": 1, "pgup": -view.page, "pgdn": view.page}
     if key in steps:
-        view.scroll += steps[key]
+        scroll_to(store, view, view.scroll + steps[key])
     elif key == "home":
-        view.scroll = 0
+        scroll_to(store, view, 0)
     elif key == "end":
-        view.scroll = max_scroll(store, view)
-    view.scroll = max(0, min(view.scroll, max_scroll(store, view)))
-    if not view.scroll:
-        view.unseen = 0
+        scroll_to(store, view, max_scroll(store, view))
 
 
 # --- Whole screen ------------------------------------------------------------------
