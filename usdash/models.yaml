@@ -1,0 +1,19 @@
+# What usdash assumes about Claude models when neither Anthropic's docs (read at
+# start) nor this machine's transcripts say otherwise (usdash/facts.py).
+verified: 2026-09-27
+
+# The current models, most capable first: the ones the switch advice compares.
+# Docs: the columns of the models overview's "Compare models" table.
+lineup: [claude-fable-5-1, claude-opus-5-5, claude-sonnet-5, claude-haiku-4-5]
+
+# Where Claude Code keeps the cache across an effort change (it sends the change
+# inside the conversation instead of re-writing it). Transcripts: effort changes
+# while the cache was warm. Docs (the effort page) only rule models out: where
+# the API can't keep it, Claude Code can't either.
+effort_keeps_cache: [claude-opus-5-5, claude-fable-5-1]
+
+# The tokenizer changed with Claude Opus 4.7: models before it count the same text
+# as about this share of the tokens (0.758 measured in a real switch; the models
+# overview's ~555k vs ~750k words per 1M tokens gives 0.74). Transcripts: model switches.
+old_tokenizer_before: "4.7"
+old_tokenizer_ratio: 0.77

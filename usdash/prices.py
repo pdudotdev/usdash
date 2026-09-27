@@ -1,8 +1,5 @@
-"""What tokens cost, in USD, at Anthropic's list prices.
-
-The prices come from Anthropic's pricing page, read at start; if it can't be
-read (or doesn't read as expected), from the last copy read from it; failing
-that, from pricing.yaml, which ships with usdash.
+"""What tokens cost, in USD, at Anthropic's list prices: from its pricing
+page, read at start (docs.py), else pricing.yaml, which ships with usdash.
 
 Claude Code's transcripts count a request's prompt in three parts that add
 up to the whole: `input_tokens` (the uncached remainder only),
@@ -10,21 +7,14 @@ up to the whole: `input_tokens` (the uncached remainder only),
 into 5-minute and 1-hour writes. (LiteLLM, used by llm-trunk, counts input
 differently: its "input" already includes the cached parts.)
 """
-import json
-import os
 import re
-import ssl
-import urllib.error
-import urllib.request
-from datetime import date
 from pathlib import Path
 
 import yaml
 
-from .models import model_version
+from .models import model_version, name_key
 
 PRICING = Path(__file__).with_name("pricing.yaml")
-PRICING_PAGE = "https://platform.claude.com/docs/en/about-claude/pricing.md"
 FIVE_MINUTES, ONE_HOUR = 300, 3600
 FIELDS = ("input", "cache_write", "cache_write_1h", "cache_read", "output")
 # The model table's columns on the pricing page, in FIELDS' order.
@@ -43,23 +33,6 @@ def prices_verified(path: str | Path = PRICING) -> str:
 
 
 # --- The pricing page ------------------------------------------------------------
-
-
-def saved_prices_file() -> Path:
-    """Where the prices last read from the pricing page are kept."""
-    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "usdash" / "prices.json"
-
-
-def page_model_key(name: str) -> str | None:
-    """A model's name on the page -> its family key: 'Claude Opus 4.5 ([retired](…))'
-    -> 'claude-opus-4-5'. Before Claude 4 the version comes first, as in
-    their ids: 'Claude Haiku 3.5' -> 'claude-3-5-haiku'."""
-    match = re.match(r"\s*Claude ([A-Z][a-z]+) (\d+)(?:\.(\d+))?(?![\d.])", name)
-    if not match:
-        return None
-    family, major, minor = match.group(1).lower(), match.group(2), match.group(3)
-    version = f"{major}-{minor}" if minor else major
-    return f"claude-{version}-{family}" if int(major) < 4 else f"claude-{family}-{version}"
 
 
 def _table(text: str, heading: str) -> list[list[str]]:
@@ -95,7 +68,7 @@ def parse_pricing_page(text: str) -> dict[str, dict]:
         raise ValueError("the model table's columns changed")
     models = {}
     for cells in rows[1:]:
-        key = page_model_key(cells[0])
+        key = name_key(cells[0])
         if key is None or len(cells) != len(FIELDS) + 1:
             raise ValueError(f"unexpected row: {cells[0]!r}")
         price = dict(zip(FIELDS, map(_dollars, cells[1:])))
@@ -111,67 +84,11 @@ def parse_pricing_page(text: str) -> dict[str, dict]:
     for cells in fast[1:]:
         speed = {"input": _dollars(cells[1]), "output": _dollars(cells[2])}
         for name in cells[0].split(" / "):
-            key = page_model_key(name)
+            key = name_key(name)
             if key not in models or speed["input"] < models[key]["input"] or speed["output"] < models[key]["output"]:
                 raise ValueError(f"fast mode prices out of line for {name!r}")
             models[key]["fast"] = speed
     return models
-
-
-def _tls_contexts():
-    """The system's certificates, then certifi's: a python.org Python on macOS
-    has none of its own until its "Install Certificates" step is run."""
-    yield ssl.create_default_context()
-    try:
-        import certifi
-    except ImportError:
-        return
-    yield ssl.create_default_context(cafile=certifi.where())
-
-
-def fetch_prices(url: str = PRICING_PAGE, timeout: float = 3.0) -> dict[str, dict] | None:
-    """The prices on Anthropic's pricing page now; None if it can't be read or doesn't read right."""
-    request = urllib.request.Request(url, headers={"User-Agent": "usdash"})
-    for context in _tls_contexts():
-        try:
-            with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-                return parse_pricing_page(response.read().decode("utf-8"))
-        except ssl.SSLCertVerificationError:
-            continue
-        except urllib.error.URLError as error:
-            if isinstance(error.reason, ssl.SSLCertVerificationError):
-                continue
-            return None
-        except (OSError, ValueError):
-            return None
-    return None
-
-
-def current_prices(fetch=fetch_prices, saved: Path | None = None, bundled: Path = PRICING,
-                   today: date | None = None) -> tuple[dict[str, dict], str | None]:
-    """(the prices to use, the date they're from if they couldn't be read
-    from the page now; None if they were). The page now, else the copy last
-    read from it, else pricing.yaml, whichever is newest; a model the page no
-    longer lists keeps its older price."""
-    saved = saved or saved_prices_file()
-    prices, as_of = load_prices(bundled), prices_verified(bundled)
-    try:
-        kept = json.loads(saved.read_text())
-        if str(kept["date"]) >= as_of:
-            prices.update(kept["models"])
-            as_of = str(kept["date"])
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    fresh = fetch()
-    if not fresh:
-        return prices, as_of
-    prices.update(fresh)
-    try:
-        saved.parent.mkdir(parents=True, exist_ok=True)
-        saved.write_text(json.dumps({"date": (today or date.today()).isoformat(), "models": fresh}, indent=1))
-    except OSError:
-        pass
-    return prices, None
 
 
 # --- Costs -------------------------------------------------------------------------

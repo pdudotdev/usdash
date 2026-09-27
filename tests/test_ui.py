@@ -374,6 +374,12 @@ def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
     assert "Estimated at API list prices of Sep 26 (couldn't refresh them)" in text
 
 
+def test_a_docs_page_that_changed_is_named_in_the_header(store):
+    two_sessions(store)
+    text = screen(store, ui.View(now=NOW, docs_changed=["models", "effort"]), width=250)
+    assert "Anthropic's models and effort pages changed: usdash may need an update" in text
+
+
 @pytest.mark.parametrize(
     ("now", "since", "window", "start"),
     [

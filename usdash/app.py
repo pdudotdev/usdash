@@ -4,11 +4,12 @@
     usdash --since 2d       # load more history first
     usdash --window 8h      # show sessions active this recently (default 24h)
     usdash --once           # print one screen and exit (no live view)
-    usdash --offline        # don't read the pricing page; use the last prices read
+    usdash --offline        # don't read Anthropic's docs; use the last ones read
 
 Read-only: it reads Claude Code's transcripts on this machine, and nothing
-about them leaves it. At start it reads Anthropic's pricing page (one
-request, sending nothing about you), unless --offline. Scroll the request feed with the arrow keys, the mouse wheel or
+about them leaves it. At start it reads three pages of Anthropic's docs
+(prices, the current models, effort), sending nothing about you, unless
+--offline. Scroll the request feed with the arrow keys, the mouse wheel or
 j/k, a page with space/b, jump to the newest with g and the oldest with G;
 q quits.
 """
@@ -26,7 +27,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 
-from .prices import current_prices, fetch_prices, load_prices, prices_verified
+from .docs import fetch_text, read_docs
+from .facts import Facts, load_facts
+from .prices import load_prices, prices_verified
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
 from .ui import View, press, render, track_feed
@@ -94,6 +97,22 @@ def prices_label(as_of: str | None, offline: bool) -> str:
     return f"API list prices of {as_of} ({why})"
 
 
+def knowledge(offline: bool) -> tuple[dict, Facts, str, list[str]]:
+    """What Anthropic's docs say, read now (or their saved copies, or the
+    shipped files): (prices, model facts, the header's name for the prices,
+    the pages that no longer read as expected)."""
+    facts, prices = load_facts(), load_prices()
+    shipped = {"pricing": prices_verified(), "models": facts.verified, "effort": facts.verified}
+    pages = read_docs(None if offline else fetch_text, shipped=shipped)
+    pricing, effort = pages["pricing"], pages["effort"].data
+    if pricing.data:
+        prices.update(pricing.data)
+    facts = facts.with_docs(pages["models"].data, set(effort) if effort is not None else None)
+    fresh = pricing.data is not None and pricing.as_of is None
+    label = prices_label(None if fresh else pricing.as_of or shipped["pricing"], offline)
+    return prices, facts, label, [name for name, page in pages.items() if page.changed]
+
+
 def start_of_today(now: float) -> float:
     return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
@@ -108,12 +127,15 @@ def history_start(now: float, since: int | None, window: int) -> float:
 
 class App:
     def __init__(self, projects: Path, since: float, window: int, clock=time.time,
-                 prices: dict | None = None, label: str | None = None) -> None:
+                 known: tuple[dict, Facts, str, list[str]] | None = None) -> None:
+        """`known`: what knowledge() returns; without it, the shipped files only."""
+        prices, facts, label, changed = known or (load_prices(), load_facts(),
+                                                  prices_label(prices_verified(), offline=True), [])
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
-        self.store = Store(prices or load_prices())
-        self.view = View(now=clock(), subscription=subscription_account(), window=window,
-                         prices=label or prices_label(prices_verified(), offline=True))
+        self.store = Store(prices, facts)
+        self.view = View(now=clock(), subscription=subscription_account(), window=window, prices=label,
+                         docs_changed=changed)
         self.desktop_read = 0.0
 
     def poll(self) -> bool:
@@ -143,14 +165,13 @@ def main(argv: list[str] | None = None) -> None:
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")
     parser.add_argument("--offline", action="store_true",
-                        help="don't read Anthropic's pricing page at start; use the last prices read")
+                        help="don't read Anthropic's docs at start; use the last prices and model facts read")
     args = parser.parse_args(argv)
 
     now = time.time()
     since = history_start(now, args.since, args.window)
     projects = (args.projects or default_projects_dir()).expanduser()
-    prices, as_of = current_prices((lambda: None) if args.offline else fetch_prices)
-    app = App(projects, since, args.window, prices=prices, label=prices_label(as_of, args.offline))
+    app = App(projects, since, args.window, known=knowledge(args.offline))
     if not projects.is_dir():
         print(f"usdash: no Claude Code transcripts at {projects} (use --projects)", file=sys.stderr)
     app.poll()

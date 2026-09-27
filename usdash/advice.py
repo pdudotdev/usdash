@@ -17,7 +17,7 @@ dollars; the user decides.
 from dataclasses import dataclass, field
 
 from .engine import cache_clock, cheaper, compact, context, effort_rewrite, effort_saving, model_move, others, resend
-from .models import convert_tokens, effort_keeps_cache, model_key, pretty_model
+from .models import model_key, pretty_model
 from .prices import ONE_HOUR, request_cost
 from .sessions import Session, Store
 
@@ -102,7 +102,7 @@ def held_extra(store: Store, session: Session, target: str, since: float) -> flo
     price_l = store.prices.get(target)
     if not price_l:
         return 0.0
-    ratio = convert_tokens(1.0, model_key(session.model), target)
+    ratio = store.facts.convert(1.0, session.model, target)
     extra = 0.0
     for request in reversed(session.main_requests()):
         if request.start < since:
@@ -193,7 +193,7 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
     if costs and costs.saving >= MIN_SAVING:
         rows.append(Option("/compact", f"≈{money(costs.now)} now, ≈{money(costs.after_break)} after a break; "
                                        f"then ≈{money(costs.saving)} less a message"))
-    if effort_keeps_cache(session.model):
+    if store.facts.effort_keeps_cache(session.model):
         if effort:
             rows.append(Option(f"/effort {effort[0]}", f"costs nothing now, then ≈{money(effort[1])} less a message"))
         else:

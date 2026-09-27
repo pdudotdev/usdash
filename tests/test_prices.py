@@ -1,13 +1,11 @@
 """Model ids, prices and the cost of a logged request."""
-import json
 import re
-from datetime import date
 
 import pytest
 from conftest import FIXTURES
 
 from usdash import prices
-from usdash.models import convert_tokens, model_key, on_cloud_provider, pretty_model
+from usdash.models import model_key, name_key, on_cloud_provider, pretty_model
 
 PRICES = prices.load_prices()
 
@@ -75,8 +73,8 @@ def test_the_pricing_page_reads_as_the_bundled_prices():
         ("Batch API", None),
     ],
 )
-def test_page_model_key(name, key):
-    assert prices.page_model_key(name) == key
+def test_name_key(name, key):
+    assert name_key(name) == key
 
 
 @pytest.mark.parametrize(
@@ -93,23 +91,6 @@ def test_a_page_that_reads_wrong_is_refused(change):
     with pytest.raises(ValueError):
         prices.parse_pricing_page(PAGE.replace(*change))
 
-
-def test_prices_come_from_the_page_else_the_last_copy_else_the_bundled_file(tmp_path):
-    saved = tmp_path / "prices.json"
-    page = {"claude-opus-5-5": {**PRICES["claude-opus-5-5"], "output": 21.0}}
-    # Read now: used, and kept for next time.
-    used, as_of = prices.current_prices(lambda: page, saved, today=date(2026, 10, 1))
-    assert as_of is None and used["claude-opus-5-5"]["output"] == 21.0 and used["claude-haiku-4-5"] == PRICES["claude-haiku-4-5"]
-    # Unreadable next time: the copy, with its date.
-    used, as_of = prices.current_prices(lambda: None, saved)
-    assert as_of == "2026-10-01" and used["claude-opus-5-5"]["output"] == 21.0
-    # A copy older than the bundled file: the bundled prices win.
-    saved.write_text(json.dumps({"date": "2026-01-01", "models": page}))
-    used, as_of = prices.current_prices(lambda: None, saved)
-    assert as_of == prices.prices_verified() and used["claude-opus-5-5"] == PRICES["claude-opus-5-5"]
-    # No copy at all, or a broken one.
-    saved.write_text("{")
-    assert prices.current_prices(lambda: None, saved)[1] == prices.prices_verified()
 
 
 def test_fast_mode_and_us_only_inference_cost_more():
@@ -148,9 +129,3 @@ def test_prompt_cost_matches_the_cache_lifetime():
     assert prices.prompt_cost(opus, 50_000, 49_000) == pytest.approx(0.0148)  # 49k x $0.20 + 1k x $5
     assert prices.prompt_cost(opus, 50_000, 49_000, prices.ONE_HOUR) == pytest.approx(0.0178)  # 1k x $8
     assert prices.prompt_cost(opus, 1_000, 5_000) == pytest.approx(0.0002)  # cached can't exceed the prompt
-
-
-def test_tokenizer_conversion():
-    assert convert_tokens(50_000, "claude-opus-5-5", "claude-haiku-4-5") == pytest.approx(38_500)
-    assert convert_tokens(38_500, "claude-haiku-4-5", "claude-opus-5-5") == pytest.approx(50_000)
-    assert convert_tokens(50_000, "claude-opus-5-5", "claude-sonnet-5") == 50_000

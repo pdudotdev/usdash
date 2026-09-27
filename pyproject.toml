@@ -18,4 +18,4 @@ usdash = "usdash.app:main"
 packages = ["usdash"]
 
 [tool.setuptools.package-data]
-usdash = ["pricing.yaml"]
+usdash = ["pricing.yaml", "models.yaml"]

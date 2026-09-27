@@ -302,7 +302,7 @@ def test_elsewhere_an_effort_change_re_writes_the_conversation(store):
     assert engine.effort_rewrite(store, sonnet, T0 + 130) == pytest.approx(42_000 * (4 - 0.2) / 1e6)
     assert engine.effort_rewrite(store, sonnet, T0 + 120 + ONE_HOUR) == 0  # already cold: re-written anyway
     bedrock = opus_session(store, model="us.anthropic.claude-opus-5-5-v1:0", session="sess-2")
-    assert not engine.effort_keeps_cache(bedrock.model)
+    assert not store.facts.effort_keeps_cache(bedrock.model)
     assert engine.effort_rewrite(store, bedrock, T0 + 130) == pytest.approx(42_000 * (8 - 0.2) / 1e6)
 
 

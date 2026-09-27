@@ -6,7 +6,7 @@
 
 A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, what your next message will cost, and when switching model, lowering effort or compacting saves money.
 
-It only reads files, plus Anthropic's public pricing page once at start (`--offline` skips even that). Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
+It only reads files, plus three pages of Anthropic's public docs once at start: prices, the current models, and effort (`--offline` skips even that). Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
 
 ▫️ **Why the prompt cache matters:**
 - [x] **While it's warm**, each message reads the conversation back at a tenth of the input price, or less
@@ -90,7 +90,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **NOTE** | `🤖 subagent` for a subagent's request; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
-- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its one request goes to Anthropic's pricing page, at start (none with `--offline`)
+- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only requests go to three pages of Anthropic's docs, at start (none with `--offline`)
 - [x] **Every surface on the machine:** terminal, VS Code extension, Desktop app Code tab, scripts
 - [x] **Subscription or API key:** the cache lifetime of each session is read from its own usage data (1 hour or 5 minutes)
 - [x] **Advice in dollars:** switching model, lowering effort, `/compact`, with the rent-or-buy rule deciding when a switch pays off
@@ -107,9 +107,20 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 ▫️ **Every reply:**
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
-3. Its cost is its tokens at Anthropic's list prices: read from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) at start, else the last copy read (`~/.cache/usdash/prices.json`), else [`usdash/pricing.yaml`](usdash/pricing.yaml). A page that doesn't read as expected (other columns, prices out of line with each other) is ignored. Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage
+3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage
 4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, Claude Code upgrade, or effort change
 5. The session's cache clock, what re-sending it costs, and its advice are recomputed
+
+▫️ **What it knows about the models, and where from** (first to last: what this machine's transcripts show, Anthropic's docs read at start, then what ships with usdash):
+
+| Fact | Your transcripts | Anthropic's docs | Shipped |
+|---|---|---|---|
+| **Prices** | n/a | The [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | [`usdash/pricing.yaml`](usdash/pricing.yaml) |
+| **The current models**, most capable first: the ones switch advice compares | n/a | The columns of the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview)'s comparison table | [`usdash/models.yaml`](usdash/models.yaml) |
+| **Where an effort change keeps the cache** | Effort changes while the cache was warm, and whether the next request read it back; twice, and never the other way, before it counts | The [effort page](https://platform.claude.com/docs/en/build-with-claude/effort) lists where the API can keep it: elsewhere, Claude Code can't either. Being listed isn't enough: Claude Code decides what it sends | `usdash/models.yaml` |
+| **Tokenizers**: every model before Claude Opus 4.7 counts the same text as about 0.77× the tokens | The median of your switches between the two, once there are two | n/a (only in prose) | `usdash/models.yaml` |
+
+Each page is fetched as plain Markdown and read strictly: a page that doesn't read as expected (other columns, prices out of line with each other, a missing sentence) is refused, the header says in yellow that it changed, and its last copy is used. Each page's last copy is kept in `~/.cache/usdash/docs.json`, and a copy older than what ships with usdash is ignored. A brand-new model needs no usdash release: it's priced and listed from the docs, has the current tokenizer, and its effort behaviour is learned from your first two effort changes on it.
 
 > ⚠️ **NOTE:** The transcript format is internal to Claude Code and can change with any release. usdash reads it leniently (missing fields are "unknown", not a crash) and counts record types it doesn't know. If the header reports unknown records after a Claude Code update, check usdash with the [manual sanity suite](tests/sanity/manual.py).
 
@@ -173,7 +184,7 @@ usdash                    # the last 24 hours, then live
 | `--window 8h` | Show sessions active this recently | `24h` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |
-| `--offline` | Don't read Anthropic's pricing page at start; use the last prices read (the header shows their date) | off |
+| `--offline` | Don't read Anthropic's docs at start; use their last copies (the header shows the prices' date) | off |
 
 ↑/↓, the mouse wheel or `j`/`k` scroll the sessions a session at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `r` switches to every request and back; there the same keys scroll the list, and while you're scrolled back its rows stay put and the title counts the new ones above them. `q` quits.
 
@@ -256,6 +267,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 |---|---|
 | [`usdash/`](usdash/) | The dashboard: transcript reader, sessions, cost engine, advice, screen |
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
+| [`usdash/models.yaml`](usdash/models.yaml) | What usdash assumes about the models (the current lineup, where effort keeps the cache, tokenizers) when neither your transcripts nor the docs say |
 | [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
 | [`research/REDESIGN-PLAN.md`](research/REDESIGN-PLAN.md) | The plan for the session-first screen, and its assumptions checked against real transcripts |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |

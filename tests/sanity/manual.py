@@ -77,7 +77,7 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | 31 | In a warm Opus 5.5 session, note the `↓ Haiku 4.5` row's "evens out after ≈N messages", then keep sending messages without a break | After about N messages (often a few more: the switch costs more as the conversation grows), the action becomes `Switch to Haiku 4.5 now: it would have saved $… by now; switching costs $….` | The rent-or-buy rule checks every cheaper model, not only the nearest |
 
 | 32 | Start usdash with the network off, then again with `--offline` | The header says `API list prices of <date> (couldn't refresh them)`, then `(offline)`, with the date of the last prices read, and the amounts don't change | It falls back to the last prices it read, and says how fresh they are |
-| 33 | Start usdash with the network on, then look at `~/.cache/usdash/prices.json` | The header says `current API list prices`; the file has today's date and the page's models | The copy it falls back to is refreshed on every start |
+| 33 | Start usdash with the network on, then look at `~/.cache/usdash/docs.json` | The header says `current API list prices`; the file has today's date for `pricing`, `models` and `effort`, and `models` lists the models overview's comparison table, most capable first | The copy it falls back to is refreshed on every start |
 
 **Overall pass:** after `/exit`, a session's TOTAL is Claude Code's own figure. On an API key, a session's TOTAL is also close to `/cost` in that session (a little lower while it's open: background requests aren't in the transcripts; the README's Limitations has the measured gap). Nothing in the header says `records of unknown types`.
 """

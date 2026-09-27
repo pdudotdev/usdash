@@ -15,7 +15,7 @@ Formulas: research/CACHE-DECISIONS.md (§3 a move, §5 when to make it, §6 /com
 """
 from dataclasses import dataclass
 
-from .models import LADDER, convert_tokens, effort_keeps_cache, model_key
+from .models import model_key
 from .prices import FIVE_MINUTES, output_cost, prompt_cost, write_price
 from .sessions import Session, Store
 
@@ -103,12 +103,12 @@ def resend(store: Store, session: Session, model: str | None, warm: bool) -> flo
     ttl = session.ttl or FIVE_MINUTES
     if warm and model_key(model) == model_key(session.model):
         return prompt_cost(price, ctx.tokens, ctx.cached, ttl)
-    return prompt_cost(price, convert_tokens(ctx.tokens, model_key(session.model), model_key(model)), 0, ttl)
+    return prompt_cost(price, store.facts.convert(ctx.tokens, session.model, model), 0, ttl)
 
 
 def others(store: Store, model: str | None) -> list[str]:
-    """Every other priced model in LADDER, most capable first."""
-    return [m for m in LADDER if m != model_key(model) and m in store.prices]
+    """Every other priced model in the current lineup, most capable first."""
+    return [m for m in store.facts.lineup if m != model_key(model) and m in store.prices]
 
 
 def cheaper(store: Store, model: str | None) -> list[str]:
@@ -158,16 +158,16 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
     stay, there = resend(store, session, source, warm), resend(store, session, target, warm=False)
     if stay is None or there is None:
         return None
-    size_l = convert_tokens(ctx.tokens, model_key(source), model_key(target))
+    size_l = store.facts.convert(ctx.tokens, source, target)
     shared = min(store.shared_prefix(session, target, now), size_l)
     move = there - shared * (write_price(price_l, ttl) - price_l["cache_read"]) / 1e6
     add = session.growth()
     out_e = typical_output(store, session, source, session.effort)
     out_l = session.average_output(target)
     if out_l is None:
-        out_l = convert_tokens(out_e, model_key(source), model_key(target))
+        out_l = store.facts.convert(out_e, source, target)
     saving = message_saving(price_e, price_l, ctx.tokens, size_l, out_e, out_l,
-                            add, convert_tokens(add, model_key(source), model_key(target)), ttl)
+                            add, store.facts.convert(add, source, target), ttl)
     return Move(target, stay, move, move - stay, saving, ctx.exact and not shared)
 
 
@@ -180,7 +180,7 @@ def effort_saving(store: Store, session: Session, effort: str) -> float | None:
     tasks. None without either."""
     model = session.model
     price = store.prices.get(model_key(model))
-    if not price or not effort_keeps_cache(model) or session.last_request is None:
+    if not price or not store.facts.effort_keeps_cache(model) or session.last_request is None:
         return None
     before = session.average_output(model, session.effort)
     after = session.average_output(model, effort)
@@ -197,7 +197,7 @@ def effort_rewrite(store: Store, session: Session, now: float) -> float | None:
     conversation (all but Opus 5.5 and Fable 5.1, and those on a cloud
     provider): writing C instead of reading it back. None where the cache is
     kept; 0 once the cache has expired anyway."""
-    if effort_keeps_cache(session.model):
+    if store.facts.effort_keeps_cache(session.model):
         return None
     warm, _, _ = cache_clock(session, now)
     stay, rewrite = resend(store, session, session.model, warm), resend(store, session, session.model, False)

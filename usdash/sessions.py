@@ -15,7 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from statistics import median
 
-from .models import convert_tokens, effort_keeps_cache, model_key, pretty_model
+from .facts import Facts, load_facts
+from .models import model_key, on_cloud_provider, pretty_model
 from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, request_cost, usage_parts, write_price
 from .transcripts import Record, account_file
 
@@ -96,7 +97,7 @@ class Request:
         return None
 
 
-def rewrite_reason(request: Request, prev: ChainState) -> str:
+def rewrite_reason(request: Request, prev: ChainState, facts: Facts) -> str:
     """Why a request's cache missed, from what changed since the chain's last request."""
     if prev.compacted:
         return "/compact"
@@ -107,7 +108,7 @@ def rewrite_reason(request: Request, prev: ChainState) -> str:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
     if request.version and prev.version and request.version != prev.version:
         return "Claude Code upgraded"
-    if request.effort != prev.effort and prev.effort and not effort_keeps_cache(request.model):
+    if request.effort != prev.effort and prev.effort and not facts.effort_keeps_cache(request.model):
         return "effort change"
     return "cause unknown"
 
@@ -247,10 +248,6 @@ class Session:
     def last_request(self) -> Request | None:
         return self.requests.get(self.main.key) if self.main.key else None
 
-    def prefix_on(self, model: str | None) -> float:
-        """The tool list and system prompt, counted in `model`'s tokens."""
-        return convert_tokens(self.prefix, model_key(self.prefix_model), model_key(model))
-
     def main_requests(self) -> list[Request]:
         """The main conversation's requests, oldest first."""
         return memo(self, "main", lambda: sorted(
@@ -311,8 +308,9 @@ class Session:
 class Store:
     """All sessions, the live feed, and each day's totals."""
 
-    def __init__(self, prices: dict) -> None:
+    def __init__(self, prices: dict, facts: Facts | None = None) -> None:
         self.prices = prices
+        self.base_facts = facts or load_facts()  # models.yaml and the docs; `facts` adds the transcripts
         self.sessions: dict[str, Session] = {}
         self.feed: deque[Request] = deque(maxlen=FEED_HISTORY)
         self.days: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))  # day -> cost, read, prompt, requests
@@ -456,7 +454,8 @@ class Store:
             if not session.prefix and request.prompt:
                 session.prefix, session.prefix_model = request.prompt, model
             read = request.usage.get("read", 0)
-            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= session.prefix_on(model):
+            prefix = self.base_facts.convert(session.prefix, session.prefix_model, model)
+            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= prefix:
                 # Right after /compact, only the tool list and system prompt were still
                 # cached: what this request read back is their exact size.
                 self.measured_prefix[(session.cwd, session.entrypoint)] = (read, model_key(model))
@@ -489,7 +488,7 @@ class Store:
         if missed < max(REWRITE_MIN_TOKENS, REWRITE_SHARE * could_read):
             return
         request.rewritten = missed
-        request.reason = rewrite_reason(request, prev)
+        request.reason = rewrite_reason(request, prev, self.base_facts)
         if price:
             ttl = request.ttl or prev.ttl or FIVE_MINUTES
             request.rewrite_cost = missed * (write_price(price, ttl) - price["cache_read"]) / 1_000_000
@@ -515,6 +514,39 @@ class Store:
 
     # --- Across sessions --------------------------------------------------------
 
+    @property
+    def facts(self) -> Facts:
+        """What's known about the models, with what this machine's transcripts show (facts.py)."""
+        return memo(self, "facts", lambda: self.base_facts.with_seen(*self._seen()))
+
+    def _seen(self) -> tuple[dict[str, tuple[int, int]], list[float]]:
+        """From consecutive main-conversation requests while the cache was warm
+        (no /compact or Claude Code upgrade between): each model's effort
+        changes, (kept the cache, re-wrote it); and at each switch between the
+        two tokenizers, the same conversation's old tokens / current tokens."""
+        base = self.base_facts
+        effort: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        ratios = []
+        for session in self.sessions.values():
+            requests = session.main_requests()
+            for a, b in zip(requests, requests[1:]):
+                if (b.prev is None or b.prev.compacted or a.version != b.version
+                        or b.start - a.start >= (a.ttl or session.ttl or FIVE_MINUTES)):
+                    continue
+                before, after = model_key(a.model), model_key(b.model)
+                if before == after:
+                    if a.effort and b.effort and a.effort != b.effort and not on_cloud_provider(b.model):
+                        effort[after][0 if b.usage.get("read", 0) >= 0.9 * a.prompt else 1] += 1
+                elif base.old_tokenizer(before) != base.old_tokenizer(after) and a.prompt >= 20_000:
+                    old, current = (a.prompt, b.prompt) if base.old_tokenizer(before) else (b.prompt, a.prompt)
+                    if 0.5 < old / current < 1.1:  # else not the same conversation
+                        ratios.append(old / current)
+        return {model: (kept, rewrote) for model, (kept, rewrote) in effort.items()}, ratios
+
+    def prefix_on(self, session: Session, model: str | None) -> float:
+        """A session's tool list and system prompt, counted in `model`'s tokens."""
+        return self.facts.convert(session.prefix, session.prefix_model, model)
+
     def folder(self, cwd: str | None) -> list[Session]:
         """The sessions in this folder that have sent a main-conversation request."""
         return memo(self, ("folder", cwd), lambda: [s for s in self.sessions.values() if s.cwd == cwd and s.prefix])
@@ -530,10 +562,10 @@ class Store:
         with nothing else."""
         if not session.scripted and (session.cwd, session.entrypoint) in self.measured_prefix:
             tokens, family = self.measured_prefix[(session.cwd, session.entrypoint)]
-            return convert_tokens(tokens, family, model_key(model))
+            return self.facts.convert(tokens, family, model)
         peers = [session] if session.scripted else [
             s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
-        return min((s.prefix_on(model) for s in peers if s.prefix), default=0.0)
+        return min((self.prefix_on(s, model) for s in peers if s.prefix), default=0.0)
 
     def summary_size(self, conversation: int) -> int:
         """Tokens /compact's summary will likely take for a conversation this
@@ -557,7 +589,7 @@ class Store:
         own, shared = self.tool_list(session, model), 0.0
         for other in self.folder(session.cwd):
             if other.cached_on(model, now):
-                shared = max(shared, min(own, other.prefix_on(model)))
+                shared = max(shared, min(own, self.prefix_on(other, model)))
         return round(shared)
 
     def average_output(self, model: str | None, effort: str | None = None) -> float | None:

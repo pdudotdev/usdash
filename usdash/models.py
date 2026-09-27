@@ -1,20 +1,9 @@
-"""Model ids: any spelling -> one family key, and a short name for the screen.
+"""Model ids: any spelling -> one family key, a short name for the screen,
+and its version; and a model's name in Anthropic's docs -> its key.
 
 Copied from llm-trunk (policy/models.py, scripts/events.py), plus Vertex ids.
 """
 import re
-
-# The same text is ~30% fewer tokens on Haiku 4.5's tokenizer than on the
-# newer models' (measured 0.758 in a real run; research/CACHE-DECISIONS.md §1).
-SMALL_TOKENIZER = {"claude-haiku-4-5"}
-TO_SMALL_TOKENIZER = 0.77
-
-# The current models, most capable (and most expensive) first.
-LADDER = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"]
-
-# Where Claude Code keeps the cache across an effort change (the per-message
-# effort beta). Everywhere else an effort change re-writes the conversation.
-EFFORT_KEEPS_CACHE = {"claude-opus-5-5", "claude-fable-5-1"}
 
 
 def model_key(model: str | None) -> str | None:
@@ -57,14 +46,13 @@ def model_version(family: str | None) -> tuple[int, int] | None:
     return (int(match.group(1)), int(match.group(2) or 0)) if match else None
 
 
-def convert_tokens(tokens: float, source: str | None, target: str | None) -> float:
-    """A token count on one model's tokenizer -> roughly the same text on another's."""
-    small_source, small_target = source in SMALL_TOKENIZER, target in SMALL_TOKENIZER
-    if small_source == small_target:
-        return tokens
-    return tokens * TO_SMALL_TOKENIZER if small_target else tokens / TO_SMALL_TOKENIZER
-
-
-def effort_keeps_cache(model: str | None) -> bool:
-    """Whether Claude Code keeps the cache across an effort change on this model."""
-    return model_key(model) in EFFORT_KEEPS_CACHE and not on_cloud_provider(model)
+def name_key(name: str) -> str | None:
+    """A model's name in Anthropic's docs -> its family key: 'Claude Opus 4.5
+    ([retired](…))' -> 'claude-opus-4-5'. Before Claude 4 the version comes
+    first, as in their ids: 'Claude Haiku 3.5' -> 'claude-3-5-haiku'."""
+    match = re.match(r"\s*Claude ([A-Z][a-z]+) (\d+)(?:\.(\d+))?(?![\d.])", name)
+    if not match:
+        return None
+    family, major, minor = match.group(1).lower(), match.group(2), match.group(3)
+    version = f"{major}-{minor}" if minor else major
+    return f"claude-{version}-{family}" if int(major) < 4 else f"claude-{family}-{version}"

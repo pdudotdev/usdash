@@ -38,6 +38,7 @@ class View:
     subscription: bool = False
     window: int = 24 * 3600  # sessions idle longer than this are hidden
     prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
+    docs_changed: list[str] = field(default_factory=list)  # Anthropic's pages that no longer read as expected
     unknown_types: int = 0
     mode: str = "sessions"  # or "requests"
     session_scroll: int = 0  # sessions hidden above the view
@@ -143,6 +144,10 @@ def header(store: Store, view: View) -> Panel:
     # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
     # summary); an exited session's TOTAL is Claude Code's own, which counts them.
     detail.append("  ·  amounts can read low: transcripts miss background requests")
+    if view.docs_changed:
+        pages = " and ".join(view.docs_changed)
+        detail.append(f"  ·  Anthropic's {pages} page{'s' if len(view.docs_changed) > 1 else ''} changed: "
+                      f"usdash may need an update", style="yellow")
     if view.unknown_types:
         detail.append(f"  ·  {view.unknown_types} records of unknown types (newer Claude Code?)", style="yellow")
     return Panel(Group(line, detail), title=Text("💲 usdash · live", style="bold"), title_align="left")
