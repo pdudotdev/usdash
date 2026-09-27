@@ -21,6 +21,7 @@ import select
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from rich.live import Live
 
 from .docs import fetch_text, read_docs
 from .facts import Facts, load_facts
-from .prices import load_prices, prices_verified
+from .prices import load_prices, load_web_search, prices_verified
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
 from .ui import View, press, render, track_feed
@@ -97,20 +98,34 @@ def prices_label(as_of: str | None, offline: bool) -> str:
     return f"API list prices of {as_of} ({why})"
 
 
-def knowledge(offline: bool) -> tuple[dict, Facts, str, list[str]]:
-    """What Anthropic's docs say, read now (or their saved copies, or the
-    shipped files): (prices, model facts, the header's name for the prices,
-    the pages that no longer read as expected)."""
-    facts, prices = load_facts(), load_prices()
-    shipped = {"pricing": prices_verified(), "models": facts.verified, "effort": facts.verified}
-    pages = read_docs(None if offline else fetch_text, shipped=shipped)
+@dataclass
+class Known:
+    """What usdash goes by: the prices, the model facts, and how fresh they are."""
+    prices: dict  # model family -> prices
+    web_search: float  # USD per search
+    facts: Facts
+    label: str  # the header's name for the prices (prices_label)
+    changed: list[str]  # Anthropic's pages that no longer read as expected
+
+
+def shipped() -> Known:
+    return Known(load_prices(), load_web_search(), load_facts(), prices_label(prices_verified(), offline=True), [])
+
+
+def knowledge(offline: bool) -> Known:
+    """What Anthropic's docs say, read now, else their saved copies, else the shipped files."""
+    known = shipped()
+    dates = {"pricing": prices_verified(), "models": known.facts.verified, "effort": known.facts.verified}
+    pages = read_docs(None if offline else fetch_text, shipped=dates)
     pricing, effort = pages["pricing"], pages["effort"].data
     if pricing.data:
-        prices.update(pricing.data)
-    facts = facts.with_docs(pages["models"].data, set(effort) if effort is not None else None)
+        known.prices.update(pricing.data["models"])
+        known.web_search = pricing.data["web_search"]
+    known.facts = known.facts.with_docs(pages["models"].data, set(effort) if effort is not None else None)
     fresh = pricing.data is not None and pricing.as_of is None
-    label = prices_label(None if fresh else pricing.as_of or shipped["pricing"], offline)
-    return prices, facts, label, [name for name, page in pages.items() if page.changed]
+    known.label = prices_label(None if fresh else pricing.as_of or dates["pricing"], offline)
+    known.changed = [name for name, page in pages.items() if page.changed]
+    return known
 
 
 def start_of_today(now: float) -> float:
@@ -126,16 +141,14 @@ def history_start(now: float, since: int | None, window: int) -> float:
 
 
 class App:
-    def __init__(self, projects: Path, since: float, window: int, clock=time.time,
-                 known: tuple[dict, Facts, str, list[str]] | None = None) -> None:
+    def __init__(self, projects: Path, since: float, window: int, clock=time.time, known: Known | None = None) -> None:
         """`known`: what knowledge() returns; without it, the shipped files only."""
-        prices, facts, label, changed = known or (load_prices(), load_facts(),
-                                                  prices_label(prices_verified(), offline=True), [])
+        known = known or shipped()
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
-        self.store = Store(prices, facts)
-        self.view = View(now=clock(), subscription=subscription_account(), window=window, prices=label,
-                         docs_changed=changed)
+        self.store = Store(known.prices, known.facts, known.web_search)
+        self.view = View(now=clock(), subscription=subscription_account(), window=window, prices=known.label,
+                         docs_changed=known.changed)
         self.desktop_read = 0.0
 
     def poll(self) -> bool:

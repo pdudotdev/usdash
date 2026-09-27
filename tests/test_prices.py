@@ -59,8 +59,9 @@ PAGE = (FIXTURES / "pricing-page.md").read_text()  # as fetched on 2026-09-27
 def test_the_pricing_page_reads_as_the_bundled_prices():
     page = prices.parse_pricing_page(PAGE)
     for model, price in PRICES.items():
-        assert page[model] == price, model  # fast mode's included
-    assert page["claude-3-5-haiku"]["input"] == 0.8  # and models pricing.yaml leaves out
+        assert page["models"][model] == price, model  # fast mode's included
+    assert page["models"]["claude-3-5-haiku"]["input"] == 0.8  # and models pricing.yaml leaves out
+    assert page["web_search"] == prices.load_web_search() == 0.01  # $10 per 1,000 searches
 
 
 @pytest.mark.parametrize(
@@ -84,6 +85,7 @@ def test_name_key(name, key):
         ("$0.20 / MTok<sup>2</sup>", "$4.20 / MTok<sup>2</sup>"),  # Opus 5.5's cache reads above its input
         ("| Claude Opus 5.5                 | $8 / MTok  |", "| Claude Opus 5.5                 | $2 / MTok  |"),
         ("### Fast mode pricing", "### Speed pricing"),
+        ("**$10 per 1,000 searches**", "**$10 per search**"),
     ],
 )
 def test_a_page_that_reads_wrong_is_refused(change):

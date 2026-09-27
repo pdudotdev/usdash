@@ -302,6 +302,15 @@ def test_fast_mode_changes_the_price_and_turning_it_on_re_writes(store):
     assert last.cost == pytest.approx((41_000 * 16 + 2 * 8) / 1e6)  # the 1-hour write and input at twice the price
 
 
+def test_web_searches_are_charged_on_top_of_tokens(store):
+    t = Transcript()
+    t.turn(T0, write=40_000, out=0, tools={"web_search_requests": 3, "web_fetch_requests": 2})
+    t.into(store)
+    request = store.sessions["sess-1"].last_request
+    assert request.usage["searches"] == 3  # web fetches cost only their tokens
+    assert request.cost == pytest.approx((40_000 * 8 + 2 * 4) / 1e6 + 3 * 0.01)
+
+
 def test_scripted_sessions(store):
     for session_id, entrypoint in (("a", "cli"), ("b", "claude-vscode"), ("c", "claude-desktop"), ("d", "sdk-cli")):
         t = Transcript(session=session_id, entrypoint=entrypoint)

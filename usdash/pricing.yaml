@@ -5,6 +5,8 @@
 # fast: fast mode's input and output prices; the cache prices keep their ratio to input.
 # Claude Code's own cost-state totals match these prices (checked 2026-09-27).
 verified: 2026-09-26
+# Server-side web search, USD per 1,000 searches, on top of tokens (web fetch costs only tokens).
+web_search: 10
 
 models:
   claude-fable-5-1:  {input: 10, output: 50, cache_read: 0.25, cache_write: 12.50, cache_write_1h: 20.00}

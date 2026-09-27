@@ -87,7 +87,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **PROMPT** | Tokens sent: the whole conversation so far |
 | **CACHED** | The share of them read back from the cache: green from 80%, yellow from 30%, red below |
 | **OUT** · **COST** | Output tokens (thinking included), and the request's cost at list prices |
-| **NOTE** | `🤖 subagent` for a subagent's request; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
+| **NOTE** | `🤖 subagent` for a subagent's request; `🔍 2 web searches (+$0.02)` for server-side web searches, charged on top of tokens; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
 - [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only requests go to three pages of Anthropic's docs, at start (none with `--offline`)
@@ -101,13 +101,13 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 ▫️ **Where the data comes from:**
 - [x] Claude Code writes every session to `~/.claude/projects/<folder>/<session-id>.jsonl`, and each subagent to `<session-id>/subagents/agent-<id>.jsonl`, one JSON line per record
-- [x] Each reply carries its model, effort and token usage: uncached input, cache reads, cache writes (5-minute or 1-hour) and output
+- [x] Each reply carries its model, effort and token usage: uncached input, cache reads, cache writes (5-minute or 1-hour) and output, and any server-side web searches
 - [x] usdash reads new lines about once a second, looks for new sessions and subagents every 5 seconds, and redraws at most twice a second
 
 ▫️ **Every reply:**
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
-3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage
+3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage, and each web search adds the page's per-search price ($10 per 1,000). Web fetches cost only their tokens
 4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, fast mode turned on or off, Claude Code upgrade, or effort change
 5. The session's cache clock, what re-sending it costs, and its advice are recomputed
 
@@ -115,7 +115,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Fact | Your transcripts | Anthropic's docs | Shipped |
 |---|---|---|---|
-| **Prices** | n/a | The [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | [`usdash/pricing.yaml`](usdash/pricing.yaml) |
+| **Prices**: tokens, fast mode, web search | n/a | The [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | [`usdash/pricing.yaml`](usdash/pricing.yaml) |
 | **The current models**, most capable first: the ones switch advice compares | n/a | The columns of the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview)'s comparison table | [`usdash/models.yaml`](usdash/models.yaml) |
 | **Where an effort change keeps the cache** | Effort changes while the cache was warm, and whether the next request read it back; twice, and never the other way, before it counts | The [effort page](https://platform.claude.com/docs/en/build-with-claude/effort) lists where the API can keep it: elsewhere, Claude Code can't either. Being listed isn't enough: Claude Code decides what it sends | `usdash/models.yaml` |
 | **Tokenizers**: every model before Claude Opus 4.7 counts the same text as about 0.77× the tokens | The median of your switches between the two, once there are two | n/a (only in prose) | `usdash/models.yaml` |
@@ -204,6 +204,8 @@ usdash                    # the last 24 hours, then live
 
 ▫️ **Amounts read low until a session exits:**
 Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.
+
+▫️ **Code execution:** without web search or web fetch in the same request, it's billed per container-hour against a free monthly allowance per organisation, so one session's share can't be known. It isn't counted; with them, it's free.
 
 ▫️ **Fast mode:** a switch to another model that has fast mode (Opus 5, Opus 4.8) is priced as if it stays fast. Whether Claude Code keeps fast mode across `/model` isn't checked yet (the [manual sanity suite](tests/sanity/manual.py), check 34).
 

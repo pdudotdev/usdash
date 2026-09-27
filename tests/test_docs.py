@@ -17,9 +17,9 @@ def test_pages_read_now_are_used_and_saved(tmp_path):
     pages = docs.read_docs(PAGES.get, saved, today=date(2026, 10, 1))
     assert all(page.as_of is None and not page.changed for page in pages.values())
     assert pages["models"].data == load_facts().lineup
-    assert all(pages["pricing"].data[model] == price for model, price in load_prices().items())
+    assert all(pages["pricing"].data["models"][model] == price for model, price in load_prices().items())
     kept = json.loads(saved.read_text())
-    assert set(kept) == {"pricing", "models", "effort"} and kept["effort"]["date"] == "2026-10-01"
+    assert set(kept) == {"format", "pricing", "models", "effort"} and kept["effort"]["date"] == "2026-10-01"
 
 
 def test_unreachable_pages_fall_back_to_the_saved_copy_then_the_shipped_files(tmp_path):
@@ -43,6 +43,13 @@ def test_a_page_that_changed_is_flagged_and_its_copy_used(tmp_path):
 
 
 def test_offline_the_shipped_files_say_so(monkeypatch):
-    prices, facts, label, changed = app.knowledge(offline=True)  # no copy saved (conftest)
-    assert prices == load_prices() and facts.lineup == load_facts().lineup and facts.effort_possible is None
-    assert label == "API list prices of Sep 26 (offline)" and changed == []
+    known = app.knowledge(offline=True)  # no copy saved (conftest)
+    assert known.prices == load_prices() and known.web_search == 0.01
+    assert known.facts.lineup == load_facts().lineup and known.facts.effort_possible is None
+    assert known.label == "API list prices of Sep 26 (offline)" and known.changed == []
+
+
+def test_a_copy_saved_by_an_older_usdash_is_ignored(tmp_path):
+    saved = tmp_path / "docs.json"
+    saved.write_text(json.dumps({"pricing": {"date": "2030-01-01", "data": {"claude-opus-5-5": {}}}}))  # no format
+    assert docs.read_docs(None, saved)["pricing"] == docs.Page(None, None)

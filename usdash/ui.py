@@ -385,6 +385,9 @@ def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
     note = Text()
     if request.subagent:
         note.append("🤖 subagent ", style="dim")
+    if searches := request.usage.get("searches", 0):
+        word = "web search" if searches == 1 else "web searches"
+        note.append(f"🔍 {searches} {word} (+{_money(searches * store.web_search)}) ", style="dim")
     if request.reason:
         note.append(f"⟳ re-wrote {_tokens(request.rewritten)}: {request.reason} (+{_money(request.rewrite_cost)})",
                     style="bold red")

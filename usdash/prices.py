@@ -28,6 +28,11 @@ def load_prices(path: str | Path = PRICING) -> dict[str, dict]:
     return yaml.safe_load(Path(path).read_text())["models"]
 
 
+def load_web_search(path: str | Path = PRICING) -> float:
+    """USD per server-side web search."""
+    return float(yaml.safe_load(Path(path).read_text())["web_search"]) / 1000
+
+
 def prices_verified(path: str | Path = PRICING) -> str:
     return str(yaml.safe_load(Path(path).read_text()).get("verified", "?"))
 
@@ -58,11 +63,12 @@ def _dollars(cell: str) -> float:
     return float(match.group(1))
 
 
-def parse_pricing_page(text: str) -> dict[str, dict]:
-    """Anthropic's pricing page (its Markdown) -> model family -> prices, as
-    in pricing.yaml, fast mode's included. Raises ValueError unless every row
-    reads as expected: the same columns, and prices in line with each other
-    (cache reads < input < cache writes, output ≥ input, fast ≥ standard)."""
+def parse_pricing_page(text: str) -> dict:
+    """Anthropic's pricing page (its Markdown) -> {"models": model family ->
+    prices, as in pricing.yaml, fast mode's included; "web_search": USD per
+    search}. Raises ValueError unless every row reads as expected: the same
+    columns, and prices in line with each other (cache reads < input < cache
+    writes, output ≥ input, fast ≥ standard), and the search price is there."""
     rows = _table(text, "## Model pricing")
     if not rows or rows[0][1:] != PAGE_COLUMNS:
         raise ValueError("the model table's columns changed")
@@ -88,7 +94,10 @@ def parse_pricing_page(text: str) -> dict[str, dict]:
             if key not in models or speed["input"] < models[key]["input"] or speed["output"] < models[key]["output"]:
                 raise ValueError(f"fast mode prices out of line for {name!r}")
             models[key]["fast"] = speed
-    return models
+    search = re.search(r"Web search is available on the Claude API for \*\*\$(\d+(?:\.\d+)?) per 1,000 searches\*\*", text)
+    if not search:
+        raise ValueError("no web search price")
+    return {"models": models, "web_search": float(search.group(1)) / 1000}
 
 
 # --- Costs -------------------------------------------------------------------------
@@ -117,12 +126,14 @@ def write_price(price: dict, ttl: int) -> float:
 
 
 def usage_parts(usage: dict) -> dict[str, int]:
-    """A transcript `usage` block -> fresh / read / write_5m / write_1h / output token counts.
-    Missing fields count as 0; writes without the 5m/1h split count as 5-minute."""
+    """A transcript `usage` block -> fresh / read / write_5m / write_1h / output
+    token counts, and server-side web searches. Missing fields count as 0;
+    writes without the 5m/1h split count as 5-minute."""
     def count(value) -> int:
         return int(value) if isinstance(value, (int, float)) else 0
 
     split = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    tools = usage.get("server_tool_use") if isinstance(usage.get("server_tool_use"), dict) else {}
     write_1h = count(split.get("ephemeral_1h_input_tokens"))
     write_5m = count(split.get("ephemeral_5m_input_tokens"))
     unsplit = count(usage.get("cache_creation_input_tokens")) - write_1h - write_5m
@@ -132,6 +143,7 @@ def usage_parts(usage: dict) -> dict[str, int]:
         "write_5m": write_5m + max(unsplit, 0),
         "write_1h": write_1h,
         "output": count(usage.get("output_tokens")),
+        "searches": count(tools.get("web_search_requests")),
     }
 
 

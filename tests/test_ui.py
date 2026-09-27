@@ -194,6 +194,13 @@ def test_a_fast_session_says_so_and_offers_turning_it_off(store):
     assert any("/fast off" in line and "re-sends 42k tokens: ≈$" in line for line in lines)
 
 
+def test_the_request_list_shows_web_searches(store):
+    t = Transcript()
+    t.turn(T0, text="look it up", write=40_000, tools={"web_search_requests": 2})
+    t.into(store)
+    assert "🔍 2 web searches (+$0.02)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
+
+
 def test_the_last_session_can_always_be_scrolled_to(store):
     # Two sections on the last page take two labels: at every height, the oldest can be reached.
     two_sessions(store)

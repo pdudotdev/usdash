@@ -17,7 +17,7 @@ from statistics import median
 
 from .facts import Facts, load_facts
 from .models import model_key, on_cloud_provider, pretty_model
-from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, request_cost, usage_parts, write_price
+from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, load_web_search, request_cost, usage_parts, write_price
 from .transcripts import Record, account_file
 
 FEED_HISTORY = 10_000
@@ -314,8 +314,9 @@ class Session:
 class Store:
     """All sessions, the live feed, and each day's totals."""
 
-    def __init__(self, prices: dict, facts: Facts | None = None) -> None:
+    def __init__(self, prices: dict, facts: Facts | None = None, web_search: float | None = None) -> None:
         self.prices = prices
+        self.web_search = load_web_search() if web_search is None else web_search  # USD per search
         self.base_facts = facts or load_facts()  # models.yaml and the docs; `facts` adds the transcripts
         self.sessions: dict[str, Session] = {}
         self.feed: deque[Request] = deque(maxlen=FEED_HISTORY)
@@ -447,7 +448,7 @@ class Store:
             self.unpriced[model_key(model)] += 1 if old is None else 0
         else:
             price = as_paid(price, usage, model_key(model))  # fast mode, US-only inference
-        request.cost = request_cost(usage, price) if price else None
+        request.cost = request_cost(usage, price) + request.usage["searches"] * self.web_search if price else None
         self._classify(request, price)
         self._account(session, request, +1)
         if chain.key in (None, key) or old is None:

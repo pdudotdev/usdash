@@ -27,6 +27,7 @@ PAGES = {  # name -> (Markdown URL, parser)
     "effort": (f"{DOCS}/build-with-claude/effort.md", lambda text: sorted(parse_effort_models(text))),
 }
 TIMEOUT = 3.0  # seconds, for each page (they're read at the same time)
+SAVED_FORMAT = 2  # bumped when a page's parsed shape changes: older copies are ignored
 
 
 @dataclass
@@ -78,7 +79,7 @@ def read_docs(fetch=fetch_text, saved: Path | None = None, shipped: dict[str, st
     saved = saved or saved_docs_file()
     try:
         kept = json.loads(saved.read_text())
-        kept = kept if isinstance(kept, dict) else {}
+        kept = kept if isinstance(kept, dict) and kept.get("format") == SAVED_FORMAT else {}
     except (OSError, ValueError):
         kept = {}
     texts: dict[str, str | None] = dict.fromkeys(PAGES)
@@ -103,7 +104,7 @@ def read_docs(fetch=fetch_text, saved: Path | None = None, shipped: dict[str, st
     if fresh:
         try:
             saved.parent.mkdir(parents=True, exist_ok=True)
-            saved.write_text(json.dumps({**kept, **fresh}, indent=1))
+            saved.write_text(json.dumps({**kept, **fresh, "format": SAVED_FORMAT}, indent=1))
         except OSError:
             pass
     return pages

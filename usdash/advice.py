@@ -123,7 +123,8 @@ def held_extra(store: Store, session: Session, target: str, since: float) -> flo
             "output_tokens": request.usage["output"] * ratio,
         }
         price_l = as_paid(base_l, {"speed": request.speed, "inference_geo": request.geo}, target)
-        extra += request.cost - request_cost(usage, price_l)
+        searches = request.usage.get("searches", 0) * store.web_search  # the same on any model
+        extra += request.cost - searches - request_cost(usage, price_l)
     return extra
 
 
