@@ -78,6 +78,7 @@ These check how usdash counts the cache clock when one turn runs longer than the
 
 | 32 | Start usdash with the network off, then again with `--offline` | The header says `API list prices of <date> (couldn't refresh them)`, then `(offline)`, with the date of the last prices read, and the amounts don't change | It falls back to the last prices it read, and says how fresh they are |
 | 33 | Start usdash with the network on, then look at `~/.cache/usdash/docs.json` | The header says `current API list prices`; the file has today's date for `pricing`, `models` and `effort`, and `models` lists the models overview's comparison table, most capable first | The copy it falls back to is refreshed on every start |
+| 34 | In an Opus 5.5 session, turn `/fast` on, send a message, then `/model sonnet` and send another | With fast on: MODEL says `Opus 5.5 high fast`, the request list shows `⟳ … speed change` and about twice the cost, and a `/fast off` row appears. After `/model`: note whether the Sonnet request's row says `fast` (it has no fast mode) and whether switching to Opus 5 would keep it | Fast mode is priced from each reply's `usage.speed`; whether it survives `/model` decides how switches are priced |
 
 **Overall pass:** after `/exit`, a session's TOTAL is Claude Code's own figure. On an API key, a session's TOTAL is also close to `/cost` in that session (a little lower while it's open: background requests aren't in the transcripts; the README's Limitations has the measured gap). Nothing in the header says `records of unknown types`.
 """

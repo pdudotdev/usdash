@@ -81,7 +81,7 @@ class Transcript:
     def reply(self, at: float, model: str = "claude-opus-5-5", effort: str | None = "high", read: int = 0,
               write: int = 0, fresh: int = 2, out: int = 100, ttl: str = "1h", blocks: int = 1,
               subagent: str | None = None, request_id: str | None = "auto", message_id: str | None = None,
-              version: str | None = None, **extra) -> str:
+              version: str | None = None, speed: str | None = None, **extra) -> str:
         """One API reply, written as `blocks` records sharing a message id,
         each a second apart (streamed content blocks)."""
         message_id = message_id or f"msg_{next(self.ids)}"
@@ -89,6 +89,8 @@ class Transcript:
                  "ephemeral_5m_input_tokens": write if ttl == "5m" else 0}
         usage = {"input_tokens": fresh, "cache_creation_input_tokens": write, "cache_read_input_tokens": read,
                  "output_tokens": out, "cache_creation": split}
+        if speed:
+            usage["speed"] = speed
         for block in range(blocks):
             uuid = self._uuid()
             data = {

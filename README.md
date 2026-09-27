@@ -47,7 +47,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else Claude Code's automatic title, else the first thing you typed |
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `Desktop (no folder)` for a Desktop session without one |
 | **WHERE** | Where it runs: `CLI` (a terminal), `IDE` (the VS Code extension), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs) |
-| **MODEL** | The model and effort of the last request |
+| **MODEL** | The model and effort of the last request, and `fast` in fast mode |
 | **CACHE** | `● mm:ss` while the prompt cache is warm; `○ expired · 2h` once it has run out, in a session that's still open; `exited · 3h` after you quit it (`/exit` or closing the window). The age is how long ago the session was last used. Either way, the next message re-writes the whole conversation |
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
@@ -66,7 +66,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
      /effort    costs nothing now
 ```
 
-`stay` is what continuing costs: the conversation read back from the cache now, or written again after a break. Each other model (`↑` more capable, `↓` cheaper) shows what switching costs now, how much more or less each later message costs, and after how many messages a cheaper one evens out. `/effort` costs nothing on Opus 5.5 and Fable 5.1, which keep the cache; elsewhere it shows what re-writing the conversation costs.
+`stay` is what continuing costs: the conversation read back from the cache now, or written again after a break. Each other model (`↑` more capable, `↓` cheaper) shows what switching costs now, how much more or less each later message costs, and after how many messages a cheaper one evens out. `/effort` costs nothing on Opus 5.5 and Fable 5.1, which keep the cache; elsewhere it shows what re-writing the conversation costs. In fast mode, every amount is at fast mode's prices, and `/fast off` shows what turning it off costs now (only the tool list stays cached) and saves on each later message.
 
 ▫️ **An idle session** (its cache expired, or you quit it) gets one line, with what coming back to it costs on its own model and on each cheaper one:
 
@@ -108,7 +108,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
 3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage
-4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, Claude Code upgrade, or effort change
+4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, fast mode turned on or off, Claude Code upgrade, or effort change
 5. The session's cache clock, what re-sending it costs, and its advice are recomputed
 
 ▫️ **What it knows about the models, and where from** (first to last: what this machine's transcripts show, Anthropic's docs read at start, then what ships with usdash):
@@ -205,7 +205,7 @@ usdash                    # the last 24 hours, then live
 ▫️ **Amounts read low until a session exits:**
 Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.
 
-▫️ **Fast mode:** what a fast request cost is priced at fast mode's rates, but the advice's amounts for what comes next assume standard speed.
+▫️ **Fast mode:** a switch to another model that has fast mode (Opus 5, Opus 4.8) is priced as if it stays fast. Whether Claude Code keeps fast mode across `/model` isn't checked yet (the [manual sanity suite](tests/sanity/manual.py), check 34).
 
 ▫️ **Amazon Bedrock and Google Cloud:**
 Sessions appear, their cache lifetime and costs are read the same way, and Bedrock model ids like `us.anthropic.claude-opus-5-5` are recognised. But:

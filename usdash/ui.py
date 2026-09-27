@@ -96,10 +96,13 @@ def model_style(model: str | None) -> str:
     return MODEL_STYLES.get(pretty_model(model).split(" ")[0], "")
 
 
-def model_text(model: str | None, effort: str | None = None) -> Text:
+def model_text(model: str | None, effort: str | None = None, speed: str | None = None) -> Text:
+    """'Opus 5.5 high', and 'fast' in fast mode."""
     text = Text(pretty_model(model), style=model_style(model))
     if effort:
         text.append(f" {effort}")
+    if speed == "fast":
+        text.append(" fast", style="bold")
     return text
 
 
@@ -228,7 +231,8 @@ def session_cells(store: Store, session: Session, view: View) -> list[Text]:
     ctx = context(store, session)
     size = Text(("" if ctx is None or ctx.exact else "≈") + _tokens(ctx.tokens if ctx else None))
     return [session_tag(session), name, Text(snippet(session.project, 18) or "", style="dim"),
-            Text(app_name(session), style="dim"), model_text(session.model, session.effort), cache_cell(session, view), size,
+            Text(app_name(session), style="dim"), model_text(session.model, session.effort, session.main.speed),
+            cache_cell(session, view), size,
             today_cell(session.cost_by_day.get(day_of(view.now), 0.0)), Text(_money(session.total))]
 
 
@@ -372,7 +376,7 @@ def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
         Text(datetime.fromtimestamp(request.start).strftime("%H:%M:%S"), style="dim"),  # the feed's order
         session_tag(session),
         Text(snippet(session.name, 24) or "", style=session_style(session.id)),
-        model_text(request.model, request.effort),
+        model_text(request.model, request.effort, request.speed),
         Text(_tokens(prompt)),
         Text(f"{cached:.0%}", style="green" if cached >= 0.8 else "yellow" if cached >= 0.3 else "red"),
         Text(_tokens(request.usage.get("output", 0)), style="dim"),

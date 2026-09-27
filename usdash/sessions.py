@@ -64,6 +64,8 @@ class ChainState:
     touched: float | None = None  # when its cache was last read or written (a request's start)
     ttl: int | None = None
     compacted: bool = False  # /compact ran since the last request
+    speed: str | None = None  # "fast" or "standard", as the last request ran
+    geo: str | None = None  # where it ran: "us" (US-only), "global", …
 
 
 @dataclass
@@ -82,6 +84,8 @@ class Request:
     rewritten: int = 0  # tokens of the earlier conversation it had to write again
     rewrite_cost: float = 0.0  # what that cost beyond reading them back
     reason: str | None = None  # why, when it re-wrote
+    speed: str | None = None  # usage.speed: "fast" or "standard"
+    geo: str | None = None  # usage.inference_geo
 
     @property
     def prompt(self) -> int:
@@ -106,6 +110,8 @@ def rewrite_reason(request: Request, prev: ChainState, facts: Facts) -> str:
     ttl = prev.ttl or FIVE_MINUTES
     if prev.touched is not None and request.start - prev.touched >= ttl:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
+    if request.speed and prev.speed and request.speed != prev.speed:
+        return "speed change"  # fast mode on or off: only the tool list stays cached
     if request.version and prev.version and request.version != prev.version:
         return "Claude Code upgraded"
     if request.effort != prev.effort and prev.effort and not facts.effort_keeps_cache(request.model):
@@ -435,6 +441,7 @@ class Store:
             self._account(session, request, -1)
             request.end = end or request.end
         request.usage = usage_parts(usage)
+        request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
         price = self.prices.get(model_key(model))
         if price is None:
             self.unpriced[model_key(model)] += 1 if old is None else 0
@@ -446,6 +453,7 @@ class Store:
         if chain.key in (None, key) or old is None:
             chain.key, chain.prompt, chain.model, chain.effort = key, request.prompt, model, request.effort
             chain.version, chain.touched = request.version, request.start
+            chain.speed, chain.geo = request.speed, request.geo
             chain.ttl = request.ttl or chain.ttl
             if old is None:
                 chain.compacted = False
@@ -542,6 +550,15 @@ class Store:
                     if 0.5 < old / current < 1.1:  # else not the same conversation
                         ratios.append(old / current)
         return {model: (kept, rewrote) for model, (kept, rewrote) in effort.items()}, ratios
+
+    def price(self, model: str | None, session: Session | None = None) -> dict | None:
+        """`model`'s list prices, or, given a session, as its next request
+        would pay them there: at its speed (fast mode, where `model` has it)
+        and where it runs (US-only inference)."""
+        price = self.prices.get(model_key(model))
+        if price is None or session is None:
+            return price
+        return as_paid(price, {"speed": session.main.speed, "inference_geo": session.main.geo}, model_key(model))
 
     def prefix_on(self, session: Session, model: str | None) -> float:
         """A session's tool list and system prompt, counted in `model`'s tokens."""

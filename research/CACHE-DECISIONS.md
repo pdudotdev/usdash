@@ -37,6 +37,7 @@ Rules that matter:
 |---|---|
 | The cache matches the **start** of the prompt exactly | Anything added at the end is cheap. A change earlier on re-writes everything after it |
 | Each model has its **own** cache | A model switch re-writes the whole conversation |
+| Switching **fast mode** on or off keeps only the tool list cached (the prompt-caching docs' invalidation table) | `/fast` re-writes the system prompt and the conversation; fast mode costs 2× on Opus 5.5, cache prices included |
 | In Claude Code, an effort change keeps the cache **only on Opus 5.5 and Fable 5.1** with an API key or subscription (not on Bedrock, Google Cloud or a Claude apps gateway, nor with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` or a HIPAA setup) | Elsewhere, changing effort re-writes the conversation too |
 | The cache lives **5 minutes or 1 hour** after the **start** of the last request that read or wrote it, and every read restarts the clock | A break longer than that means the next message re-writes everything |
 | Claude Code's main conversation uses the **1-hour cache on a subscription** (within the plan's usage) and the **5-minute cache on an API key, usage credits or a cloud provider**, unless changed with `promptCacheTtl` or `CLAUDE_CODE_PROMPT_CACHE_TTL`. Subagents, compaction and titles use 5 minutes | Read which one a session uses from its usage data (§7) |

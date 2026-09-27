@@ -430,3 +430,17 @@ def test_a_session_moving_folder_moves_what_it_shares(store):
     other.user("carry on", T0 + 120)
     other.into(store)
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 30_002
+
+
+def test_fast_mode_prices_what_comes_next_at_its_rates(store):
+    session = opus_session(store, speed="fast")  # a 40k first prompt, 42k now, 1-hour cache
+    # Read back at fast mode's cache price ($0.40, twice standard); Sonnet 5 has no fast mode.
+    assert engine.resend(store, session, "claude-opus-5-5", warm=True) == pytest.approx(42_000 * 0.4 / 1e6)
+    assert engine.resend(store, session, "claude-sonnet-5", warm=True) == pytest.approx(42_000 * 4 / 1e6)
+    # Turning it off keeps only the tool list cached: the rest is written again, at standard prices.
+    cost, saving = engine.fast_off(store, session, T0 + 130)
+    assert cost == pytest.approx((40_000 * 0.2 + 2_000 * 8 - 42_000 * 0.4) / 1e6)
+    output = 500 * (40 - 20)  # an average reply, and a message's growth (1,000) written at $16 instead of $8
+    assert saving == pytest.approx((42_000 * (0.4 - 0.2) + 1_000 * (16 - 8) + output) / 1e6)
+    assert engine.fast_off(store, opus_session(store, session="sess-2"), T0 + 130) is None  # not fast
+

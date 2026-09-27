@@ -16,9 +16,10 @@ dollars; the user decides.
 """
 from dataclasses import dataclass, field
 
-from .engine import cache_clock, cheaper, compact, context, effort_rewrite, effort_saving, model_move, others, resend
+from .engine import (cache_clock, cheaper, compact, context, effort_rewrite, effort_saving, fast_off, model_move,
+                     others, resend)
 from .models import model_key, pretty_model
-from .prices import ONE_HOUR, request_cost
+from .prices import ONE_HOUR, as_paid, request_cost
 from .sessions import Session, Store
 
 EFFORTS = ["max", "xhigh", "high", "medium", "low"]
@@ -98,9 +99,10 @@ class Memory:
 
 def held_extra(store: Store, session: Session, target: str, since: float) -> float:
     """R: what the main conversation's requests since `since` cost beyond the
-    same tokens on `target` (converted to its tokenizer)."""
-    price_l = store.prices.get(target)
-    if not price_l:
+    same tokens on `target` (converted to its tokenizer), each at the speed and
+    place it ran."""
+    base_l = store.prices.get(target)
+    if not base_l:
         return 0.0
     ratio = store.facts.convert(1.0, session.model, target)
     extra = 0.0
@@ -120,6 +122,7 @@ def held_extra(store: Store, session: Session, target: str, since: float) -> flo
             },
             "output_tokens": request.usage["output"] * ratio,
         }
+        price_l = as_paid(base_l, {"speed": request.speed, "inference_geo": request.geo}, target)
         extra += request.cost - request_cost(usage, price_l)
     return extra
 
@@ -200,4 +203,8 @@ def options(store: Store, session: Session, now: float, ctx, moves: dict, costs,
             rows.append(Option("/effort", "costs nothing now"))
     elif (rewrite := effort_rewrite(store, session, now)) is not None:
         rows.append(Option("/effort", f"{resends(ctx)}: {approx}{money(rewrite)} more now"))
+    if (slower := fast_off(store, session, now)) is not None:
+        cost, saving = slower
+        rows.append(Option("/fast off", f"{resends(ctx)}: ≈{money(cost)} {'more' if cost >= 0 else 'less'} now, "
+                                        f"then ≈{money(saving)} less a message"))
     return rows

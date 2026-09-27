@@ -292,6 +292,16 @@ def test_closing_and_resuming(store):
     assert session.total == pytest.approx(0.5 + (40_000 * 8 + 2 * 4 + 100 * 20) / 1e6)
 
 
+def test_fast_mode_changes_the_price_and_turning_it_on_re_writes(store):
+    t = Transcript()
+    t.turn(T0, write=40_000, out=0, speed="standard")
+    t.turn(T0 + 60, write=41_000, out=0, speed="fast")
+    t.into(store)
+    last = store.sessions["sess-1"].last_request
+    assert last.reason == "speed change" and last.speed == "fast"
+    assert last.cost == pytest.approx((41_000 * 16 + 2 * 8) / 1e6)  # the 1-hour write and input at twice the price
+
+
 def test_scripted_sessions(store):
     for session_id, entrypoint in (("a", "cli"), ("b", "claude-vscode"), ("c", "claude-desktop"), ("d", "sdk-cli")):
         t = Transcript(session=session_id, entrypoint=entrypoint)
