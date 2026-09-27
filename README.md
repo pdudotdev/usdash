@@ -52,36 +52,36 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 ▫️ **What it looks like** (made-up sessions, 150 columns wide):
 ```
 ╭─ 💲 usdash · live ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TODAY $1.033 est.  ·  56% of input read from cache  ·  re-writes cost $0.087 extra (model switch $0.087)                                           │
-│ API-equivalent $ (a subscription isn't billed per token)  ·  list prices of 2026-09-26  ·  reads a little low: background requests aren't logged   │
-╰────────────────────────────────────────────────────────────── history from Mon 14:00 ──────────────────────────────────────────────────────────────╯
+│ TODAY $1.03 est.  ·  56% of input read from cache  ·  ⟳ cache misses added $0.09 (model switch $0.09)                                              │
+│ API-equivalent prices: your subscription isn't billed per token  ·  totals a bit low: Claude Code doesn't log background requests                  │
+╰──────────────────────────────────────────────── list prices of 2026-09-26 · history from Mon 14:00 ────────────────────────────────────────────────╯
 ╭─ sessions active in the last 3h · sub: 1h cache · api: 5m, billed per token ───────────────────────────────────────────────────────────────────────╮
-│ ID    SESSION                    WHERE              MODEL          CACHE    NEXT MESSAGE              CONTEXT   TODAY   TOTAL                      │
-│ 3f9a  Fix checkout rounding sub  shop@checkout-fix  Opus 5.5 high  ● 35:00  $0.078 now · $0.484 cold      52k  $0.690  $0.690                      │
+│ ID    SESSION                    WHERE              MODEL          CACHE    NEXT MESSAGE            CONTEXT  TODAY  TOTAL                          │
+│ 3f9a  Fix checkout rounding sub  shop@checkout-fix  Opus 5.5 high  ● 35:00  $0.08 now · $0.48 cold      52k  $0.69  $0.69                          │
 │       └ 25m ago · "run the suite and tell me what fails"                                                                                           │
-│ b21e  Release notes vscode api   shop               Sonnet 5 high  ○ cold   $0.118 (re-writes 44k)        42k  $0.343  $0.343                      │
+│ b21e  Release notes vscode api   shop               Sonnet 5 high  ○ cold   $0.12 (re-writes 44k)       42k  $0.34  $0.34                          │
 │       └ 25m ago · "add a note about the database migration"                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ advice · estimates; cost isn't the only goal ─────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ 💡 3f9a Fix checkout rounding · shop@checkout-fix: Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.164 (pays back after ~5    │
+│ 💡 3f9a Fix checkout rounding · shop@checkout-fix: Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.16 (pays back after ~5     │
 │ messages); after that it's free.  (uses less of your plan)                                                                                         │
-│ 💡 b21e Release notes · shop: Cache expired, so switching model costs nothing extra now: next message ≈$0.045 on Haiku 4.5, vs $0.118 on Sonnet 5. │
+│ 💡 b21e Release notes · shop: Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5.   │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ requests ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TIME      ID    SESSION                MODEL          PROMPT  CACHED   OUT    COST  NOTE                                                           │
-│ 14:06:00  3f9a  Fix checkout rounding  Opus 5.5 high     52k     94%  1.8k  $0.070                                                                 │
-│ 14:05:20  b21e  Release notes          Sonnet 5 high     42k     96%  0.7k  $0.019                                                                 │
-│ 14:04:30  3f9a  Fix checkout rounding  Opus 5.5 high     16k     87%  0.4k  $0.021  🤖 subagent                                                    │
-│ 14:04:10  3f9a  Fix checkout rounding  Opus 5.5 high     14k      0%  0.6k  $0.082  🤖 subagent                                                    │
-│ 14:04:00  3f9a  Fix checkout rounding  Opus 5.5 high     49k     92%  1.8k  $0.077                                                                 │
-│ 14:03:20  b21e  Release notes          Sonnet 5 high     41k      0%  0.9k  $0.110  ⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.087)           │
-│ 14:02:00  3f9a  Fix checkout rounding  Opus 5.5 high     45k     91%  1.8k  $0.076                                                                 │
-│ 14:00:30  b21e  Release notes          Opus 5.5 high     38k      0%  1.2k  $0.214                                                                 │
-│ 14:00:00  3f9a  Fix checkout rounding  Opus 5.5 high     41k      0%  1.8k  $0.364                                                                 │
+│ TIME      ID    SESSION                MODEL          PROMPT  CACHED   OUT   COST  NOTE                                                            │
+│ 14:06:00  3f9a  Fix checkout rounding  Opus 5.5 high     52k     94%  1.8k  $0.07                                                                  │
+│ 14:05:20  b21e  Release notes          Sonnet 5 high     42k     96%  0.7k  $0.02                                                                  │
+│ 14:04:30  3f9a  Fix checkout rounding  Opus 5.5 high     16k     87%  0.4k  $0.02  🤖 subagent                                                     │
+│ 14:04:10  3f9a  Fix checkout rounding  Opus 5.5 high     14k      0%  0.6k  $0.08  🤖 subagent                                                     │
+│ 14:04:00  3f9a  Fix checkout rounding  Opus 5.5 high     49k     92%  1.8k  $0.08                                                                  │
+│ 14:03:20  b21e  Release notes          Sonnet 5 high     41k      0%  0.9k  $0.11  ⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)             │
+│ 14:02:00  3f9a  Fix checkout rounding  Opus 5.5 high     45k     91%  1.8k  $0.08                                                                  │
+│ 14:00:30  b21e  Release notes          Opus 5.5 high     38k      0%  1.2k  $0.21                                                                  │
+│ 14:00:00  3f9a  Fix checkout rounding  Opus 5.5 high     41k      0%  1.8k  $0.36                                                                  │
 ╰────────────────────────────────────────────────────────────────────────────── ↑↓/wheel/j/k: scroll · space/b: page · g/G: newest/oldest · q: quit ─╯
 ```
 
-▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what re-writes cost today, by cause. On a subscription account, the dollars are what the same tokens would cost on an API key. Its bottom edge says how far back the loaded history goes.
+▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the feed). On a subscription account, the dollars are what the same tokens would cost on an API key. Totals run a bit low, because some of Claude Code's own background requests never reach its transcripts (see [Limitations](#️-limitations)). The bottom edge gives the date of the prices and how far back the loaded history goes.
 
 ▫️ **Each session, and how to tell which window it is:**
 
@@ -107,7 +107,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **PROMPT** | Tokens sent: the whole conversation so far |
 | **CACHED** | The share of them read back from the cache: green from 80%, yellow from 30%, red below |
 | **OUT** · **COST** | Output tokens (thinking included), and the request's cost at list prices |
-| **NOTE** | `🤖 subagent` for a subagent's request; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.087)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
+| **NOTE** | `🤖 subagent` for a subagent's request; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
 - [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles
@@ -137,9 +137,9 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Rule | Shown when | Example |
 |---|---|---|
-| **Switch model** | A cheaper model saves at least $0.005 per message | Cold: *"Cache expired, so switching model costs nothing extra now: next message ≈$0.045 on Haiku 4.5, vs $0.118 on Sonnet 5."* Warm: *"Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.164 (pays back after ~5 messages); after that it's free."* |
-| **Compact before a break** | The conversation is 100k+ tokens, the cache is warm, and it expires within 10 minutes (within half its lifetime, if that's shorter) | *"Context 140k, cache expires in 5:00: /compact now ≈$0.093; after a break ≈$0.760."* |
-| **Lower effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 per message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both efforts | *"Lower /effort to medium: ≈$0.044 less per message, no cache cost on Opus 5.5."* |
+| **Switch model** | A cheaper model saves at least $0.005 per message | Cold: *"Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5."* Warm: *"Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.16 (pays back after ~5 messages); after that it's free."* |
+| **Compact before a break** | The conversation is 100k+ tokens, the cache is warm, and it expires within 10 minutes (within half its lifetime, if that's shorter) | *"Context 140k, cache expires in 5:00: /compact now ≈$0.09; after a break ≈$0.76."* |
+| **Lower effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 per message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both efforts | *"Lower /effort to medium: ≈$0.04 less per message, no cache cost on Opus 5.5."* |
 
 The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). While the cache is warm, it also says *"Switch to Haiku 4.5 now: already cheaper"* when moving costs less even now (for example right after `/compact`, if another session in the same folder keeps Haiku's copy of the tool list cached), and *"Switching to Sonnet 5 pays off now"* once staying has cost as much as switching would.
 
@@ -151,9 +151,9 @@ The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). Wh
 | 2 | Wait for Claude Code to title the session | The name changes to that title |
 | 3 | `/rename checkout bug` | The name becomes `checkout bug` |
 | 4 | Keep working on Opus 5.5 | Advice: *"Warm on Opus 5.5 for mm:ss more. Switching to Sonnet 5 now costs +$… (pays back after ~N messages); after that it's free."* |
-| 5 | `/model sonnet`, then send a message | A red feed row: `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`, and the header's re-write total goes up |
+| 5 | `/model sonnet`, then send a message | A red feed row: `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`, and the header's `cache misses added` total goes up |
 | 6 | Step away until the cache expires | CACHE shows `○ cold`; advice says switching now costs nothing extra |
-| 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look at the advice | `⚡` *"Context 140k, cache expires in 8:00: /compact now ≈$0.093; after a break ≈$0.760."* |
+| 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look at the advice | `⚡` *"Context 140k, cache expires in 8:00: /compact now ≈$0.09; after a break ≈$0.76."* |
 | 8 | `/exit` | CACHE shows `closed`, and TOTAL adds Claude Code's own figure `(CC $…)` |
 
 ## 🚀 Installation & Usage

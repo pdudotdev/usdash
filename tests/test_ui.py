@@ -53,6 +53,18 @@ def test_a_narrow_terminal_keeps_the_last_prompt_and_cuts_the_least_useful_numbe
     assert "● 50:00" in row and "now ·" in row
 
 
+def test_claude_codes_own_total_does_not_widen_the_total_column(store):
+    two_sessions(store)
+    closing = Transcript(session="bbbb-2222")
+    closing.record("cost-state", totalCostUSD=12.345)
+    closing.into(store)
+    lines = screen(store, ui.View(now=T0 + 60 + 600)).splitlines()
+    open_row = next(line for line in lines if "aaaa" in line and "Fix checkout totals" in line)
+    closed_row = next(line for line in lines if "bbbb" in line and "Release notes" in line)
+    # Both TOTALs end in the same place; Claude Code's figure comes after, in its own column.
+    assert len(open_row.rstrip(" │")) == closed_row.index("  (CC $12.35)")
+
+
 def test_advice_names_the_session_not_just_its_id(store):
     two_sessions(store)
     text = screen(store, ui.View(now=T0 + 60 + 600, subscription=True))
@@ -68,9 +80,11 @@ def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
     t.into(store)
     text = screen(store, ui.View(now=T0 + 60 + 7300))
     assert "TODAY $" in text and "est." in text and "of input read from cache" in text
-    assert "re-writes cost $" in text and "(cache expired $" in text
+    assert "⟳ cache misses added $" in text and "(cache expired $" in text
     assert "⟳ re-wrote 42k: cache expired (idle 120 min)" in text
     assert "API-equivalent" not in text  # an API-key account
+    subscription = screen(store, ui.View(now=T0 + 60 + 7300, subscription=True))
+    assert "API-equivalent prices: your subscription isn't billed per token" in subscription
 
 
 def test_feed_marks_subagents_and_closed_sessions_show_claude_codes_total(fixture_store):
@@ -203,8 +217,9 @@ def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
     t.turn(T0 + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
     t.into(store)
     text = screen(store, ui.View(now=T0 + 7400, prices_verified="2026-09-26"), width=90)
-    assert "re-writes cost" in text
-    assert "list prices of 2026-09-26" in text
+    assert "cache misses added" in text
+    assert "totals a bit low: Claude Code doesn't log background requests" in text
+    assert "list prices of 2026-09-26 · history from" in text
 
 
 @pytest.mark.parametrize(

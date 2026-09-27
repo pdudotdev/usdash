@@ -33,7 +33,9 @@ class Advice:
 
 
 def money(value: float) -> str:
-    return f"${abs(value):,.3f}" if abs(value) < 1 else f"${abs(value):,.2f}"
+    """Dollars to the cent; an amount under half a cent shows as <$0.01, not $0.00."""
+    value = abs(value)
+    return "<$0.01" if 0 < value < 0.005 else f"${value:,.2f}"
 
 
 def clock(seconds: int) -> str:

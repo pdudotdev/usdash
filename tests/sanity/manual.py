@@ -29,14 +29,14 @@ The checks work on a subscription or an API key unless they say otherwise.
 | 9 | Leave a session idle past its cache lifetime | CACHE shows `○ cold`; NEXT MESSAGE turns red and says how much it re-writes. On Opus or Sonnet, the advice says switching model costs nothing extra now | A break re-writes the conversation whatever you do, so a cheaper model re-writes for less |
 | 10 | Quit a session (`/exit`) | Its CACHE shows `closed`, NEXT MESSAGE shows `if resumed: $…`, TOTAL adds `(CC $…)`, and it gets no advice | Claude Code writes its own total when a session closes |
 | 11 | `claude --resume` the session from test 10 and send a message | The same row (same ID) comes back, with a countdown instead of `closed` | Resuming appends to the same transcript |
-| 12 | Look at the header | `TODAY $… est.` and the share of input read from cache. On a subscription account, the second line starts with `API-equivalent $`; on an API-key account it doesn't | A subscription isn't billed per token: its dollars are for comparison |
+| 12 | Look at the header | `TODAY $… est.` and the share of input read from cache. On a subscription account, the second line starts with `API-equivalent prices`; on an API-key account it doesn't | A subscription isn't billed per token: its dollars are for comparison |
 
 ### Re-writes and advice
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
 | 13 | In a warm Opus 5.5 session, read the advice line | `Warm on Opus 5.5 for mm:ss more. Switching to Sonnet 5 now costs +$… (pays back after ~N messages); after that it's free.` The line names the session, not just its id | Switching model re-writes the whole conversation; after the cache expires it's free |
-| 14 | `/model sonnet`, then send a message | The feed shows `⟳ re-wrote …: model switch from Opus 5.5 (+$…)` in red, and the header's `re-writes cost` goes up | Each model has its own cache |
+| 14 | `/model sonnet`, then send a message | The feed shows `⟳ re-wrote …: model switch from Opus 5.5 (+$…)` in red, and the header's `cache misses added` total goes up | Each model has its own cache |
 | 15 | In an Opus 5.5 session, `/effort low` and send a message. Then do the same in a Sonnet 5 session | Opus 5.5: no `⟳` note on its next row, and CACHED stays high. Sonnet 5: `⟳ re-wrote …: effort change` | Only Opus 5.5 and Fable 5.1 keep the cache when effort changes |
 | 16 | On Opus 5.5 at high effort, send a few messages that need some thought. `/effort low` and send a couple more, then `/effort high` and send one | `💡 … Lower /effort to low: ≈$… less per message, no cache cost on Opus 5.5.`, if the low-effort replies were at least ~250 output tokens shorter (the $0.005 threshold) | The estimate compares this session's own replies at each effort |
 | 17 | In a session over 100k tokens, wait until less than 10 minutes of cache remain (2.5 minutes on a 5-minute cache) | `⚡ … Context …k, cache expires in m:ss: /compact now ≈$…; after a break ≈$…` | /compact reads the cache while it's warm and re-writes everything after a break |
@@ -59,7 +59,7 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
 | 22 | 5-minute cache: `/slow-steps` (six `sleep 100` calls, about 10 minutes in all) | A row per step. No `⟳ re-wrote` notes, CACHED stays near 100%, and CACHE jumps back to about `● 4:5x` after every step | A turn is many API requests; each step reads the cache and restarts its clock, so a long turn stays warm while each step starts in time |
-| 23 | 5-minute cache: `/slow-tool` (one `sleep 330`) | During the sleep, CACHE runs down to `○ cold`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded) and the header's `re-writes cost` goes up | The clock counts from the start of the step that ran the tool. Nothing refreshes it while the tool runs |
+| 23 | 5-minute cache: `/slow-tool` (one `sleep 330`) | During the sleep, CACHE runs down to `○ cold`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded) and the header's `cache misses added` total goes up | The clock counts from the start of the step that ran the tool. Nothing refreshes it while the tool runs |
 | 24 | 1-hour cache (plain `claude` on a subscription): `/slow-tool` | CACHE counts down from about `● 59:xx` and stays warm; no `⟳ re-wrote` note | 5½ minutes is well inside a 1-hour cache |
 | 25 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them re-writes. The parent's CACHE runs down to `○ cold` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
 | 26 | 1-hour cache: repeat test 25 | The parent stays warm, and its next row has no `⟳ re-wrote` note | The parent's 1-hour cache outlasts a 10-minute subagent |

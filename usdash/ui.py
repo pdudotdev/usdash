@@ -14,7 +14,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.text import Text
 
-from .advice import Advice, Memory, advise, clock
+from .advice import Advice, Memory, advise, clock, money
 from .engine import cache_state
 from .models import pretty_model
 from .sessions import Request, Session, Store, day_of, snippet
@@ -46,9 +46,7 @@ class View:
 
 
 def _money(value: float | None) -> str:
-    if value is None:
-        return "?"
-    return f"${value:,.3f}" if value < 100 else f"${value:,.0f}"
+    return "?" if value is None else money(value)
 
 
 def _tokens(value: int | float | None) -> str:
@@ -111,7 +109,7 @@ def header(store: Store, view: View) -> Panel:
     day = store.days.get(today, {})
     spent = day.get("cost", 0.0)
     hit = day.get("read", 0) / day["prompt"] if day.get("prompt") else None
-    rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost > 0.0005}
+    rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost >= 0.005}
     # One line each: the header has room for exactly two.
     line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), (" est.", "dim"), no_wrap=True,
                          overflow="ellipsis")
@@ -120,17 +118,18 @@ def header(store: Store, view: View) -> Panel:
     if rewrites:
         total = sum(rewrites.values())
         parts = ", ".join(f"{reason} {_money(cost)}" for reason, cost in sorted(rewrites.items(), key=lambda i: -i[1]))
-        line.append(f"  ·  re-writes cost {_money(total)} extra ({parts})", style="red")
-    plan = "API-equivalent $ (a subscription isn't billed per token)  ·  " if view.subscription else ""
+        # What requests paid to write the conversation again instead of reading it back (the feed's ⟳ rows).
+        line.append(f"  ·  ⟳ cache misses added {_money(total)} ({parts})", style="red")
+    plan = "API-equivalent prices: your subscription isn't billed per token  ·  " if view.subscription else ""
     detail = Text(
-        f"{plan}list prices of {view.prices_verified}  ·  reads a little low: background requests aren't logged",
+        f"{plan}totals a bit low: Claude Code doesn't log background requests",
         style="dim", no_wrap=True, overflow="ellipsis",
     )
     if view.unknown_types:
         detail.append(f"  ·  {view.unknown_types} records of unknown types (newer Claude Code?)", style="yellow")
-    since = datetime.fromtimestamp(store.first).strftime("%a %H:%M") if store.first else "waiting for transcripts"
+    since = f"history from {datetime.fromtimestamp(store.first):%a %H:%M}" if store.first else "waiting for transcripts"
     return Panel(Group(line, detail), title=Text("💲 usdash · live", style="bold"),
-                 subtitle=Text(f"history from {since}", style="dim"), title_align="left")
+                 subtitle=Text(f"list prices of {view.prices_verified} · {since}", style="dim"), title_align="left")
 
 
 # --- Sessions ----------------------------------------------------------------------
@@ -156,9 +155,10 @@ def cache_text(store: Store, session: Session, view: View) -> tuple[Text, Text]:
     return cache, Text(f"{_money(state.next_cold)} (re-writes {_tokens(state.size)})", style="red")
 
 
-# The numbers come first, most useful first: a narrow terminal cuts from the right.
+# The numbers come first, most useful first: a narrow terminal cuts from the right. The last,
+# unnamed column is Claude Code's own total once a session closes: apart, so it doesn't widen TOTAL.
 SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("WHERE", False), ("MODEL", False), ("CACHE", False),
-                   ("NEXT MESSAGE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True))
+                   ("NEXT MESSAGE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True), ("", False))
 
 
 def session_row(store: Store, session: Session, view: View) -> tuple[list[Text], Text]:
@@ -175,14 +175,12 @@ def session_row(store: Store, session: Session, view: View) -> tuple[list[Text],
     name.append(f" {' '.join(tags)}", style="dim")
     last = session.last_request
     cache, next_message = cache_text(store, session, view)
-    total = Text(_money(session.cost_total))
-    if session.cost_state is not None:
-        total.append(f" (CC {_money(session.cost_state)})", style="dim")
+    own_total = Text(f"(CC {_money(session.cost_state)})" if session.cost_state is not None else "", style="dim")
     cells = [
         session_tag(session), name, Text(snippet(session.where, 26) or "", style="dim"),
         model_text(session.model, session.effort), cache, next_message,
         Text(_tokens(last.prompt if last else None)), Text(_money(session.cost_by_day.get(day_of(view.now), 0.0))),
-        total,
+        Text(_money(session.cost_total)), own_total,
     ]
     prompt = Text("└ ", style="dim")
     if session.last_prompt_at:

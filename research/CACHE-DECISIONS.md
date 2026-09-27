@@ -171,7 +171,7 @@ The cache is kept, so the saving is immediate: `(output_before − output_after)
 ### Compact now or later
 Compaction re-sends the whole conversation plus an instruction, and writes a summary. Right afterwards, the tool list and system prompt are still cached, but the summary is new.
 - **Timing (140,000-token Opus conversation, ~3,000-token summary):**
-  - with the cache alive: 140,000 × $0.20 + 3,000 × $20 = **$0.088** (usdash shows ≈$0.093: it also counts the ~1,000 tokens not yet cached, the last reply and the new instruction);
+  - with the cache alive: 140,000 × $0.20 + 3,000 × $20 = **$0.088** (usdash's estimate is a little higher: it also counts the ~1,000 tokens not yet cached, the last reply and the new instruction);
   - after a break: 140,000 × $5.00 + $0.06 = **$0.76**. Claude Code sends compaction with the 5-minute cache even on a subscription, so this price applies either way;
   - **So: if you're going to compact, compact before you step away.**
 - **Is it worth it, on cost alone?** (API key, 5-minute cache)

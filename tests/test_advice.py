@@ -77,7 +77,7 @@ def test_compact_advice_only_when_big_warm_and_about_to_expire(store):
     memory = advice.Memory()
     assert advice.compact_advice(store, session, LAST_START + 60, memory) is None  # 59 min left
     tip = advice.compact_advice(store, session, LAST_START + ONE_HOUR - 300, memory)
-    assert tip.text == "Context 140k, cache expires in 5:00: /compact now ≈$0.093; after a break ≈$0.760."
+    assert tip.text == "Context 140k, cache expires in 5:00: /compact now ≈$0.09; after a break ≈$0.76."
     assert tip.urgent
     assert advice.compact_advice(store, session, LAST_START + ONE_HOUR + 1, memory) is None  # already cold
     small = session_on(store, session="sess-2")
@@ -97,7 +97,7 @@ def test_effort_advice_on_opus_5_5(store):
     both.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
     both.into(store)
     tip = advice.effort_advice(store, session, LAST_START + 10, advice.Memory())
-    assert tip.text == "Lower /effort to medium: ≈$0.044 less per message, no cache cost on Opus 5.5."
+    assert tip.text == "Lower /effort to medium: ≈$0.04 less per message, no cache cost on Opus 5.5."
 
 
 def test_no_effort_advice_where_it_would_rewrite_the_cache(store):
@@ -117,7 +117,8 @@ def test_closed_sessions_get_no_advice(store):
 
 
 def test_money_and_clock():
-    assert advice.money(0.0415) == "$0.042" and advice.money(-1.5) == "$1.50"
+    assert advice.money(0.0415) == "$0.04" and advice.money(-1.5) == "$1.50" and advice.money(1234.5) == "$1,234.50"
+    assert advice.money(0.003) == "<$0.01" and advice.money(0.006) == "$0.01" and advice.money(0) == "$0.00"
     assert advice.clock(3125) == "52:05" and advice.clock(3600) == "1h00m"
 
 
@@ -129,7 +130,7 @@ def test_effort_advice_skips_a_level_that_saves_too_little(store):
     other.turn(T0 + 120, effort="low", read=40_500, write=500, out=800)  # saves $0.044
     other.into(store)
     tip = advice.effort_advice(store, session, LAST_START + 10, advice.Memory())
-    assert tip.text.startswith("Lower /effort to low: ≈$0.044 less per message")
+    assert tip.text.startswith("Lower /effort to low: ≈$0.04 less per message")
 
 
 def test_a_model_switch_mid_session_does_not_count_as_the_tool_list(store):
