@@ -2,7 +2,6 @@
 
 [![Version](https://img.shields.io/badge/ver.-0.1.0-1a1a2e)](https://github.com/pdudotdev/usdash/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-1a1a2e)](LICENSE)
-[![Tests](https://github.com/pdudotdev/usdash/actions/workflows/tests.yml/badge.svg)](https://github.com/pdudotdev/usdash/actions/workflows/tests.yml)
 [![Last Commit](https://img.shields.io/github/last-commit/pdudotdev/usdash?color=1a1a2e)](https://github.com/pdudotdev/usdash/commits/master/)
 
 A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, what your next message will cost, and when switching model, lowering effort or compacting saves money.
@@ -179,6 +178,8 @@ pip install .
 ```
 usdash                    # today's sessions, then live
 ```
+
+> ⚠️ **NOTE:** The `usdash` command lives in the virtual environment, so a new terminal says `command not found` until you run `source .venv/bin/activate` in the `usdash` folder. To run it from anywhere, link it onto your PATH once, from that folder: `mkdir -p ~/.local/bin && ln -s "$PWD/.venv/bin/usdash" ~/.local/bin/usdash` (and add `~/.local/bin` to your PATH if it isn't there).
 
 | Option | Meaning | Default |
 |---|---|---|
