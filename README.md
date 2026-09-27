@@ -49,37 +49,9 @@ __________▼_______________________▼________________________▼______________
 
 usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. It has four panes: today's spend, the sessions, advice, and a scrollable feed of requests.
 
-▫️ **What it looks like** (made-up sessions, 150 columns wide):
-```
-╭─ 💲 usdash · live ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TODAY $1.03 est.  ·  56% of input read from cache  ·  ⟳ cache misses added $0.09 (model switch $0.09)                                              │
-│ API-equivalent prices: your subscription isn't billed per token  ·  totals a bit low: Claude Code doesn't log background requests                  │
-╰──────────────────────────────────────────────── list prices of 2026-09-26 · history from Mon 14:00 ────────────────────────────────────────────────╯
-╭─ sessions active in the last 3h · sub: 1h cache · api: 5m, billed per token ───────────────────────────────────────────────────────────────────────╮
-│ ID    SESSION                    WHERE              MODEL          CACHE    NEXT MESSAGE            CONTEXT  TODAY  TOTAL                          │
-│ 3f9a  Fix checkout rounding sub  shop@checkout-fix  Opus 5.5 high  ● 35:00  $0.08 now · $0.48 cold      52k  $0.69  $0.69                          │
-│       └ 25m ago · "run the suite and tell me what fails"                                                                                           │
-│ b21e  Release notes vscode api   shop               Sonnet 5 high  ○ cold   $0.12 (re-writes 44k)       42k  $0.34  $0.34                          │
-│       └ 25m ago · "add a note about the database migration"                                                                                        │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ advice · estimates; cost isn't the only goal ─────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ 💡 3f9a Fix checkout rounding · shop@checkout-fix: Warm on Opus 5.5 for 35:00 more. Switching to Sonnet 5 now costs +$0.16 (pays back after ~5     │
-│ messages); after that it's free.  (uses less of your plan)                                                                                         │
-│ 💡 b21e Release notes · shop: Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5.   │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ requests ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TIME      ID    SESSION                MODEL          PROMPT  CACHED   OUT   COST  NOTE                                                            │
-│ 14:06:00  3f9a  Fix checkout rounding  Opus 5.5 high     52k     94%  1.8k  $0.07                                                                  │
-│ 14:05:20  b21e  Release notes          Sonnet 5 high     42k     96%  0.7k  $0.02                                                                  │
-│ 14:04:30  3f9a  Fix checkout rounding  Opus 5.5 high     16k     87%  0.4k  $0.02  🤖 subagent                                                     │
-│ 14:04:10  3f9a  Fix checkout rounding  Opus 5.5 high     14k      0%  0.6k  $0.08  🤖 subagent                                                     │
-│ 14:04:00  3f9a  Fix checkout rounding  Opus 5.5 high     49k     92%  1.8k  $0.08                                                                  │
-│ 14:03:20  b21e  Release notes          Sonnet 5 high     41k      0%  0.9k  $0.11  ⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)             │
-│ 14:02:00  3f9a  Fix checkout rounding  Opus 5.5 high     45k     91%  1.8k  $0.08                                                                  │
-│ 14:00:30  b21e  Release notes          Opus 5.5 high     38k      0%  1.2k  $0.21                                                                  │
-│ 14:00:00  3f9a  Fix checkout rounding  Opus 5.5 high     41k      0%  1.8k  $0.36                                                                  │
-╰────────────────────────────────────────────────────────────────────────────── ↑↓/wheel/j/k: scroll · space/b: page · g/G: newest/oldest · q: quit ─╯
-```
+▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
+
+![usdash: today's spend, two sessions with their cache countdowns and next-message prices, advice in dollars, and the request feed with a model switch's re-write marked in red](docs/dashboard.svg)
 
 ▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the feed). On a subscription account, the dollars are what the same tokens would cost on an API key. Totals run a bit low, because some of Claude Code's own background requests never reach its transcripts (see [Limitations](#️-limitations)). The bottom edge gives the date of the prices and how far back the loaded history goes.
 
@@ -265,6 +237,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices, with the date they were verified |
 | [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
+| [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
 | [`tests/`](tests/) | Automated tests on redacted real transcripts and synthetic ones, plus the manual sanity suite in [`tests/sanity/`](tests/sanity/manual.py) |
 | [`.github/workflows/tests.yml`](.github/workflows/tests.yml) | Runs the automated tests on every push and pull request |
 
