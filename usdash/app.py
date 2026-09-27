@@ -44,6 +44,7 @@ KEYS = {
     "\x1b[6~": "pgdn", " ": "pgdn",
     "\x1b[H": "home", "\x1bOH": "home", "\x1b[1~": "home", "g": "home",
     "\x1b[F": "end", "\x1bOF": "end", "\x1b[4~": "end", "G": "end",
+    "r": "view",
     "q": "quit",
 }
 
@@ -118,8 +119,8 @@ class App:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
     parser.add_argument("--since", type=duration, help="history to load first, e.g. 24h (default: since midnight; never less than --window)")
-    parser.add_argument("--window", type=duration, default=3 * 3600,
-                        help="show sessions active this recently, e.g. 30m or 8h (default: 3h)")
+    parser.add_argument("--window", type=duration, default=24 * 3600,
+                        help="show sessions active this recently, e.g. 3h or 2d (default: 24h)")
     parser.add_argument("--projects", type=Path, default=None,
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")

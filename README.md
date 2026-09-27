@@ -13,7 +13,7 @@ It only reads files. Nothing is routed through it, nothing leaves your machine, 
 - [x] **It expires** 5 minutes or 1 hour after the last request started, and each request restarts that clock
 - [x] **After a miss**, the whole conversation is written again, at 1.25× to 2× the input price
 
-![How usdash works: Claude Code in the terminal, VS Code, the Desktop app and scripts writes transcripts to ~/.claude/projects; usdash turns each reply into a request with its cost, cache misses, a cache clock per session, the next message's price and advice, shown as a header, sessions, advice and a request feed](docs/how-it-works.svg)
+![How usdash works: Claude Code in the terminal, VS Code, the Desktop app and scripts writes transcripts to ~/.claude/projects; usdash turns each reply into a request with its cost, cache misses, a cache clock per session, what re-sending each conversation costs and advice, shown as a header, live sessions, idle sessions and, on a key, every request](docs/how-it-works.svg)
 
 ## 📖 **Table of Contents**
 - 💲 **usdash**
@@ -31,31 +31,53 @@ It only reads files. Nothing is routed through it, nothing leaves your machine, 
 
 ## 🔭 Overview
 
-usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. It has four panes: today's spend, the sessions, advice, and a scrollable feed of requests.
+usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 24 hours: the ones you're in, with what to do and what each option costs, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
 
 ▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
 
-![usdash: today's spend, two sessions with their cache countdowns and next-message prices, advice in dollars, and the request feed with a model switch's re-write marked in red](docs/dashboard.svg)
+![usdash: today's spend; a live session with its cache countdown, the action to take and the price of each option; an idle session, three folded script runs and a closed session, each with what coming back to it costs](docs/dashboard.svg)
 
-▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the feed). On a subscription account, the dollars are what the same tokens would cost on an API key. Totals run a bit low, because some of Claude Code's own background requests never reach its transcripts (see [Limitations](#️-limitations)). The bottom edge gives the date of the prices and how far back the loaded history goes.
+▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the request list). The second line says what the dollars are: API list prices, and on a subscription account, what the same use would cost on an API key. The bottom edge says how far back the loaded history goes.
 
 ▫️ **Each session, and how to tell which window it is:**
 
 | Shown | What it is |
 |---|---|
 | **ID** | The first 4 characters of the session id (as in `/status` and `claude --resume`), in a fixed colour per session |
-| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else Claude Code's automatic title, else the first thing you typed. Tagged with where it runs (`vscode`, `desktop`, `sdk-cli`; none for the terminal) and how it's billed (`sub` or `api`) |
+| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else Claude Code's automatic title, else the first thing you typed. Tagged with where it runs: `vscode`, `desktop`, or a script's entrypoint such as `sdk-cli`; nothing for the terminal |
 | **WHERE** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `Desktop (no folder)` for a Desktop session without one |
-| **└ line** | What you last typed in that window, and how long ago |
 | **MODEL** | The model and effort of the last request |
-| **CACHE** | `● mm:ss` while the prompt cache is warm, `○ cold` once it has expired, `closed` after `/exit` |
-| **NEXT MESSAGE** | While warm: what the next message costs now, and after the cache expires. Once cold: what it costs, and how much of the conversation it writes again. Once closed: what it would cost if resumed |
-| **CONTEXT TOKENS** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far) |
-| **COST TODAY** · **COST ALL DAYS** | What the session has cost today, and since it started (a resumed session counts its earlier days too). Once it closes, Claude Code's own figure follows: `(CC $…)` |
+| **CACHE** | `● mm:ss` while the prompt cache is warm, `○ cold · 2h` once it has expired, `closed · 3h` after `/exit`, with how long ago it was last used |
+| **CONTEXT TOKENS** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
+| **COST TODAY** · **COST TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too). Once it closes, Claude Code's own figure follows: `(CC $…)` |
 
-▫️ **Advice:** one line per session when there's something worth saying. `⚡` means act before the cache expires; `💡` is worth knowing. The rules are in [How It Works](#-how-it-works).
+▫️ **A live session** (its cache is still warm) opens up:
+- `└` what you last typed in that window, and how long ago
+- the action: what to do now (`⚡` when it can't wait until the cache expires)
+- one row per option, with what it costs:
 
-▫️ **Every request, newest first:**
+```
+     stay       re-sends 182k tokens: $0.04 now, $1.46 after a break
+   ↑ Fable 5.1  $3.60 more now, then ≈$0.49 more a message
+   ↓ Sonnet 5   $0.69 more now, then ≈$0.16 less a message · evens out after ≈4 messages
+   ↓ Haiku 4.5  $0.24 more now, then ≈$0.28 less a message · evens out after ≈1 message
+     /compact   ≈$0.15 now, ≈$1.02 after a break; then ≈$0.03 less a message
+     /effort    costs nothing now
+```
+
+`stay` is what continuing costs: the conversation read back from the cache now, or written again after a break. Each other model (`↑` more capable, `↓` cheaper) shows what switching costs now, how much more or less each later message costs, and after how many messages a cheaper one evens out. `/effort` costs nothing on Opus 5.5 and Fable 5.1, which keep the cache; elsewhere it shows what re-writing the conversation costs.
+
+▫️ **An idle session** (cold or closed) gets one line, with what coming back to it costs on its own model and on each cheaper one:
+
+```
+└ resuming re-sends 420k tokens: $3.36 on Opus 5.5, $1.68 on Sonnet 5, $0.65 on Haiku 4.5
+```
+
+(`continuing` for a session you haven't closed.) A folder's closed script runs (`claude -p`, SDKs) fold into one row, so a loop of them doesn't bury your sessions.
+
+▫️ **Exact or ≈:** an amount without `≈` is exact: the conversation's size as its last request sent it (the transcript records it), at list prices. What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of those. Amounts with `≈` are averages from the session's history, or depend on a size usdash can only estimate; see [Limitations](#️-limitations).
+
+▫️ **Every request** (press `r`), newest first:
 
 | Shown | What it is |
 |---|---|
@@ -86,32 +108,38 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
 3. Its cost is its tokens at list prices from [`usdash/pricing.yaml`](usdash/pricing.yaml)
 4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, Claude Code upgrade, or effort change
-5. The session's cache clock, next-message price and advice are recomputed
+5. The session's cache clock, what re-sending it costs, and its advice are recomputed
 
 > ⚠️ **NOTE:** The transcript format is internal to Claude Code and can change with any release. usdash reads it leniently (missing fields are "unknown", not a crash) and counts record types it doesn't know. If the header reports unknown records after a Claude Code update, check usdash with the [manual sanity suite](tests/sanity/manual.py).
 
-▫️ **Advice rules:**
+▫️ **The action a live session gets** (the first that applies):
 
-| Rule | Shown when | Example |
+| Action | When | Example |
 |---|---|---|
-| **Switch model** | A cheaper model saves at least $0.005 per message | Cold: *"Cache expired, so switching model costs nothing extra now: next message ≈$0.05 on Haiku 4.5, vs $0.12 on Sonnet 5."* Warm: *"Switching to Sonnet 5 now costs $0.16 extra; its cheaper messages make that back in ~5 messages. Switching is free once Opus 5.5's cache expires, in 35:00."* |
-| **Compact before a break** | The conversation is 100k+ tokens, the cache is warm, and it expires within 10 minutes (within half its lifetime, if that's shorter) | *"Context 140k, cache expires in 5:00: /compact now ≈$0.09; after a break ≈$0.76."* |
-| **Lower effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 per message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both efforts | *"Lower /effort to medium: ≈$0.04 less per message, no cache cost on Opus 5.5."* |
+| ⚡ **Compact before a break** | The conversation is 100k+ tokens and the cache expires within 10 minutes (within half its lifetime, if that's shorter) | *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* |
+| ⚡ **Switch now** | A cheaper model is cheaper even counting the re-write | *"Switch to Haiku 4.5 now: it's already cheaper."* |
+| 💡 **Switch now** | Staying has cost as much as switching would (the rent-or-buy rule) | *"Switch to Haiku 4.5 now: since this tip appeared, staying has cost $0.21 more than Haiku 4.5 would have, more than switching costs ($0.08)."* |
+| 💡 **Lower the effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 a message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both | *"Try /effort medium: ≈$0.04 less a message, at no cost now."* |
+| 💡 **Stay** | A cheaper model saves at least $0.005 a message, but switching now costs extra | *"Stay on Opus 5.5 for now; switching is free after your next 1-hour break."* |
 
-The switch rule is the rent-or-buy rule (see [Concepts 101](#-concepts-101)). While the cache is warm, it also says *"Switch to Haiku 4.5 now: already cheaper"* when moving costs less even now (for example right after `/compact`, if another session in the same folder keeps Haiku's copy of the tool list cached), and *"Switch to Sonnet 5 now: since this tip appeared, staying on Opus 5.5 has cost $… more than Sonnet 5 would have, which covers the $… switch"* once staying has cost as much as switching would.
+▫️ **How the switch advice decides:**
+- **While the cache is warm**, switching costs extra: the other model has to write the whole conversation into its own cache. So usdash says to stay for now and switch after your next break that outlasts the cache (an hour on a subscription, 5 minutes on an API key). The next message after such a break writes everything again on any model, so switching then is free.
+- **If you keep going without a break**, usdash adds up what staying costs compared with each cheaper model. Once that passes the cost of switching to one of them, it says to switch. This is the rent-or-buy rule (see [Concepts 101](#-concepts-101)).
+- **When switching is cheaper even now**, it says so straight away. That happens, for example, right after `/compact`, if another session in the same folder keeps the other model's copy of the tool list cached.
+- Whether the cheaper model is good enough for the task is your call: the option rows show the dollars for each.
 
 ## 🧪 Example Session
 
 | # | What you do | What usdash shows |
 |---|---|---|
-| 1 | Start `claude` in `shop` on branch `checkout-fix` and ask a question | A new row: your first words as its name, `shop@checkout-fix`, `● 59:5x` on a subscription (`● 4:5x` on an API key) |
+| 1 | Start `claude` in `shop` on branch `checkout-fix` and ask a question | A new live session: your first words as its name, `shop@checkout-fix`, `● 59:5x` on a subscription (`● 4:5x` on an API key) |
 | 2 | Wait for Claude Code to title the session | The name changes to that title |
 | 3 | `/rename checkout bug` | The name becomes `checkout bug` |
-| 4 | Keep working on Opus 5.5 | Advice: *"Switching to Sonnet 5 now costs $… extra; its cheaper messages make that back in ~N messages. Switching is free once Opus 5.5's cache expires, in mm:ss."* |
-| 5 | `/model sonnet`, then send a message | A red feed row: `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`, and the header's `cache misses added` total goes up |
-| 6 | Step away until the cache expires | CACHE shows `○ cold`; advice says switching now costs nothing extra |
-| 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look at the advice | `⚡` *"Context 140k, cache expires in 8:00: /compact now ≈$0.09; after a break ≈$0.76."* |
-| 8 | `/exit` | CACHE shows `closed`, and Claude Code's own figure `(CC $…)` appears after the session's cost |
+| 4 | Keep working on Opus 5.5 | *"Stay on Opus 5.5 for now; switching is free after your next 1-hour break."*, and a price for each option |
+| 5 | `/model sonnet`, then send a message | Press `r`: a red row `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`. The header's `cache misses added` total goes up |
+| 6 | Step away until the cache expires | The session moves to IDLE, `○ cold · 1h`, with a line saying what continuing costs on each model |
+| 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look again | `⚡` *"Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in 8:00."* |
+| 8 | `/exit` | `closed · 1m`, Claude Code's own figure `(CC $…)` after the session's cost, and what resuming costs |
 
 ## 🚀 Installation & Usage
 
@@ -133,7 +161,7 @@ pip install .
 
 ▫️ **Step 2 - Run it next to your sessions:**
 ```
-usdash                    # today's sessions, then live
+usdash                    # the last 24 hours, then live
 ```
 
 > ⚠️ **NOTE:** The `usdash` command lives in the virtual environment, so a new terminal says `command not found` until you run `source .venv/bin/activate` in the `usdash` folder. To run it from anywhere, link it onto your PATH once, from that folder: `mkdir -p ~/.local/bin && ln -s "$PWD/.venv/bin/usdash" ~/.local/bin/usdash` (and add `~/.local/bin` to your PATH if it isn't there).
@@ -141,11 +169,11 @@ usdash                    # today's sessions, then live
 | Option | Meaning | Default |
 |---|---|---|
 | `--since 24h` | How much history to load first (`m`, `h` or `d`); never less than `--window` | since midnight |
-| `--window 8h` | Show sessions active this recently | `3h` |
+| `--window 8h` | Show sessions active this recently | `24h` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |
 
-Scroll the request feed with ↑/↓, the mouse wheel or `j`/`k`; `space`/`b` move a page, `g`/`G` jump to the newest/oldest, `q` quits. While you're scrolled back, the rows in view stay put, and the title counts the new rows above them.
+↑/↓, the mouse wheel or `j`/`k` scroll the sessions a session at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `r` switches to every request and back; there the same keys scroll the list, and while you're scrolled back its rows stay put and the title counts the new ones above them. `q` quits.
 
 > ⚠️ **NOTE:** usdash shows the sessions **of the machine it runs on**. With VS Code Remote-SSH, Claude Code runs on the server, so run usdash in a terminal on that server.
 
@@ -171,8 +199,13 @@ Sessions appear, their cache lifetime and costs are read the same way, and Bedro
 - These sessions are tagged `api` (billed per token), which is right, though they aren't billed through an API key
 - Not yet checked with a real Bedrock or Google Cloud transcript: whether Claude Code records the provider's model id or the plain model name. If it's the plain name, the effort tip would wrongly say an effort change keeps the cache there
 
-▫️ **Advice is an estimate:**
-It predicts the next message from the session's history: how long its replies are, and how much each message adds. Other things are inferred too: how many tokens the same text is on another model's tokenizer (×0.77 on Haiku 4.5, on average), and what another session keeps cached. The advice shows the dollars; cost isn't the only goal, and a stronger model can finish in fewer messages.
+▫️ **What's exact and what's an estimate (`≈`):**
+- **Exact:** re-sending a conversation, now or after a break, on its own model or another: its size as the last request sent it (the whole of it is cached, and resuming re-sends all of it), times list prices. The one approximation is the tokenizer: the same text is ~0.77× the tokens on Haiku 4.5, so Haiku amounts can be off by a few percent
+- **≈ per message:** what a later message costs more or less on another model or effort. It assumes messages and replies stay as long as they have been in this session (averages over its recent messages); a stronger model or a lower effort may write more or less
+- **≈ /compact:** the summary's size is learned from earlier compactions on this machine (3.8k tokens typical, 14–16k for very long conversations). What compacting now saves over compacting after a break is exact
+- **≈ another session's cache:** when another session in the same folder keeps a model's tool list cached, switching there costs less; how much is inferred
+- **Resuming soon after `/exit`:** within a cache lifetime, a resumed session may still read its cache; the idle line shows the full re-send, the most it can cost
+- Cost isn't the only goal: a stronger model can finish in fewer messages. The dollars are there to decide with
 
 ▫️ **Some causes are invisible:**
 A gateway or proxy that changes the model behind Claude Code's back shows up as `cause unknown`.
@@ -221,6 +254,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 | [`usdash/`](usdash/) | The dashboard: transcript reader, sessions, cost engine, advice, screen |
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices, with the date they were verified |
 | [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
+| [`research/REDESIGN-PLAN.md`](research/REDESIGN-PLAN.md) | The plan for the session-first screen, and its assumptions checked against real transcripts |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
 | [`docs/`](docs/) | The README's pictures: the dashboard and how usdash works |
@@ -230,7 +264,8 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 Run the tests with `pip install -r requirements-dev.txt && pytest -q`, and print the manual suite with `python3 tests/sanity/manual.py`.
 
 ## ⬆️ Planned Upgrades
-- [x] Live cache countdown, next-message price and dollar advice per session
+- [x] Live cache countdown, the price of continuing and dollar advice per session
+- [x] A session-first screen: the last 24 hours, what coming back to each session costs
 - [ ] Bedrock and Google Cloud prices: the 10% regional premium, and inference-profile ARNs mapped to their model
 - [ ] Advice for `/clear` on a new topic, and for a subagent instead of `/model` on a side task
 - [ ] An opt-in Claude Code hook (`PreModelSwitch`) that shows usdash's numbers before a switch

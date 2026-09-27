@@ -28,6 +28,11 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 RECAP_LAG = 5
 SNIPPET = 60
 DEFAULT_GROWTH = 1_000  # tokens a message adds, before a session has history
+RECENT = 20  # messages that describe what a session is doing now
+# The summary /compact writes, when no compaction of a conversation this size
+# has been seen: a share of the conversation, within bounds. Fitted to the
+# compactions on the machine usdash was built on (research/CACHE-DECISIONS.md §7).
+SUMMARY_SHARE, SUMMARY_MIN, SUMMARY_MAX = 0.03, 3_800, 16_000
 
 
 def day_of(when: float) -> str:
@@ -272,12 +277,15 @@ class Session:
         return touched is not None and now - touched < (ttl or FIVE_MINUTES)
 
     def growth(self) -> int:
-        """Typical tokens one message adds to the conversation: the median rise
-        between consecutive main-conversation prompts."""
+        """Tokens an average message adds to the conversation: the mean rise
+        between consecutive main-conversation prompts on the same model, over
+        the last RECENT. The mean, not the median: a big tool result is a real
+        cost, and per-message amounts are averages (research/CACHE-DECISIONS.md §7)."""
         def compute() -> int:
-            prompts = [r.prompt for r in self.main_requests()]
-            rises = [b - a for a, b in zip(prompts, prompts[1:]) if b > a]
-            return int(median(rises)) if rises else DEFAULT_GROWTH
+            requests = self.main_requests()
+            rises = [b.prompt - a.prompt for a, b in zip(requests, requests[1:])
+                     if b.prompt > a.prompt and model_key(a.model) == model_key(b.model)][-RECENT:]
+            return round(sum(rises) / len(rises)) if rises else DEFAULT_GROWTH
         return memo(self, "growth", compute)
 
     def output_totals(self, model: str | None, effort: str | None = None) -> tuple[int, int]:
@@ -306,6 +314,10 @@ class Store:
         # day -> reason -> $ paid to write again what could have been read back
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # models missing from pricing.yaml
+        self.summaries: list[tuple[int, int]] = []  # (conversation, summary) tokens of each /compact seen
+        # (folder, entrypoint) -> (tokens, model family): the tool list and system prompt as a
+        # request right after /compact read them back from the cache
+        self.measured_prefix: dict[tuple, tuple[int, str | None]] = {}
         self.first: float | None = None
         self.revision = 0  # bumped on every change to any request
         self._memo: tuple = (-1, None)  # see memo()
@@ -365,8 +377,11 @@ class Store:
             main = session.main
             if data.get("subtype") == "compact_boundary":
                 main.compacted = True
-                post = (data.get("compactMetadata") or {}).get("postTokens")
+                meta = data.get("compactMetadata") or {}
+                post, pre = meta.get("postTokens"), meta.get("preTokens")
                 session.compact_post_tokens = post if isinstance(post, int) else None
+                if isinstance(post, int) and isinstance(pre, int) and post > 0 and pre > 0:
+                    self.summaries.append((pre, post))
             elif data.get("subtype") == "away_summary" and record.when is not None:
                 # A recap resends the conversation: it reads the cache and restarts its clock.
                 started = record.when - RECAP_LAG
@@ -431,6 +446,11 @@ class Store:
             session.ended = False
             if not session.prefix and request.prompt:
                 session.prefix, session.prefix_model = request.prompt, model
+            read = request.usage.get("read", 0)
+            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= session.prefix:
+                # Right after /compact, only the tool list and system prompt were still
+                # cached: what this request read back is their exact size.
+                self.measured_prefix[(session.cwd, session.entrypoint)] = (read, model_key(model))
         session.last_activity = max(session.last_activity or 0, request.end)
         if old is None:
             self._to_feed(request)
@@ -492,14 +512,28 @@ class Store:
 
     def tool_list(self, session: Session, model: str | None) -> float:
         """Claude Code's tool list and system prompt as `session` sends them,
-        in `model`'s tokens. Every first prompt is those plus a first message,
-        which may paste a whole file, so the estimate is the smallest first
-        prompt among this session and the other interactive ones in its folder
-        started from the same app. A scripted run can bring a system prompt of
-        its own, so it's compared with nothing else."""
+        in `model`'s tokens. Measured, if a request from the same app in this
+        folder read them back right after /compact. Otherwise estimated: every
+        first prompt is those plus a first message, which may paste a whole
+        file, so the estimate is the smallest first prompt among this session
+        and the other interactive ones in its folder started from the same app.
+        A scripted run can bring a system prompt of its own, so it's compared
+        with nothing else."""
+        if not session.scripted and (session.cwd, session.entrypoint) in self.measured_prefix:
+            tokens, family = self.measured_prefix[(session.cwd, session.entrypoint)]
+            return convert_tokens(tokens, family, model_key(model))
         peers = [session] if session.scripted else [
             s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
         return min((s.prefix_on(model) for s in peers if s.prefix), default=0.0)
+
+    def summary_size(self, conversation: int) -> int:
+        """Tokens /compact's summary will likely take for a conversation this
+        size: the median of the summaries seen for conversations within 2× of
+        it, else SUMMARY_SHARE of it, within SUMMARY_MIN and SUMMARY_MAX."""
+        near = [post for pre, post in self.summaries if conversation / 2 <= pre <= conversation * 2]
+        if near:
+            return round(median(near))
+        return round(min(SUMMARY_MAX, max(SUMMARY_MIN, SUMMARY_SHARE * conversation)))
 
     def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
         """Tokens `model` likely already has cached for `session`: its tool list

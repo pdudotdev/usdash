@@ -232,16 +232,19 @@ B > X × 0.75 ÷ (1.25 − read/input)       → B > 0.652·X  (Sonnet 5, Haiku 
 |---|---|
 | Cost of each request | `message.usage` on assistant records: `input_tokens` (uncached part only) × input price + `cache_read_input_tokens` × read + `cache_creation.ephemeral_5m_input_tokens` × 5-min write + `ephemeral_1h_input_tokens` × 1-hour write + `output_tokens` × output price. A write without the 5m/1h split counts as 5-minute |
 | One request, not several | A streamed reply is written as several records sharing a `message.id`; the last one written wins. Deduplicate by `message.id`, then `requestId`, then the record's `uuid`. **Not by `requestId` alone:** some sessions' records carry none, and one real session then read $0.04 instead of $1.33 |
-| **N** (conversation size) | The last request's prompt (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`) plus what one message typically adds: the median rise between the session's consecutive prompts, which covers the reply and your next message. Right after `/compact`: the tool list and system prompt plus the summary (`compactMetadata.postTokens` on the `compact_boundary` record). The tool list and system prompt ≈ the smallest first prompt among this session and the other interactive sessions in its folder started from the same app: every first prompt also holds a first message, which may paste a whole file. A scripted run can bring a system prompt of its own, so it's compared with nothing else |
+| **N** (conversation size) | usdash shows the part it can measure: **P**, the last request's prompt (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`). The whole of it is cached (on this machine the uncached remainder was at most 0.04% of a prompt), and resuming a session re-sends all of it (31 resumes: the first request after was 0.1–4% bigger, the new message). What the next message adds is only in per-message amounts, as the mean rise between the session's consecutive prompts on one model, over its last 20 messages. The mean, not the median: big tool results are a real cost, and the median undercounted the average about 2× here. Right after `/compact`: the tool list and system prompt plus the summary (`compactMetadata.postTokens` on the `compact_boundary` record) |
+| Tool list and system prompt | Measured when the transcripts reveal it: the request right after `/compact` reads back exactly that (36,829 tokens in four sessions here). Otherwise ≈ the smallest first prompt among this session and the other interactive sessions in its folder started from the same app (39.9k here): every first prompt also holds a first message, which may paste a whole file. A scripted run can bring a system prompt of its own, so it's compared with nothing else |
+| The summary `/compact` writes | The median `postTokens` of earlier compactions of conversations within 2× the size; else 3% of the conversation, between 3,800 and 16,000 tokens. Seen here: 3,807 typical (~58k conversations), 13,984 at 450k, 16,088 at 972k. The compaction request itself isn't in the transcripts, so its price stays an estimate; the difference between compacting now and after a break (re-reading vs re-writing the conversation) is exact |
 | **W** | The last request's full prompt size, if its cache is still alive |
 | The session's cache lifetime | From its latest main-conversation write: 1 hour if it shows `ephemeral_1h_input_tokens > 0`, 5 minutes if `ephemeral_5m_input_tokens > 0` |
 | Effort | The `effort` field on each assistant record (`low` … `max`) |
 | Is the cache alive? | Time since the **start** of the last request is less than the lifetime. Use the timestamp of the record that triggered it (the user message or tool result before it), which errs on the safe side. Recaps (`system` records with subtype `away_summary`) read the cache too, so they count as a refresh. Their timestamp is a few seconds after the request started, so subtract a few seconds to stay safe |
-| **S** for another model | Whether any session in the same folder used that model within its lifetime, as its current model or one it left less than a lifetime ago. This session counts too: it may have just left that model. Size ≈ this session's tool list and system prompt (as for `/compact` above), but for another session at most its own **first** prompt, which a scripted run with a system prompt of its own can keep small; the best match among those sessions is the estimate. Converted to the model's tokenizer. Not a first prompt *on that model*: after a mid-session `/model` switch, that's the whole conversation. Not this session's whole conversation on a model it just left either: how much of it a request finds depends on how far back it is (§6, round trips) |
+| **S** for another model | Whether any session in the same folder used that model within its lifetime, as its current model or one it left less than a lifetime ago. This session counts too: it may have just left that model. Size ≈ this session's tool list and system prompt (above), but for another session at most its own **first** prompt, which a scripted run with a system prompt of its own can keep small; the best match among those sessions is the estimate. Converted to the model's tokenizer. Not a first prompt *on that model*: after a mid-session `/model` switch, that's the whole conversation. Not this session's whole conversation on a model it just left either: how much of it a request finds depends on how far back it is (§6, round trips) |
 | output(M) | For the current model: the session's own average output per message on that model and effort, else on that model, else across interactive sessions (scripted `claude -p` runs are left out: a "say OK" run makes a model or effort look nearly free). For a model you'd move to: the session's own average on it if it has used it, else the current model's, converted to the target's tokenizer: the task is the same, so assume a reply of the same length. Other sessions' replies on that model come from other tasks and would mislead. For a lower effort: the session's own average at that effort if it has used it; else its current average, scaled by how much shorter replies got at that effort in the interactive sessions that used both (each compares a task with itself). Without such a session there's no estimate: another session's replies alone come from another task |
 | When a request started | The timestamp of the record it answers, found through `parentUuid`, skipping earlier blocks of the same reply |
 | Claude Code's own total | The `cost-state` record (`totalCostUSD`, per-model `modelUsage`). It's written when a session closes, not as it goes, so it can only check finished sessions. It includes the background requests the transcript lacks |
 | Converting N between models | × 0.77 from Opus 5.5 / Sonnet 5 to Haiku 4.5, × 1.3 the other way. Opus 5.5 and Sonnet 5 need no conversion |
+| Effort changes | On Opus 5.5 the request after an effort change read 100% of the previous prompt back (4 of 4 here); on Opus 5, 7% |
 
 ---
 
@@ -275,32 +278,38 @@ A scripted Claude Code session through llm-trunk, on an API key with the 5-minut
 
 ## 10. The advice engine, in short
 
-What usdash v1 does, per active session (`usdash/engine.py`, `usdash/advice.py`):
+What usdash does, per session in the last 24 hours (`usdash/engine.py`, `usdash/advice.py`):
 
 ```
 lifetime = from the session's latest main-conversation write: 1 hour or 5 minutes
 alive    = now − start_of_last_request < lifetime
-N, W     = conversation size, cached part (0 if not alive)
-show next_now and next_cold, and the time left before the cache expires
+P        = the last request's prompt (exact); right after /compact, tool list + summary (≈)
+live     = alive and not closed; idle = everything else
 
-model switch, to each cheaper model L (skipped when it saves under $0.005 per message):
-    if not alive:   "Cache expired, so switching model costs nothing extra now: next message $x on L, vs $y here"
-    elif P ≤ 0:     "Switch to L now: already cheaper (saves $−P now, $s per message)"
-    elif R ≥ P:     "Switch to L now: since this tip appeared, staying on E has cost $R more than L would have,
-                     which covers the $P switch"
-                    (R counts from when the tip first appeared, per session and L)
-    else:           "Switching to L now costs $P extra; its cheaper messages make that back in ~m messages.
-                     Switching is free once E's cache expires, in mm:ss"          (L = the nearest cheaper model)
+idle session: "resuming re-sends Pk tokens: $a on E, $b on L1, $c on L2"   (P written again, on E and each
+              cheaper model; "continuing" if not closed)
 
-lower effort (Opus 5.5 / Fable 5.1, not on a cloud provider; needs replies at the lower effort, in this session
-              or in one that used both efforts):
-    "Lower /effort to X: ≈$s less per message, no cache cost"
+live session: one row per option
+    stay       "re-sends Pk tokens: $X now, $Y after a break"            (P read back / written again)
+    ↑ / ↓ L    "$Z more (less) now, then ≈$s less (more) a message · evens out after ≈m messages"
+               Z = P on L, written − P read back here (≈ if another session keeps L's tool list cached)
+    /compact   "≈$A now, ≈$B after a break; then ≈$c less a message"      (summary size learned)
+    /effort    "costs nothing now" on Opus 5.5 / Fable 5.1, else "re-sends Pk tokens: $W more now"
 
-compaction: if N ≥ 100k, the cache is alive, and at most min(10 min, half the lifetime) is left:
-    "/compact now ≈$X; after a break ≈$Y"
+and one action, the first that applies:
+    ⚡ N ≥ 100k and at most min(10 min, half the lifetime) left:
+         "Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss."
+    ⚡ a cheaper L with Z ≤ 0:   "Switch to L now: it's already cheaper."
+    💡 a cheaper L with R ≥ Z:   "Switch to L now: since this tip appeared, staying has cost $R more than L
+                                 would have, more than switching costs ($Z)."
+                                 (R counts from when switching to L first saved $0.005+ a message)
+    💡 a lower effort saves $0.005+ a message (Opus 5.5 / Fable 5.1, with replies at that effort):
+                                 "Try /effort X: ≈$s less a message, at no cost now."
+    💡 a cheaper L saves $0.005+ a message:
+                                 "Stay on E for now; switching is free after your next 1-hour (5-minute) break."
 ```
 
-/clear and "use a subagent instead of /model" are not in v1.
+/clear and "use a subagent instead of /model" are not in usdash yet.
 
 ---
 

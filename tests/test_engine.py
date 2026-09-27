@@ -74,72 +74,159 @@ def test_example_3_after_the_cache_expired():
     assert warm_prefix == pytest.approx(0.068)
 
 
-# --- A session's cache clock and next message ----------------------------------------
+# --- A session's cache clock, and what re-sending its conversation costs ------------------
 
 
-def opus_session(store, prompts=(40_000, 41_000, 42_000), out=500, ttl="1h", **reply):
-    t = Transcript()
+def opus_session(store, prompts=(40_000, 41_000, 42_000), out=500, ttl="1h", session="sess-1", **reply):
+    t = Transcript(session=session)
     previous = 0
     for i, prompt in enumerate(prompts):
         t.turn(T0 + 60 * i, read=previous, write=prompt - previous - 2, out=out, ttl=ttl, **reply)
         previous = prompt
     t.into(store)
-    return store.sessions["sess-1"]
+    return store.sessions[session]
 
 
-def test_cache_state_counts_down_from_the_last_request_start(store):
+def test_the_cache_clock_counts_down_from_the_last_request_start(store):
     session = opus_session(store)
     last_start = T0 + 120
-    state = engine.cache_state(store, session, last_start + 60)
-    assert (state.warm, state.left, state.ttl) == (True, ONE_HOUR - 60, ONE_HOUR)
-    assert (state.size, state.cached) == (43_000, 42_000)  # the last prompt plus a typical message
-    # 42k read + 1k written (1-hour) + 500 out
-    assert state.next_now == pytest.approx((42_000 * 0.2 + 1_000 * 8 + 500 * 20) / 1e6)
-    assert state.next_cold == pytest.approx((43_000 * 8 + 500 * 20) / 1e6)
-    cold = engine.cache_state(store, session, last_start + ONE_HOUR)
-    assert (cold.warm, cold.left, cold.cached) == (False, 0, 0)
+    assert engine.cache_clock(session, last_start + 60) == (True, ONE_HOUR - 60, ONE_HOUR)
+    assert engine.cache_clock(session, last_start + ONE_HOUR) == (False, 0, ONE_HOUR)
 
 
 def test_five_minute_sessions_expire_in_five_minutes(store):
     session = opus_session(store, ttl="5m")
-    assert engine.cache_state(store, session, T0 + 120 + 299).warm
-    assert not engine.cache_state(store, session, T0 + 120 + 300).warm
+    assert engine.cache_clock(session, T0 + 120 + 299)[0]
+    assert not engine.cache_clock(session, T0 + 120 + 300)[0]
+
+
+def test_resending_the_conversation_is_priced_from_the_last_prompt(store):
+    session = opus_session(store)  # last prompt 42,000 tokens, 1-hour cache
+    assert engine.context(store, session) == engine.Context(42_000, 42_000, True)
+    assert engine.resend(store, session, "claude-opus-5-5", warm=True) == pytest.approx(42_000 * 0.20 / 1e6)
+    assert engine.resend(store, session, "claude-opus-5-5", warm=False) == pytest.approx(42_000 * 8 / 1e6)
+    # Another model has none of it cached, and counts it on its own tokenizer.
+    assert engine.resend(store, session, "claude-sonnet-5", warm=True) == pytest.approx(42_000 * 4 / 1e6)
+    assert engine.resend(store, session, "claude-haiku-4-5", warm=True) == pytest.approx(42_000 * 0.77 * 2 / 1e6)
+
+
+def test_coming_back_re_sends_everything_on_its_model_or_a_cheaper_one(store):
+    session = opus_session(store)
+    ctx, costs = engine.comeback(store, session)
+    assert ctx.exact and ctx.tokens == 42_000
+    assert costs == [("claude-opus-5-5", pytest.approx(0.336)), ("claude-sonnet-5", pytest.approx(0.168)),
+                     ("claude-haiku-4-5", pytest.approx(42_000 * 0.77 * 2 / 1e6))]
+    # Another session in the folder keeping Haiku's tool list cached doesn't count:
+    # a resumed session's fresh system prompt may not match it.
+    other = Transcript(session="sess-2")
+    other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000)
+    other.into(store)
+    assert engine.comeback(store, session)[1][2][1] == pytest.approx(42_000 * 0.77 * 2 / 1e6)
+    haiku = opus_session(store, model="claude-haiku-4-5", session="sess-3")
+    assert [model for model, _ in engine.comeback(store, haiku)[1]] == ["claude-haiku-4-5"]
 
 
 def test_growth_and_typical_output(store):
     session = opus_session(store, prompts=(40_000, 43_000, 44_000), out=800)
-    assert session.growth() == 2_000  # median of +3k and +1k
+    assert session.growth() == 2_000  # the mean of +3k and +1k
     assert engine.typical_output(store, session, "claude-opus-5-5", "high") == 800
     assert engine.typical_output(store, session, "claude-haiku-4-5") == engine.DEFAULT_OUTPUT
+
+
+def test_growth_is_the_recent_mean_on_one_model(store):
+    # Five big tool results long ago, then twenty ordinary messages: only the last twenty count.
+    prompts = [40_000]
+    for rise in [30_000] * 5 + [1_000] * 20:
+        prompts.append(prompts[-1] + rise)
+    session = opus_session(store, prompts=tuple(prompts))
+    assert session.growth() == 1_000
+    # The mean, not the median: one big tool result is a real cost.
+    lumpy = opus_session(store, prompts=(40_000, 41_000, 42_000, 62_000, 63_000), session="sess-2")
+    assert lumpy.growth() == round((1_000 + 1_000 + 20_000 + 1_000) / 4)
+    # A rise across a model switch compares two tokenizers: left out.
+    t = Transcript(session="sess-3")
+    t.turn(T0, write=40_000)
+    t.turn(T0 + 60, model="claude-haiku-4-5", write=50_000)
+    t.turn(T0 + 120, model="claude-haiku-4-5", read=50_002, write=500)
+    t.into(store)
+    assert store.sessions["sess-3"].growth() == 502  # 500 written + 2 uncached
 
 
 def test_a_model_with_no_history_is_assumed_to_reply_at_the_same_length(store):
     session = opus_session(store, out=3_000)
     move = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
-    # Haiku writes the same reply, 3,000 Opus tokens = 2,310 Haiku tokens, at $5 instead
-    # of $20, plus the input side (43k read + 1k written on Opus's 1-hour cache vs
-    # 33,110 + 770 on Haiku's).
+    # Per later message: Haiku writes the same reply, 3,000 Opus tokens = 2,310 Haiku
+    # tokens, at $5 instead of $20; reads 32,340 instead of 42,000 at $0.10 instead of
+    # $0.20; and writes an average message (1,000 Opus tokens) at $2 instead of $8.
     output = 3_000 * 20 - 2_310 * 5
-    prompt = 43_000 * 0.2 + 1_000 * 8 - (33_110 * 0.1 + 770 * 2)
+    prompt = 42_000 * 0.2 + 1_000 * 8 - (32_340 * 0.1 + 770 * 2)
     assert move.saving == pytest.approx((output + prompt) / 1e6, abs=1e-5)
+
+
+def test_switching_now_costs_the_difference_in_re_sending(store):
+    session = opus_session(store)
+    down = engine.model_move(store, session, "claude-sonnet-5", T0 + 130)
+    assert (down.stay, down.move) == (pytest.approx(42_000 * 0.2 / 1e6), pytest.approx(42_000 * 4 / 1e6))
+    assert down.penalty == pytest.approx(42_000 * (4 - 0.2) / 1e6) and down.exact
+    up = engine.model_move(store, session, "claude-fable-5-1", T0 + 130)
+    assert up.penalty == pytest.approx(42_000 * (20 - 0.2) / 1e6)
+    assert up.saving < 0 and up.payback is None  # each message costs more there
+    # Once the cache has expired, staying writes it all too: moving down is cheaper right away.
+    cold = engine.model_move(store, session, "claude-sonnet-5", T0 + 120 + ONE_HOUR)
+    assert cold.penalty == pytest.approx(42_000 * (4 - 8) / 1e6)
 
 
 def test_after_compact_only_the_tool_list_is_cached(store):
     session = opus_session(store)
     t = Transcript()
-    t.record("system", T0 + 150, subtype="compact_boundary", compactMetadata={"postTokens": 2_500})
+    t.record("system", T0 + 150, subtype="compact_boundary", compactMetadata={"postTokens": 2_500, "preTokens": 43_000})
     t.into(store)
-    state = engine.cache_state(store, session, T0 + 200)
-    assert (state.size, state.cached) == (40_000 + 2_500, 40_000)
-    assert engine.compact_cost(store, session, T0 + 200) is None  # nothing left to compact
+    assert engine.context(store, session) == engine.Context(40_000 + 2_500, 40_000, False)
+    assert engine.compact(store, session, T0 + 200) is None  # nothing left to compact
+    assert store.summaries == [(43_000, 2_500)]
 
 
 def test_compact_now_or_after_a_break(store):
-    # research/CACHE-DECISIONS.md §6: 140k on Opus, ~3k-token summary: ≈$0.09 warm, ≈$0.76 cold.
-    session = opus_session(store, prompts=(137_000, 138_000, 139_000))
-    warm, cold = engine.compact_cost(store, session, T0 + 200)
-    assert warm == pytest.approx(0.093, abs=0.001)
-    assert cold == pytest.approx(0.76, abs=0.001)
+    # research/CACHE-DECISIONS.md §6: 140k on Opus, a ~3k-token summary: ≈$0.09 warm, ≈$0.76 cold.
+    earlier = Transcript(session="sess-2")
+    earlier.record("system", T0 - 600, subtype="compact_boundary", compactMetadata={"postTokens": 3_000, "preTokens": 140_000})
+    earlier.into(store)
+    session = opus_session(store, prompts=(40_000, 138_000, 139_000))  # the tool list: a 40k first prompt
+    costs = engine.compact(store, session, T0 + 200)
+    assert costs.now == pytest.approx((139_000 * 0.2 + 3_000 * 20) / 1e6)  # read back, and the summary written
+    assert costs.after_break == pytest.approx((139_000 * 5 + 3_000 * 20) / 1e6)  # the 5-minute cache, even on a plan
+    # Later messages read the tool list and the summary instead of the conversation.
+    assert costs.saving == pytest.approx((139_000 - 40_000 - 3_000) * 0.2 / 1e6)
+
+
+def test_the_summary_size_is_learned_and_grows_with_the_conversation(store):
+    # Nothing seen yet: 3% of the conversation, at least 3,800 and at most 16,000
+    # (research/CACHE-DECISIONS.md §7: 3.8k at ~58k, 14k at 450k, 16k at 972k).
+    assert [store.summary_size(n) for n in (58_000, 450_000, 972_000)] == [3_800, 13_500, 16_000]
+    store.summaries += [(58_000, 3_807), (450_000, 13_984)]
+    assert store.summary_size(60_000) == 3_807
+    assert store.summary_size(500_000) == 13_984
+    assert store.summary_size(2_000_000) == 16_000  # none within 2×
+
+
+def test_the_tool_list_is_measured_right_after_compact(store):
+    t = Transcript()
+    t.turn(T0, write=40_000)
+    t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 4_000, "preTokens": 41_000})
+    t.turn(T0 + 60, read=36_829, write=4_500)  # the tool list and system prompt, read back
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert store.tool_list(session, "claude-opus-5-5") == 36_829  # not the 40,002-token first prompt
+    assert store.tool_list(session, "claude-haiku-4-5") == pytest.approx(36_829 * 0.77)
+    other = opus_session(store, session="sess-2")  # the same app in the same folder
+    assert store.tool_list(other, "claude-opus-5-5") == 36_829
+    # A read bigger than the session's first prompt isn't the tool list (a forked conversation).
+    big = Transcript(session="sess-3", cwd="/home/user/other")
+    big.turn(T0, write=40_000)
+    big.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 4_000})
+    big.turn(T0 + 60, read=90_000, write=500)
+    big.into(store)
+    assert ("/home/user/other", "cli") not in store.measured_prefix
 
 
 def test_model_move_uses_what_the_target_has_cached(store):
@@ -157,32 +244,37 @@ def test_model_move_uses_what_the_target_has_cached(store):
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 30_002
     assert warm_target.move < cold_target.move
     assert warm_target.penalty == pytest.approx(cold_target.penalty - 30_002 * (1.25 - 0.1) / 1e6)
+    assert cold_target.exact and not warm_target.exact  # the shared tool list is an inference
     # Its cache expires too.
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
 
 
-def test_effort_move_on_opus_5_5_keeps_the_cache(store):
+def test_effort_on_opus_5_5_keeps_the_cache(store):
     session = opus_session(store, out=3_000)
     both = Transcript(session="sess-2")  # replies got ~73% shorter at medium there
     both.turn(T0, write=40_000, out=3_000)
     both.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
     both.into(store)
-    move = engine.effort_move(store, session, "medium", T0 + 130)
-    assert move.saving == pytest.approx((3_000 - 800) * 20 / 1e6)  # $0.044, as in research/CACHE-DECISIONS.md §6
-    assert move.penalty == pytest.approx(-move.saving)
+    # $0.044 a message, as in research/CACHE-DECISIONS.md §6, and nothing to re-write.
+    assert engine.effort_saving(store, session, "medium") == pytest.approx((3_000 - 800) * 20 / 1e6)
+    assert engine.effort_rewrite(store, session, T0 + 130) is None
 
 
-def test_no_effort_move_where_effort_rewrites_the_cache(store):
-    session = opus_session(store, model="claude-sonnet-5")
-    assert engine.effort_move(store, session, "medium", T0 + 130) is None
-    assert not engine.effort_keeps_cache("us.anthropic.claude-opus-5-5-v1:0")
+def test_elsewhere_an_effort_change_re_writes_the_conversation(store):
+    sonnet = opus_session(store, model="claude-sonnet-5")
+    assert engine.effort_saving(store, sonnet, "medium") is None
+    assert engine.effort_rewrite(store, sonnet, T0 + 130) == pytest.approx(42_000 * (4 - 0.2) / 1e6)
+    assert engine.effort_rewrite(store, sonnet, T0 + 120 + ONE_HOUR) == 0  # already cold: re-written anyway
+    bedrock = opus_session(store, model="us.anthropic.claude-opus-5-5-v1:0", session="sess-2")
+    assert not engine.effort_keeps_cache(bedrock.model)
+    assert engine.effort_rewrite(store, bedrock, T0 + 130) == pytest.approx(42_000 * (8 - 0.2) / 1e6)
 
 
 def test_payback():
-    move = engine.Move("x", stay=0.02, move=0.12, penalty=0.1, saving=0.01, warm=True, left=100)
+    move = engine.Move("x", stay=0.02, move=0.12, penalty=0.1, saving=0.01, exact=True)
     assert move.payback == pytest.approx(10)
-    assert engine.Move("x", 0.1, 0.05, -0.05, 0.01, True, 100).payback == 0
-    assert engine.Move("x", 0.1, 0.2, 0.1, 0.0, True, 100).payback is None
+    assert engine.Move("x", 0.1, 0.05, -0.05, 0.01, True).payback == 0
+    assert engine.Move("x", 0.1, 0.2, 0.1, 0.0, True).payback is None
 
 
 def test_other_sessions_short_replies_dont_make_a_model_look_cheap(store):
@@ -192,8 +284,8 @@ def test_other_sessions_short_replies_dont_make_a_model_look_cheap(store):
     scripted.into(store)
     move = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
     # Haiku is assumed to reply at this session's length (2,000 Opus tokens = 1,540 Haiku tokens), not 5.
-    later_opus = (43_000 * 0.2 + 1_000 * 8 + 2_000 * 20) / 1e6
-    later_haiku = (33_110 * 0.1 + 770 * 2 + 1_540 * 5) / 1e6
+    later_opus = (42_000 * 0.2 + 1_000 * 8 + 2_000 * 20) / 1e6
+    later_haiku = (32_340 * 0.1 + 770 * 2 + 1_540 * 5) / 1e6
     assert move.saving == pytest.approx(later_opus - later_haiku, abs=1e-5)
 
 
@@ -203,13 +295,12 @@ def test_scripted_runs_dont_make_a_lower_effort_look_cheap(store):
     scripted.turn(T0, write=40_000, out=2_000)
     scripted.turn(T0 + 60, effort="low", read=40_000, write=500, out=5)  # claude -p 'say OK'
     scripted.into(store)
-    assert engine.effort_move(store, session, "low", T0 + 130) is None  # no interactive history at low
+    assert engine.effort_saving(store, session, "low") is None  # no interactive history at low
     interactive = Transcript(session="sess-3")
     interactive.turn(T0, write=40_000, out=2_000)
     interactive.turn(T0 + 60, effort="low", read=40_000, write=500, out=800)
     interactive.into(store)
-    move = engine.effort_move(store, session, "low", T0 + 130)
-    assert move.saving == pytest.approx((2_000 - 800) * 20 / 1e6)
+    assert engine.effort_saving(store, session, "low") == pytest.approx((2_000 - 800) * 20 / 1e6)
 
 
 def test_a_session_whose_replies_logged_no_output_keeps_its_own_average(store):
@@ -219,7 +310,7 @@ def test_a_session_whose_replies_logged_no_output_keeps_its_own_average(store):
     other.turn(T0 + 60, effort="medium", read=40_000, write=500, out=800)
     other.into(store)
     # 0 is this session's real average at high, not "no history": medium can't beat it.
-    assert engine.effort_move(store, session, "medium", T0 + 130).saving == 0
+    assert engine.effort_saving(store, session, "medium") == 0
 
 
 def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
@@ -240,8 +331,7 @@ def test_a_lower_effort_uses_the_sessions_own_replies_there(store):
     other = Transcript(session="sess-2")  # another task, with long replies at low
     other.turn(T0, effort="low", write=40_000, out=5_000)
     other.into(store)
-    move = engine.effort_move(store, store.sessions["sess-1"], "low", T0 + 70)
-    assert move.saving == pytest.approx((600 - 300) * 20 / 1e6)
+    assert engine.effort_saving(store, store.sessions["sess-1"], "low") == pytest.approx((600 - 300) * 20 / 1e6)
 
 
 def test_other_sessions_replies_at_a_lower_effort_count_only_as_a_ratio(store):
@@ -249,13 +339,12 @@ def test_other_sessions_replies_at_a_lower_effort_count_only_as_a_ratio(store):
     short = Transcript(session="sess-2")
     short.turn(T0, effort="low", write=40_000, out=500)  # another task, only at low
     short.into(store)
-    assert engine.effort_move(store, session, "low", T0 + 130) is None
+    assert engine.effort_saving(store, session, "low") is None
     both = Transcript(session="sess-3")
     both.turn(T0, write=40_000, out=1_000)
     both.turn(T0 + 60, effort="low", read=40_000, write=500, out=500)  # half as long at low
     both.into(store)
-    move = engine.effort_move(store, session, "low", T0 + 130)
-    assert move.saving == pytest.approx((6_000 - 3_000) * 20 / 1e6)
+    assert engine.effort_saving(store, session, "low") == pytest.approx((6_000 - 3_000) * 20 / 1e6)
 
 
 def test_a_small_warm_script_does_not_shrink_what_another_session_shares(store):
@@ -285,15 +374,14 @@ def test_after_compact_a_pasted_first_message_is_not_counted_as_cached(store):
     t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 4_000})
     t.into(store)
     session = store.sessions["sess-1"]
-    assert engine.cache_state(store, session, T0 + 60).cached == 80_002  # nothing to compare it with
+    assert engine.context(store, session).cached == 80_002  # nothing to compare it with
     other = Transcript(session="sess-2")  # the same app in the same folder, with a short first message
     other.turn(T0 + 5, write=40_000)
     other.into(store)
     script = Transcript(session="sess-3", entrypoint="sdk-cli")  # a system prompt of its own
     script.turn(T0 + 5, write=2_000)
     script.into(store)
-    state = engine.cache_state(store, session, T0 + 60)
-    assert (state.size, state.cached) == (40_002 + 4_000, 40_002)
+    assert engine.context(store, session) == engine.Context(40_002 + 4_000, 40_002, False)
 
 
 def test_a_session_moving_folder_moves_what_it_shares(store):

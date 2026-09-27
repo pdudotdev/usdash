@@ -9,6 +9,9 @@ import re
 SMALL_TOKENIZER = {"claude-haiku-4-5"}
 TO_SMALL_TOKENIZER = 0.77
 
+# The current models, most capable (and most expensive) first.
+LADDER = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"]
+
 # Where Claude Code keeps the cache across an effort change (the per-message
 # effort beta). Everywhere else an effort change re-writes the conversation.
 EFFORT_KEEPS_CACHE = {"claude-opus-5-5", "claude-fable-5-1"}

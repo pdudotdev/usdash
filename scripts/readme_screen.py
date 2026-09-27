@@ -22,39 +22,53 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 OUT = ROOT / "docs" / "dashboard.svg"
-WIDTH, HEIGHT = 140, 28
+WIDTH, HEIGHT = 140, 24
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
+
+
+def grow(t: Transcript, start: float, prompts: tuple[int, ...], texts: tuple[str, ...], out: int, **reply) -> None:
+    """A conversation whose prompt grows through `prompts`, one message every two minutes."""
+    previous = 0
+    for i, (size, text) in enumerate(zip(prompts, texts)):
+        t.turn(start + 120 * i, text=text, read=previous, write=size - previous - 2, out=out, **reply)
+        previous = size
 
 
 def sessions() -> Store:
     store = Store(PRICES)
-    # A subscription session on Opus 5.5, still warm, with a subagent.
+    # Live: a subscription session on Opus 5.5, big enough for /compact to be worth pricing.
     fix = Transcript(session="3f9a0c1e", cwd="/home/you/shop", branch="checkout-fix")
     fix.record("ai-title", aiTitle="Fix checkout rounding")
-    prompt = 0
-    texts = ["why is the total off by one cent", "show me where the rounding happens", "fix it and add a test",
-             "run the suite and tell me what fails"]
-    for i, size in enumerate((41_000, 45_000, 49_000, 52_000)):
-        fix.turn(T + 120 * i, text=texts[i], read=prompt, write=size - prompt - 2, out=1_800)
-        prompt = size
-    agent = Transcript(session="3f9a0c1e", cwd="/home/you/shop", branch="checkout-fix")
-    agent.user("find every place totals are rounded", T + 250, subagent="a1")
-    agent.reply(T + 262, write=14_000, ttl="5m", out=600, subagent="a1")
-    agent.tool_result(T + 270, subagent="a1")
-    agent.reply(T + 281, read=14_002, write=2_000, ttl="5m", out=400, subagent="a1")
-    # An API-key session in VS Code: switched from Opus to Sonnet, now cold.
+    grow(fix, T, (41_000, 60_000, 95_000, 140_000, 182_000),
+         ("why is the total off by one cent", "show me where the rounding happens", "read the pricing module",
+          "fix it and add a test", "run the suite and tell me what fails"), out=1_800)
+    # Idle, open: a VS Code session moved from Opus 5.5 to Sonnet 5 (a cache miss), now cold.
     notes = Transcript(session="b21e77d4", cwd="/home/you/shop", entrypoint="claude-vscode")
     notes.record("custom-title", customTitle="Release notes")
-    notes.turn(T + 30, text="draft the release notes", write=38_000, ttl="5m", out=1_200)
-    notes.turn(T + 200, text="shorter, please", model="claude-sonnet-5", write=40_500, ttl="5m", out=900)
-    notes.turn(T + 320, text="add a note about the database migration", model="claude-sonnet-5", read=40_502,
+    notes.turn(T - 2 * 3600, text="draft the release notes", write=38_000, ttl="5m", out=1_200)
+    notes.turn(T - 2 * 3600 + 120, text="shorter, please", model="claude-sonnet-5", write=40_500, ttl="5m", out=900)
+    notes.turn(T - 2 * 3600 + 240, text="add a note about the migration", model="claude-sonnet-5", read=40_502,
                write=1_500, ttl="5m", out=700)
-    store.add_all(sorted(fix.records + agent.records + notes.records, key=lambda r: r.when or 0))
+    # Idle, closed: a long session from this morning, expensive to come back to.
+    billing = Transcript(session="7c40d2aa", cwd="/home/you/billing")
+    billing.record("ai-title", aiTitle="Migrate billing to v2")
+    grow(billing, T - 5 * 3600, (42_000, 150_000, 290_000, 420_000),
+         ("plan the migration", "move the invoice models", "port the webhooks", "run the backfill"), out=2_500)
+    billing.record("cost-state", totalCostUSD=6.9)
+    # Closed script runs in one folder: one row.
+    runs = []
+    for i in range(3):
+        run = Transcript(session=f"9{i}e1b2c3", cwd="/home/you/shop", entrypoint="sdk-cli")
+        run.turn(T - 3 * 3600 + 600 * i, text="summarize the CI log", write=24_000, ttl="5m", out=300)
+        run.record("cost-state", totalCostUSD=0.12)
+        runs.append(run)
+    for transcript in (billing, *runs, notes, fix):  # each in its own order: closing records carry no time
+        store.add_all(transcript.records)
     return store
 
 
 def main() -> None:
-    view = ui.View(now=T + 360 + 1500, subscription=True, prices_verified="2026-09-26")
+    view = ui.View(now=T + 480 + 1380, subscription=True, prices_verified="2026-09-26")
     console = Console(record=True, width=WIDTH, height=HEIGHT, color_system="truecolor", file=io.StringIO())
     console.print(ui.render(sessions(), view, HEIGHT, WIDTH))
     if "--text" in sys.argv:

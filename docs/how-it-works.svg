@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 504" width="820" height="504" role="img" aria-labelledby="title desc">
   <title id="title">How usdash works</title>
-  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at list prices, cache misses and why, a cache clock per session, the next message's price, and advice in dollars. It shows a header, the sessions, advice and a feed of requests.</desc>
+  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at list prices, cache misses and why, a cache clock per session, what re-sending each conversation costs, and advice in dollars. It shows a header, live sessions with what to do, idle sessions with what coming back costs, and every request on a key.</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #c5c8c6; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
@@ -60,7 +60,7 @@
     <rect x="46" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
     <text class="step" x="156" y="341">a cache clock per session</text>
     <rect x="300" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
-    <text class="step" x="410" y="341">the next message's price</text>
+    <text class="step" x="410" y="341">what re-sending costs</text>
     <rect x="554" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
     <text class="step" x="664" y="341">advice, in dollars</text>
   </g>
@@ -81,15 +81,15 @@
     <text class="sub" x="116" y="447">today's spend, hit rate,</text>
     <text class="sub" x="116" y="463">what cache misses added</text>
     <rect class="card" x="222" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
-    <text class="label" x="312" y="426">Sessions</text>
-    <text class="sub" x="312" y="447">cache countdown,</text>
-    <text class="sub" x="312" y="463">next message's price</text>
+    <text class="label" x="312" y="426">Live sessions</text>
+    <text class="sub" x="312" y="447">what to do, and what</text>
+    <text class="sub" x="312" y="463">each option costs</text>
     <rect class="card" x="418" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
-    <text class="label" x="508" y="426">Advice</text>
-    <text class="sub" x="508" y="447">switch model, /compact,</text>
-    <text class="sub" x="508" y="463">lower effort, in dollars</text>
+    <text class="label" x="508" y="426">Idle sessions</text>
+    <text class="sub" x="508" y="447">what coming back</text>
+    <text class="sub" x="508" y="463">costs, on each model</text>
     <rect class="card" x="614" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
-    <text class="label" x="704" y="426">Request feed</text>
+    <text class="label" x="704" y="426">Requests (r)</text>
     <text class="sub" x="704" y="447">every request, with</text>
     <text class="sub" x="704" y="463">cache misses marked ⟳</text>
   </g>
