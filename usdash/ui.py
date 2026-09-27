@@ -57,6 +57,15 @@ def _tokens(value: int | float | None) -> str:
     return f"{value / 1000:.0f}k" if value >= 10_000 else f"{value / 1000:.1f}k"
 
 
+def duration_text(seconds: int) -> str:
+    """3600 -> '1h', 5400 -> '90m', 86400 -> '1d': exact, never rounded."""
+    if seconds and seconds % 86400 == 0:
+        return f"{seconds // 86400}d"
+    if seconds and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s"
+
+
 def _ago(seconds: float) -> str:
     seconds = max(0, int(seconds))
     if seconds < 60:
@@ -103,7 +112,9 @@ def header(store: Store, view: View) -> Panel:
     spent = day.get("cost", 0.0)
     hit = day.get("read", 0) / day["prompt"] if day.get("prompt") else None
     rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost > 0.0005}
-    line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), (" est.", "dim"))
+    # One line each: the header has room for exactly two.
+    line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), (" est.", "dim"), no_wrap=True,
+                         overflow="ellipsis")
     if hit is not None:
         line.append(f"  ·  {hit:.0%} of input read from cache", style="green" if hit >= 0.9 else "yellow")
     if rewrites:
@@ -181,7 +192,7 @@ def session_row(store: Store, session: Session, view: View) -> tuple[list[Text],
 
 
 def sessions_panel(store: Store, view: View, sessions: list[Session], rows: int) -> Panel:
-    window = f"{view.window // 3600}h" if view.window >= 3600 else f"{view.window // 60}m"
+    window = duration_text(view.window)
     title = f"sessions active in the last {window} · sub: 1h cache · api: 5m, billed per token"
     if not sessions:
         return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"), title=title, title_align="left")

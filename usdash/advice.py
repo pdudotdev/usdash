@@ -52,7 +52,7 @@ def stint_start(session: Session) -> float | None:
     """When the conversation was last (re-)written on its current model: the
     cache it reads from now dates from then."""
     start = None
-    for request in sorted((r for r in session.requests.values() if not r.subagent), key=lambda r: -r.start):
+    for request in reversed(session.main_requests()):
         if model_key(request.model) != model_key(session.model):
             break
         start = request.start
@@ -84,8 +84,10 @@ def held_extra(store: Store, session: Session, target: str, since: float) -> flo
         return 0.0
     ratio = convert_tokens(1.0, model_key(session.model), target)
     extra = 0.0
-    for request in session.requests.values():
-        if request.subagent or request.start < since or request.cost is None:
+    for request in reversed(session.main_requests()):
+        if request.start < since:
+            break
+        if request.cost is None:
             continue
         if model_key(request.model) != model_key(session.model):
             continue
@@ -161,7 +163,7 @@ def effort_advice(store: Store, session: Session, now: float, memory: Memory) ->
         if move is None:
             continue
         if move.saving < MIN_SAVING:
-            return None
+            continue  # a still lower effort may save enough
         return Advice(session, "effort",
                       f"Lower /effort to {lower}: ≈{money(move.saving)} less per message, "
                       f"no cache cost on {pretty_model(session.model)}.")

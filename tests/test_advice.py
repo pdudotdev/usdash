@@ -1,7 +1,8 @@
 """Advice lines: when each rule speaks up, and what it says."""
+import pytest
 from conftest import T0, Transcript
 
-from usdash import advice
+from usdash import advice, engine
 from usdash.prices import FIVE_MINUTES, ONE_HOUR
 
 
@@ -117,3 +118,35 @@ def test_closed_sessions_get_no_advice(store):
 def test_money_and_clock():
     assert advice.money(0.0415) == "$0.042" and advice.money(-1.5) == "$1.50"
     assert advice.clock(3125) == "52:05" and advice.clock(3600) == "1h00m"
+
+
+def test_effort_advice_skips_a_level_that_saves_too_little(store):
+    session = session_on(store, out=3_000)
+    other = Transcript(session="sess-2")
+    other.turn(T0, effort="medium", write=40_000, out=2_950)  # saves $0.001 per message
+    other.turn(T0 + 60, effort="low", read=40_000, write=500, out=800)  # saves $0.044
+    other.into(store)
+    tip = advice.effort_advice(store, session, LAST_START + 10, advice.Memory())
+    assert tip.text.startswith("Lower /effort to low: ≈$0.044 less per message")
+
+
+def test_a_model_switch_mid_session_does_not_count_as_the_tool_list(store):
+    # Session A in the folder: 120k on Opus, then /model haiku (Haiku writes it all, ~92k).
+    a = Transcript(session="sess-a")
+    a.turn(T0, write=40_000, ttl="5m")
+    a.turn(T0 + 30, read=40_000, write=80_000, ttl="5m")
+    a.turn(T0 + 60, model="claude-haiku-4-5", write=92_000, ttl="5m")
+    a.into(store)
+    first_prompt = 40_002
+    assert store.sessions["sess-a"].prefix == first_prompt
+    # Haiku has A's tool list cached (A's first prompt, in Haiku's tokens), not A's whole conversation.
+    assert store.shared_prefix("/home/user/proj", "claude-haiku-4-5", T0 + 90) == round(first_prompt * 0.77)
+    # Session B, warm on Opus at 50k: moving it to Haiku reads only the tool list
+    # back and writes the rest. (Counting A's whole Haiku conversation as cached
+    # priced all of B's ~42k Haiku tokens as cheap reads.)
+    b = session_on(store, prompts=(40_000, 45_000, 50_000), ttl="5m", session="sess-b", out=500)
+    move = engine.model_move(store, b, "claude-haiku-4-5", LAST_START + 30)
+    size = 55_000 * 0.77  # the next prompt, in Haiku's tokens
+    shared = round(first_prompt * 0.77)
+    expected = (shared * 0.10 + (size - shared) * 1.25 + 500 * 5) / 1e6  # B's replies are 500 tokens
+    assert move.move == pytest.approx(expected)

@@ -62,7 +62,7 @@ def test_old_files_wait_until_they_change_then_are_read_whole(tmp_path):
     path = tmp_path / "p" / "old.jsonl"
     write(path, {"type": "custom-title", "customTitle": "Old work"})
     os.utime(path, (1_000_000, 1_000_000))
-    tailer = Tailer(tmp_path, since=2_000_000)
+    tailer = Tailer(tmp_path, since=2_000_000, scan_every=0)
     assert tailer.poll() == []
     write(path, {"type": "user", "timestamp": "2026-09-27T10:00:00Z"})  # resumed
     assert [r.type for r in tailer.poll()] == ["custom-title", "user"]
@@ -83,3 +83,17 @@ def test_every_fixture_record_type_is_known():
     assert tailer.poll()
     assert not tailer.unknown_types
     assert tailer.bad_lines == 0
+
+
+def test_new_files_are_found_at_the_next_scan_and_followed_files_every_poll(tmp_path):
+    now = [0.0]
+    first = tmp_path / "p" / "s1.jsonl"
+    write(first, {"type": "user", "timestamp": "2026-09-27T10:00:00Z"})
+    tailer = Tailer(tmp_path, scan_every=5, clock=lambda: now[0])
+    assert len(tailer.poll()) == 1
+    write(first, {"type": "user", "timestamp": "2026-09-27T10:00:01Z"})
+    write(tmp_path / "p" / "s2.jsonl", {"type": "user", "timestamp": "2026-09-27T10:00:02Z"})
+    now[0] = 1.0
+    assert [r.session for r in tailer.poll()] == ["s1"]  # between scans: only the followed file
+    now[0] = 6.0
+    assert [r.session for r in tailer.poll()] == ["s2"]  # the scan finds the new one

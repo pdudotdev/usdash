@@ -16,7 +16,7 @@ it, §6 for /compact). Symbols as there:
 from dataclasses import dataclass
 from statistics import median
 
-from .models import EFFORT_KEEPS_CACHE, convert_tokens, model_key, on_cloud_provider
+from .models import convert_tokens, effort_keeps_cache, model_key
 from .prices import FIVE_MINUTES, output_cost, prompt_cost
 from .sessions import Session, Store
 
@@ -55,16 +55,16 @@ class Move:
         return self.penalty / self.saving if self.saving > 0 else None
 
 
-def main_requests(session: Session) -> list:
-    return sorted((r for r in session.requests.values() if not r.subagent), key=lambda r: r.start)
-
-
 def growth(session: Session) -> int:
     """Typical tokens one message adds to the conversation: the median rise
-    between consecutive main-conversation prompts."""
-    prompts = [r.prompt for r in main_requests(session)]
+    between consecutive main-conversation prompts (kept until the session changes)."""
+    if session._growth[0] == session.revision:
+        return session._growth[1]
+    prompts = [r.prompt for r in session.main_requests()]
     rises = [b - a for a, b in zip(prompts, prompts[1:]) if b > a]
-    return int(median(rises)) if rises else DEFAULT_GROWTH
+    value = int(median(rises)) if rises else DEFAULT_GROWTH
+    session._growth = (session.revision, value)
+    return value
 
 
 def typical_output(store: Store, session: Session, model: str | None, effort: str | None = None,
@@ -92,7 +92,7 @@ def conversation(session: Session, now: float) -> tuple[int, int, bool, int, int
     warm = left > 0
     if main.compacted:
         # After /compact only the tool list and system prompt are still cached.
-        prefix = session.prefix_tokens.get(model_key(last.model) or "", 0)
+        prefix = round(session.prefix_on(last.model))
         size = prefix + (session.compact_post_tokens or COMPACT_SUMMARY)
         return size, prefix if warm else 0, warm, max(left, 0), ttl
     size = last.prompt + growth(session)
@@ -136,17 +136,16 @@ def model_move(store: Store, session: Session, target: str, now: float) -> Move 
     shared = min(store.shared_prefix(session.cwd, target, now), size_l)
     add = growth(session)
     out_e = typical_output(store, session, source, session.effort)
-    # With no history on the target, assume the same reply length: the task is the same.
-    out_l = typical_output(store, session, target, default=out_e)
+    # Replies on the target: this session's own, if it has used that model; else
+    # the same length as now. Other sessions' replies on it come from other
+    # tasks (a scripted "say OK" run makes a model look nearly free).
+    out_l = session.average_output(target)
+    out_l = out_e if out_l is None else out_l
     stay, move, saving = move_penalty(
         price_e, price_l, size, cached, size_l, shared, out_e, out_l,
         add, convert_tokens(add, model_key(source), model_key(target)), ttl,
     )
     return Move(target, stay, move, move - stay, saving, warm, left)
-
-
-def effort_keeps_cache(model: str | None) -> bool:
-    return model_key(model) in EFFORT_KEEPS_CACHE and not on_cloud_provider(model)
 
 
 def effort_move(store: Store, session: Session, effort: str, now: float) -> Move | None:

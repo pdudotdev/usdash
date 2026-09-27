@@ -10,6 +10,7 @@ field reads as None.
 """
 import json
 import os
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,6 +31,13 @@ def config_dir() -> Path:
 
 def default_projects_dir() -> Path:
     return config_dir() / "projects"
+
+
+def account_file() -> Path:
+    """Claude Code's account record: inside CLAUDE_CONFIG_DIR when set, else ~/.claude.json."""
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        return config_dir() / ".claude.json"
+    return Path.home() / ".claude.json"
 
 
 def parse_time(value) -> float | None:
@@ -94,7 +102,13 @@ class Tailer:
     and history are in its early lines."""
     root: Path
     since: float = 0.0
+    # How often to look for new transcript files. In between, only the files
+    # already being followed are checked for new lines.
+    scan_every: float = 5.0
+    clock: object = time.monotonic
     files: dict[Path, _Followed] = field(default_factory=dict)
+    known: list[Path] = field(default_factory=list)
+    last_scan: float | None = None
     unknown_types: Counter = field(default_factory=Counter)
     bad_lines: int = 0
 
@@ -104,9 +118,15 @@ class Tailer:
         return sorted([*self.root.glob("*/*.jsonl"), *self.root.glob("*/*/subagents/*.jsonl")])
 
     def poll(self) -> list[Record]:
-        """Everything written since the last poll, oldest file first."""
+        """Everything written since the last poll, in the order it happened."""
+        now = self.clock()
+        if self.last_scan is None or now - self.last_scan >= self.scan_every:
+            self.known, self.last_scan = self.transcripts(), now
+            paths = self.known
+        else:
+            paths = list(self.files)  # between scans: only the files already being followed
         records = []
-        for path in self.transcripts():
+        for path in paths:
             try:
                 stat = path.stat()
             except OSError:

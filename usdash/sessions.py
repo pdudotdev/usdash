@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .models import EFFORT_KEEPS_CACHE, model_key, on_cloud_provider, pretty_model
+from .models import convert_tokens, effort_keeps_cache, model_key, pretty_model
 from .prices import FIVE_MINUTES, ONE_HOUR, request_cost, usage_parts, write_price
-from .transcripts import Record
+from .transcripts import Record, account_file
 
 FEED_HISTORY = 10_000
 # A request re-wrote the conversation when it failed to read back at least
@@ -86,8 +86,7 @@ def rewrite_reason(request: Request, prev: ChainState) -> str:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
     if request.version and prev.version and request.version != prev.version:
         return "Claude Code upgraded"
-    keeps = model_key(request.model) in EFFORT_KEEPS_CACHE and not on_cloud_provider(request.model)
-    if request.effort != prev.effort and prev.effort and not keeps:
+    if request.effort != prev.effort and prev.effort and not effort_keeps_cache(request.model):
         return "effort change"
     return "cause unknown"
 
@@ -159,8 +158,14 @@ class Session:
     chains: dict[str, ChainState] = field(default_factory=lambda: defaultdict(ChainState))
     cost_total: float = 0.0
     cost_by_day: dict[str, float] = field(default_factory=lambda: defaultdict(float))
-    # model family -> the first main-chain prompt on it: mostly the tool list and system prompt
-    prefix_tokens: dict[str, int] = field(default_factory=dict)
+    # The session's first main-conversation prompt, and the model it was on: mostly
+    # Claude Code's tool list and system prompt. Only the first: after a /model
+    # switch, the first prompt on the new model is the whole conversation.
+    prefix: int = 0
+    prefix_model: str | None = None
+    revision: int = 0  # bumped on every change to its requests
+    _main: tuple = field(default=(-1, []), repr=False)
+    _growth: tuple = field(default=(-1, 0), repr=False)  # engine.growth's last answer
     # (model family, effort) -> [output tokens, requests], main chain only
     outputs: dict[tuple, list] = field(default_factory=lambda: defaultdict(lambda: [0, 0]))
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -228,13 +233,29 @@ class Session:
     def last_request(self) -> Request | None:
         return self.requests.get(self.main.key) if self.main.key else None
 
-    def average_output(self, model: str | None, effort: str | None = None) -> float | None:
-        """Output tokens per main-conversation request on this model (and effort, if given)."""
+    def prefix_on(self, model: str | None) -> float:
+        """The tool list and system prompt, counted in `model`'s tokens."""
+        return convert_tokens(self.prefix, model_key(self.prefix_model), model_key(model))
+
+    def main_requests(self) -> list[Request]:
+        """The main conversation's requests, oldest first (kept until the next change)."""
+        if self._main[0] != self.revision:
+            ordered = sorted((r for r in self.requests.values() if not r.subagent), key=lambda r: r.start)
+            self._main = (self.revision, ordered)
+        return self._main[1]
+
+    def output_totals(self, model: str | None, effort: str | None = None) -> tuple[int, int]:
+        """(output tokens, requests) in the main conversation on this model (and effort, if given)."""
         family = model_key(model)
         total = count = 0
         for (m, e), (tokens, n) in self.outputs.items():
             if m == family and (effort is None or e == effort):
                 total, count = total + tokens, count + n
+        return total, count
+
+    def average_output(self, model: str | None, effort: str | None = None) -> float | None:
+        """Output tokens per main-conversation request on this model (and effort, if given)."""
+        total, count = self.output_totals(model, effort)
         return total / count if count else None
 
 
@@ -251,6 +272,8 @@ class Store:
         self.unpriced: Counter = Counter()  # models missing from pricing.yaml
         self.first: float | None = None
         self.added = 0  # requests ever added to the feed (it drops the oldest once full)
+        self.revision = 0  # bumped on every change to any request
+        self._outputs: tuple = (-1, {})  # (revision, (model, effort) -> average output)
 
     def session(self, session_id: str) -> Session:
         if session_id not in self.sessions:
@@ -368,9 +391,8 @@ class Store:
                 chain.compacted = False
         if not record.subagent:
             session.ended = False
-            family = model_key(model)
-            if family and family not in session.prefix_tokens and request.prompt:
-                session.prefix_tokens[family] = request.prompt
+            if not session.prefix and request.prompt:
+                session.prefix, session.prefix_model = request.prompt, model
         session.last_activity = max(session.last_activity or 0, request.end)
         if old is None:
             self.feed.appendleft(request)
@@ -395,6 +417,8 @@ class Store:
 
     def _account(self, session: Session, request: Request, sign: int) -> None:
         """Add a request to (or take it out of) the running totals."""
+        session.revision += 1
+        self.revision += 1
         day = self.days[day_of(request.end)]
         cost = request.cost or 0.0
         day["cost"] += sign * cost
@@ -418,23 +442,26 @@ class Store:
         within its cache lifetime (research/CACHE-DECISIONS.md §7)."""
         family, best = model_key(model), 0
         for session in self.sessions.values():
-            if session.cwd != cwd or family not in session.prefix_tokens:
+            if session.cwd != cwd or not session.prefix:
                 continue
             for chain_id, chain in session.chains.items():
                 if chain_id != session.id or model_key(chain.model) != family or chain.touched is None:
                     continue
                 if now - chain.touched < (chain.ttl or FIVE_MINUTES):
-                    best = max(best, session.prefix_tokens[family])
+                    best = max(best, round(session.prefix_on(model)))
         return best
 
     def average_output(self, model: str | None, effort: str | None = None) -> float | None:
-        family = model_key(model)
-        total = count = 0
-        for session in self.sessions.values():
-            for (m, e), (tokens, n) in session.outputs.items():
-                if m == family and (effort is None or e == effort):
-                    total, count = total + tokens, count + n
-        return total / count if count else None
+        """Output tokens per main-conversation request on this model (and effort), across all sessions."""
+        if self._outputs[0] != self.revision:
+            self._outputs = (self.revision, {})
+        key = (model_key(model), effort)
+        cache = self._outputs[1]
+        if key not in cache:
+            totals = [session.output_totals(model, effort) for session in self.sessions.values()]
+            tokens, count = sum(t for t, _ in totals), sum(n for _, n in totals)
+            cache[key] = tokens / count if count else None
+        return cache[key]
 
     def apply_desktop(self, desktop: dict[str, dict]) -> None:
         """Titles and archive state from the Desktop app's own session files."""
@@ -465,7 +492,7 @@ def desktop_sessions(root: Path | None = None) -> dict[str, dict]:
 def subscription_account(config: Path | None = None) -> bool:
     """Whether Claude Code is logged in to a Claude subscription (Pro/Max/Team).
     Reads only two fields of the account record, never names or email."""
-    path = config or Path.home() / ".claude.json"
+    path = config or account_file()
     try:
         account = json.loads(path.read_text()).get("oauthAccount") or {}
     except (OSError, ValueError, AttributeError):

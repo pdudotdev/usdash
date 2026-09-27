@@ -53,3 +53,8 @@ def convert_tokens(tokens: float, source: str | None, target: str | None) -> flo
     if small_source == small_target:
         return tokens
     return tokens * TO_SMALL_TOKENIZER if small_target else tokens / TO_SMALL_TOKENIZER
+
+
+def effort_keeps_cache(model: str | None) -> bool:
+    """Whether Claude Code keeps the cache across an effort change on this model."""
+    return model_key(model) in EFFORT_KEEPS_CACHE and not on_cloud_provider(model)

@@ -1,5 +1,6 @@
 """The screen, rendered to text, and the CLI."""
 import json
+from datetime import datetime
 
 import pytest
 from conftest import PROJECTS, T0, Transcript
@@ -7,6 +8,8 @@ from rich.console import Console
 
 from usdash import app, ui
 from usdash.prices import ONE_HOUR
+from usdash.sessions import subscription_account
+from usdash.transcripts import account_file
 
 
 def screen(store, view, width=220, height=40) -> str:
@@ -134,8 +137,48 @@ def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
 def test_claude_config_dir_moves_the_account_file(monkeypatch, tmp_path):
     (tmp_path / ".claude.json").write_text(json.dumps({"oauthAccount": {"organizationType": "claude_max"}}))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-    assert app.claude_json() == tmp_path / ".claude.json"
+    assert account_file() == tmp_path / ".claude.json"
+    assert subscription_account()  # its default follows CLAUDE_CONFIG_DIR too
     assert app.App(PROJECTS, since=0, window=ONE_HOUR, clock=lambda: T0).view.subscription
+
+
+@pytest.mark.parametrize(("seconds", "text"), [(3600, "1h"), (5400, "90m"), (10800, "3h"), (86400, "1d"), (1800, "30m")])
+def test_window_labels_are_exact(seconds, text):
+    assert ui.duration_text(seconds) == text
+
+
+def test_a_90_minute_window_is_labelled_as_such(store):
+    two_sessions(store)
+    assert "sessions active in the last 90m" in screen(store, ui.View(now=T0 + 660, window=5400))
+    assert "no Claude Code activity in the last 90m" in screen(store, ui.View(now=T0 + 10 * 3600, window=5400))
+
+
+def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
+    t = Transcript()
+    t.turn(T0, write=40_000)
+    t.turn(T0 + 60, model="claude-sonnet-5", write=41_000)  # model switch
+    t.turn(T0 + 7300, model="claude-sonnet-5", write=42_000)  # cache expired
+    t.record("system", T0 + 7310, subtype="compact_boundary", compactMetadata={"postTokens": 2_000})
+    t.turn(T0 + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
+    t.into(store)
+    text = screen(store, ui.View(now=T0 + 7400, prices_verified="2026-09-26"), width=90)
+    assert "re-writes cost" in text
+    assert "list prices of 2026-09-26" in text
+
+
+@pytest.mark.parametrize(
+    ("now", "since", "window", "start"),
+    [
+        # 00:30 with a 3-hour window: reach back to 21:30 the day before, not just midnight.
+        (datetime(2026, 9, 28, 0, 30).timestamp(), None, 3 * 3600, datetime(2026, 9, 27, 21, 30).timestamp()),
+        # 15:00: midnight is further back than the window.
+        (datetime(2026, 9, 28, 15, 0).timestamp(), None, 3 * 3600, datetime(2026, 9, 28, 0, 0).timestamp()),
+        # --since wins.
+        (datetime(2026, 9, 28, 15, 0).timestamp(), 86400, 3 * 3600, datetime(2026, 9, 27, 15, 0).timestamp()),
+    ],
+)
+def test_history_reaches_back_to_the_window_after_midnight(now, since, window, start):
+    assert app.history_start(now, since, window) == start
 
 
 def test_long_advice_wraps_instead_of_being_cut(store):

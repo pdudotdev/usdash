@@ -182,3 +182,15 @@ def test_payback():
     assert move.payback == pytest.approx(10)
     assert engine.Move("x", 0.1, 0.05, -0.05, 0.01, True, 100).payback == 0
     assert engine.Move("x", 0.1, 0.2, 0.1, 0.0, True, 100).payback is None
+
+
+def test_other_sessions_short_replies_dont_make_a_model_look_cheap(store):
+    session = opus_session(store, out=2_000)
+    scripted = Transcript(session="sess-2", cwd="/home/user/other")
+    scripted.turn(T0, model="claude-haiku-4-5", write=30_000, out=5)  # a "say OK" run
+    scripted.into(store)
+    move = engine.model_move(store, session, "claude-haiku-4-5", T0 + 130)
+    # Haiku is assumed to reply at this session's length (2,000 tokens), not 5.
+    later_opus = (43_000 * 0.2 + 1_000 * 8 + 2_000 * 20) / 1e6
+    later_haiku = (33_110 * 0.1 + 770 * 2 + 2_000 * 5) / 1e6
+    assert move.saving == pytest.approx(later_opus - later_haiku, abs=1e-5)

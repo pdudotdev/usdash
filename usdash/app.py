@@ -26,7 +26,7 @@ from rich.live import Live
 
 from .prices import load_prices, prices_verified
 from .sessions import Store, desktop_sessions, subscription_account
-from .transcripts import Tailer, config_dir, default_projects_dir
+from .transcripts import Tailer, default_projects_dir
 from .ui import View, press, render, track_feed
 
 POLL_SECONDS = 1.0
@@ -81,9 +81,13 @@ def start_of_today(now: float) -> float:
     return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
-def claude_json() -> Path:
-    """Where Claude Code keeps its account record: inside CLAUDE_CONFIG_DIR when set, else ~/.claude.json."""
-    return config_dir() / ".claude.json" if os.environ.get("CLAUDE_CONFIG_DIR") else Path.home() / ".claude.json"
+def history_start(now: float, since: int | None, window: int) -> float:
+    """Where to start reading: --since ago if given, else midnight, but never
+    later than the start of the window, so a session from before midnight that
+    is still inside the window (and maybe still warm) is shown."""
+    if since:
+        return now - since
+    return min(start_of_today(now), now - window)
 
 
 class App:
@@ -91,7 +95,7 @@ class App:
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
         self.store = Store(load_prices())
-        self.view = View(now=clock(), subscription=subscription_account(claude_json()), window=window,
+        self.view = View(now=clock(), subscription=subscription_account(), window=window,
                          prices_verified=prices_verified())
         self.desktop_read = 0.0
 
@@ -123,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     now = time.time()
-    since = now - args.since if args.since else start_of_today(now)
+    since = history_start(now, args.since, args.window)
     projects = (args.projects or default_projects_dir()).expanduser()
     app = App(projects, since, args.window)
     if not projects.is_dir():
