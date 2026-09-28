@@ -108,7 +108,7 @@ def test_compact_restarts_the_cache_clock_from_when_it_started(store):
 
 
 def test_compact_now_or_after_a_break(store):
-    # research/CACHE-DECISIONS.md §6: 139k on Opus 5.5, a ~3k-token summary.
+    # research/AI-TOKENOMICS-GUIDE.md §16: 139k on Opus 5.5, a ~3k-token summary.
     earlier = Transcript(session="sess-2")
     earlier.record("system", T0 - 600, subtype="compact_boundary", compactMetadata={"postTokens": 3_000, "preTokens": 140_000})
     earlier.into(store)
@@ -141,7 +141,7 @@ def test_compact_reads_back_only_up_to_the_latest_turn(store):
 
 def test_the_summary_size_is_learned_and_grows_with_the_conversation(store):
     # Nothing seen yet: 3% of the conversation, at least 3,800 and at most 16,000
-    # (research/CACHE-DECISIONS.md §7: 3.8k at ~58k, 14k at 450k, 16k at 972k).
+    # (research/AI-TOKENOMICS-GUIDE.md, Appendix B: 3.8k at ~58k, 14k at 450k, 16k at 972k).
     assert [store.summary_size(n) for n in (58_000, 450_000, 972_000)] == [3_800, 13_500, 16_000]
     store.summaries.update({"u1": (58_000, 3_807), "u2": (450_000, 13_984)})
     assert store.summary_size(60_000) == 3_807

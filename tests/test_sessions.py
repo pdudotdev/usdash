@@ -505,7 +505,7 @@ def test_scripted_sessions(store):
     assert not store.sessions["e"].scripted
 
 
-# --- Long turns and long subagents (research/CACHE-DECISIONS.md §6) --------------------
+# --- Long turns and long subagents (research/AI-TOKENOMICS-GUIDE.md §7, §17) ------------
 
 
 def test_a_long_skill_turn_stays_warm_while_each_step_starts_in_time(store):

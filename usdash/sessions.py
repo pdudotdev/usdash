@@ -34,7 +34,7 @@ SNIPPET = 60
 WORKING_QUIET = 30 * 60
 # The summary /compact writes, when no compaction of a conversation this size
 # has been seen: a share of the conversation, within bounds. Fitted to the
-# compactions on the machine usdash was built on (research/CACHE-DECISIONS.md §7).
+# compactions on the machine usdash was built on (research/AI-TOKENOMICS-GUIDE.md, Appendix B).
 SUMMARY_SHARE, SUMMARY_MIN, SUMMARY_MAX = 0.03, 3_800, 16_000
 
 
@@ -733,7 +733,7 @@ class Store:
     def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
         """Tokens of `session`'s next request that `model` likely has cached
         when its conversation's own cache can't be read: its tool list
-        (research/CACHE-DECISIONS.md §7). What usually happens, not what's
+        (research/AI-TOKENOMICS-GUIDE.md, Appendix B). What usually happens, not what's
         certain:
 
         - on its own model with a 1-hour cache, the tool list was read back
