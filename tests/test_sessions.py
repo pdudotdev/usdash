@@ -321,6 +321,46 @@ def test_web_searches_are_charged_on_top_of_tokens(store):
     assert request.cost == pytest.approx((40_000 * 8 + 2 * 4) / 1e6 + 3 * 0.01)
 
 
+def test_what_says_claude_code_is_still_at_work(store):
+    t = Transcript()
+    t.turn(T0, write=40_000, stop="tool_use")  # a reply that calls a tool
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert session.working(T0 + 400)  # the tool runs on, past a 5-minute cache
+    t.tool_result(T0 + 400)
+    t.into(store)
+    assert session.working(T0 + 450)  # its result is in; Claude's answer is on its way
+    t.reply(T0 + 460, read=40_000, write=500, stop="end_turn")
+    t.into(store)
+    assert not session.working(T0 + 470)  # the turn is done: waiting for you
+    t.turn(T0 + 500, write=100, stop="tool_use")
+    t.user([{"type": "tool_result", "tool_use_id": "t1", "content": "stopped", "is_error": True},
+            {"type": "text", "text": "[Request interrupted by user for tool use]"}], T0 + 510)
+    t.into(store)
+    assert not session.working(T0 + 520)  # interrupted
+    t.turn(T0 + 600, write=100, stop="tool_use")
+    t.user("<command-name>/model</command-name><command-args>sonnet</command-args>", T0 + 610)
+    t.into(store)
+    assert session.working(T0 + 620)  # a command typed meanwhile says nothing either way
+
+
+def test_a_session_quiet_too_long_is_not_at_work(store):
+    t = Transcript()
+    t.turn(T0, write=40_000, stop="tool_use")  # e.g. it was killed while the tool ran
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert session.working(T0 + 29 * 60) and not session.working(T0 + 31 * 60)
+    # A subagent's records count: while it works, so does the session.
+    sub = Transcript()
+    sub.reply(T0 + 40 * 60, subagent="agent-1", write=5_000)
+    sub.into(store)
+    assert session.working(T0 + 50 * 60)
+    closing = Transcript()
+    closing.record("cost-state", totalCostUSD=1.0)
+    closing.into(store)
+    assert not session.working(T0 + 50 * 60)  # it exited
+
+
 def test_scripted_sessions(store):
     for session_id, entrypoint in (("a", "cli"), ("b", "claude-vscode"), ("c", "claude-desktop"), ("d", "sdk-cli")):
         t = Transcript(session=session_id, entrypoint=entrypoint)

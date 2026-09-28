@@ -28,6 +28,9 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
 SNIPPET = 60
+# A session still at work goes this long without a new record, its subagents' included,
+# at most: longer, and it was stopped mid-tool (killed, or its window closed).
+WORKING_QUIET = 30 * 60
 # The summary /compact writes, when no compaction of a conversation this size
 # has been seen: a share of the conversation, within bounds. Fitted to the
 # compactions on the machine usdash was built on (research/CACHE-DECISIONS.md §7).
@@ -154,6 +157,26 @@ def prompt_text(record: Record) -> str | None:
     return " ".join(text.split()) or None if text else None
 
 
+def at_work_after(record: Record) -> bool | None:
+    """Whether Claude Code is still at work after this main-conversation
+    record: a reply that ended calling tools (a tool or a subagent runs), or
+    tool results it hasn't answered yet. False after a reply that ended the
+    turn, or an interrupt. None if the record doesn't say: a typed prompt
+    looks the same as a command that never reaches the API (/model)."""
+    data = record.data
+    message = data.get("message") or {}
+    if record.type == "assistant":
+        return message.get("stop_reason") == "tool_use"
+    content = message.get("content")
+    blocks = content if isinstance(content, list) else [{"type": "text", "text": content or ""}]
+    texts = " ".join(str(block.get("text", "")) for block in blocks if isinstance(block, dict))
+    if "[Request interrupted" in texts:
+        return False
+    if any(isinstance(block, dict) and block.get("type") == "tool_result" for block in blocks):
+        return True
+    return None
+
+
 def snippet(text: str | None, width: int = SNIPPET) -> str | None:
     if not text:
         return None
@@ -177,6 +200,8 @@ class Session:
     last_prompt_at: float | None = None
     last_activity: float | None = None
     ended: bool = False  # Claude Code wrote its closing cost-state, and nothing since
+    at_work: bool = False  # running a tool or a subagent, or answering their results (at_work_after)
+    heard: float | None = None  # the latest record's time, its subagents' included
     cost_state: float | None = None  # Claude Code's own total, written when the session exits
     cost_at_state: float = 0.0  # cost_total when Claude Code last wrote it
     compact_post_tokens: int | None = None
@@ -269,6 +294,12 @@ class Session:
             touched, ttl = last.start, last.ttl or self.main.ttl
         return touched is not None and now - touched < (ttl or FIVE_MINUTES)
 
+    def working(self, now: float) -> bool:
+        """Whether Claude Code is still at work in this session: a tool or a
+        subagent running, or an answer to their results on its way."""
+        return (self.at_work and not self.ended and self.heard is not None
+                and now - self.heard < WORKING_QUIET)
+
     @property
     def total(self) -> float:
         """What the session has cost since it started: Claude Code's own total
@@ -329,6 +360,11 @@ class Store:
                     setattr(session, attr, value)
                     if attr in ("cwd", "entrypoint"):
                         self.revision += 1  # memo()s group sessions by these
+        if record.when is not None:
+            session.heard = max(session.heard or 0, record.when)
+        if kind in ("user", "assistant") and not record.subagent and not data.get("isSidechain"):
+            if (at_work := at_work_after(record)) is not None:
+                session.at_work = at_work
         if kind == "assistant":
             return self._add_assistant(session, record)
         if kind == "user":

@@ -62,7 +62,7 @@ def test_sections_and_counts(store):
     text = screen(store, ui.View(now=NOW))
     # Two panes, live above idle, each with its own column names, lined up with each other.
     titles = [line for line in text.splitlines() if line.startswith("╭─ live") or line.startswith("╭─ idle")]
-    assert [title.split(" ─")[0] for title in titles] == ["╭─ live · 1 session", "╭─ idle · 1 session · last 24h"]
+    assert [title.split(" ─")[0] for title in titles] == ["╭─ live · 1 session", "╭─ idle · 1 session · last 5d"]
     names = [line for line in text.splitlines() if "SESSION" in line and "CACHE" in line]
     assert len(names) == 2 and names[0] == names[1]
 
@@ -141,7 +141,7 @@ def test_closed_script_runs_fold_into_one_row(store):
     assert "3 runs" in rows[1] and "jobs" in rows[1] and "exited · " in rows[1]
     assert "summarize the log" in rows[0]  # an open run shows like any session
     assert text.count("└ ") == 1  # only the open run has a line under it
-    assert "idle · 2 sessions · last 24h" in text and "╭─ live" not in text  # no live pane without a live session
+    assert "idle · 2 sessions · last 5d" in text and "╭─ live" not in text  # no live pane without a live session
 
 
 def test_archived_and_long_idle_sessions_are_hidden(store):
@@ -150,7 +150,7 @@ def test_archived_and_long_idle_sessions_are_hidden(store):
     text = screen(store, ui.View(now=NOW))
     assert "Release notes" not in text  # gone from the sessions (its requests stay in the feed)
     assert "Fix checkout totals" in text
-    assert "no Claude Code activity in the last 24h" in screen(store, ui.View(now=T0 + 25 * 3600))
+    assert "no Claude Code activity in the last 5d" in screen(store, ui.View(now=T0 + 6 * 86400))
 
 
 def test_a_narrow_terminal_cuts_lines_and_never_wraps(store):
@@ -194,6 +194,16 @@ def test_the_compact_warning_sits_between_the_prompt_and_the_prices(store):
     assert lines[1].startswith('├ 3m ago · "and summarise it"')
     assert lines[2].startswith("├ ⚡ Taking a break? /compact first: ≈$") and lines[2].endswith("once the cache expires in 2:00.")
     assert lines[3].startswith("└ next message re-sends 140k tokens: ")
+
+
+def test_a_session_still_at_work_after_its_cache_expired_says_so(store):
+    t = Transcript(session="wwww-1111", cwd="/home/user/other")
+    t.turn(T0, text="run the slow step", write=40_000, ttl="5m", stop="tool_use")  # a tool that runs 6 minutes
+    t.into(store)
+    row = block(screen(store, ui.View(now=T0 + 370)), "wwww")[0]
+    assert "○ expired · working" in row
+    row = block(screen(store, ui.View(now=T0 + 40 * 60)), "wwww")[0]
+    assert "○ expired · 39m" in row  # 39 minutes without a word: no longer at work
 
 
 def test_a_fast_session_says_so(store):
@@ -432,11 +442,11 @@ def test_history_reaches_back_to_the_window_after_midnight(now, since, window, s
     assert app.history_start(now, since, window) == start
 
 
-def test_the_default_window_is_24_hours(capsys, monkeypatch, tmp_path):
+def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
     folder = tmp_path / "projects" / "-home-user-proj"
     folder.mkdir(parents=True)
     now = time.time()
-    for session, hours, text in (("recent", 20, "from yesterday"), ("older", 25, "from the day before")):
+    for session, hours, text in (("recent", 4 * 24, "from 4 days ago"), ("older", 6 * 24, "from 6 days ago")):
         t = Transcript(session=session)
         t.turn(now - hours * 3600, text=text, write=40_000)
         (folder / f"{session}.jsonl").write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
@@ -444,4 +454,4 @@ def test_the_default_window_is_24_hours(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("COLUMNS", "200")
     app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
     out = capsys.readouterr().out
-    assert "idle · 1 session · last 24h" in out and "from yesterday" in out and "from the day before" not in out
+    assert "idle · 1 session · last 5d" in out and "from 4 days ago" in out and "from 6 days ago" not in out

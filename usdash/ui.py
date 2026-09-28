@@ -1,6 +1,6 @@
 """The screen: a header, then either the sessions (the default) or every request.
 
-Sessions from the last 24 hours, newest first, in two panes. A live session
+Sessions from the last 5 days, newest first, in two panes. A live session
 (cache warm, not exited) opens up: what you last typed there, what to do, and
 what each option costs. An idle one gets a line with what coming back to it
 costs. Finished script runs fold into one row per folder. `r` swaps in the
@@ -27,6 +27,7 @@ MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bri
 APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
 HEADER_HEIGHT = 5  # three lines and the frame
+DEFAULT_WINDOW = 5 * 86400  # sessions active this recently are listed
 PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
 
@@ -37,7 +38,7 @@ class View:
     view is showing, and where each one is scrolled to."""
     now: float
     subscription: bool = False
-    window: int = 24 * 3600  # sessions idle longer than this are hidden
+    window: int = DEFAULT_WINDOW  # sessions idle longer than this are hidden
     prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
     docs_changed: list[str] = field(default_factory=list)  # Anthropic's pages that no longer read as expected
     unknown_types: int = 0
@@ -224,6 +225,8 @@ def cache_cell(session: Session, view: View) -> Text:
         return Text(f"exited · {age}", style="dim")
     if warm:
         return Text(f"● {clock(left)}", style="green")
+    if session.working(view.now):  # its next request will re-write it all
+        return Text.assemble(("○ expired · ", "red"), ("working", "yellow"))
     return Text(f"○ expired · {age}", style="red")
 
 

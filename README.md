@@ -31,7 +31,7 @@ It reads Claude Code's files, plus two pages of Anthropic's public docs once at 
 
 ## 🔭 Overview
 
-usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 24 hours: the ones you're in, with what the next message costs on each model, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
+usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 5 days: the ones you're in, with what the next message costs on each model, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
 
 ▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
 
@@ -48,7 +48,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `Desktop (no folder)` for a Desktop session without one |
 | **WHERE** | Where it runs: `CLI` (a terminal), `IDE` (the VS Code extension), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs); `?` if the transcript doesn't say |
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
-| **CACHE** | `● mm:ss` while the prompt cache is warm; `○ expired · 2h` once it has run out, in a session that's still open; `exited · 3h` after you quit it (`/exit` or closing the window). The age is how long ago the session was last used. Either way, the next message re-writes the whole conversation |
+| **CACHE** | `● mm:ss` while the prompt cache is warm; `○ expired · 2h` once it has run out, in a session that's still open (`○ expired · working` while Claude Code is still busy there: a tool or subagent running, or its answer to their results on its way); `exited · 3h` after you quit it (`/exit` or closing the window). The age is how long ago the session was last used. Either way, the next message re-writes the whole conversation |
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
 
@@ -154,7 +154,7 @@ pip install .
 
 ▫️ **Step 2 - Run it next to your sessions:**
 ```
-usdash                    # the last 24 hours, then live
+usdash                    # the last 5 days, then live
 ```
 
 > ⚠️ **NOTE:** The `usdash` command lives in the virtual environment, so a new terminal says `command not found` until you run `source .venv/bin/activate` in the `usdash` folder. To run it from anywhere, link it onto your PATH once, from that folder: `mkdir -p ~/.local/bin && ln -s "$PWD/.venv/bin/usdash" ~/.local/bin/usdash` (and add `~/.local/bin` to your PATH if it isn't there).
@@ -162,7 +162,7 @@ usdash                    # the last 24 hours, then live
 | Option | Meaning | Default |
 |---|---|---|
 | `--since 2d` | How much history to load first (`m`, `h` or `d`); never less than `--window` | `--window`, or since midnight if that's earlier |
-| `--window 8h` | Show sessions active this recently | `24h` |
+| `--window 8h` | Show sessions active this recently | `5d` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--once` | Print one screen and exit | off |
 | `--offline` | Don't read Anthropic's docs at start; use their last copies (the header shows the prices' date) | off |
@@ -232,6 +232,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 `promptCacheTtl` (or `CLAUDE_CODE_PROMPT_CACHE_TTL`) changes the main conversation's lifetime; usdash reads the lifetime each session really uses from its usage data. The clock restarts at the **start** of every request that uses the cache:
 - A long skill run stays warm, since each tool step is a new request, unless a single step or tool runs longer than the lifetime
 - A subagent refreshes its own cache, not the parent's: a parent waiting on a long subagent can go cold
+- Either way, a session whose cache runs out while Claude Code is still busy there moves to the idle pane as `○ expired · working`: its next request will write the conversation again. usdash tells busy from the transcript: a reply that called a tool (a subagent is one) whose result isn't back yet, or results not yet answered. After 30 minutes without a new record, its subagents' included, it no longer counts as busy (the session was likely stopped mid-tool)
 
 ▫️ **Switching model mid-conversation**
 
@@ -260,7 +261,7 @@ Run the tests with `pip install -r requirements-dev.txt && pytest -q`, and print
 
 ## ⬆️ Planned Upgrades
 - [x] Live cache countdown, and what the next message costs on each model
-- [x] A session-first screen: the last 24 hours, what coming back to each session costs
+- [x] A session-first screen: the last 5 days, what coming back to each session costs
 - [x] Prices and the current models read from Anthropic's docs at start, with a saved copy to fall back on
 - [ ] Bedrock and Google Cloud prices: the 10% regional premium, and inference-profile ARNs mapped to their model
 - [ ] Advice for `/clear` on a new topic, and for a subagent instead of `/model` on a side task

@@ -1,8 +1,8 @@
 """usdash: a live terminal dashboard of your own Claude Code costs and prompt caches.
 
-    usdash                  # the last 24 hours of sessions, then live
+    usdash                  # the last 5 days of sessions, then live
     usdash --since 2d       # load more history first
-    usdash --window 8h      # show sessions active this recently (default 24h)
+    usdash --window 8h      # show sessions active this recently (default 5d)
     usdash --once           # print one screen and exit (no live view)
     usdash --offline        # don't read Anthropic's docs; use the last ones read
 
@@ -32,7 +32,7 @@ from .facts import Facts, load_facts
 from .prices import load_pricing
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
-from .ui import View, press, render, track_feed
+from .ui import DEFAULT_WINDOW, View, press, render, track_feed
 
 POLL_SECONDS = 1.0
 DESKTOP_SECONDS = 10.0  # how often to re-read the Desktop app's session titles
@@ -170,8 +170,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
     parser.add_argument("--since", type=duration,
                         help="history to load first, e.g. 2d (default: --window, or since midnight if that's earlier)")
-    parser.add_argument("--window", type=duration, default=24 * 3600,
-                        help="show sessions active this recently, e.g. 3h or 2d (default: 24h)")
+    parser.add_argument("--window", type=duration, default=DEFAULT_WINDOW,
+                        help="show sessions active this recently, e.g. 3h or 2d (default: 5d)")
     parser.add_argument("--projects", type=Path, default=None,
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")

@@ -60,9 +60,9 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
 | 21 | 5-minute cache: `/slow-steps` (six `sleep 100` calls, about 10 minutes in all) | A row per step. No `⟳ re-wrote` notes, CACHED stays near 100%, and CACHE jumps back to about `● 4:5x` after every step | A turn is many API requests; each step reads the cache and restarts its clock, so a long turn stays warm while each step starts in time |
-| 22 | 5-minute cache: `/slow-tool` (one `sleep 330`) | During the sleep, the session moves to the idle pane, `○ expired`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded) and the header's `cache misses added` total goes up | The clock counts from the start of the step that ran the tool. Nothing refreshes it while the tool runs |
+| 22 | 5-minute cache: `/slow-tool` (one `sleep 330`) | During the sleep, the session moves to the idle pane, `○ expired · working`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded) and the header's `cache misses added` total goes up | The clock counts from the start of the step that ran the tool. Nothing refreshes it while the tool runs |
 | 23 | 1-hour cache (plain `claude` on a subscription): `/slow-tool` | CACHE counts down from about `● 59:xx` and stays warm; no `⟳ re-wrote` note | 5½ minutes is well inside a 1-hour cache |
-| 24 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them re-writes. The parent goes `○ expired` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
+| 24 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them re-writes. The parent goes `○ expired · working` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
 | 25 | 1-hour cache: repeat test 24 | The parent stays warm, and its next row has no `⟳ re-wrote` note | The parent's 1-hour cache outlasts a 10-minute subagent |
 
 ### Coming back, and the window
@@ -72,7 +72,7 @@ These check how usdash counts the cache clock when one turn runs longer than the
 | 26 | `/exit` a session with some context, then `claude --resume` it within a minute and send a message | Record what its first row read from cache. If most of the prompt was read back, a quick resume costs less than the idle line said (it shows the full re-send, the worst case) | Settles whether a session closed less than a cache lifetime ago can still read its cache |
 | 27 | Resume a large idle session (100k+) after its cache has expired | Its first row's COST is about the idle line's amount for its model, plus your message and the reply | The idle line is exact: resuming re-sends the whole conversation |
 | 28 | Scroll the sessions a few rows, press `r`, scroll the request list, then press `r` twice | Each view comes back where you left it | The two views keep their own place |
-| 29 | Run `usdash` with no options while a session from yesterday afternoon (under 24 hours ago) and one from two days ago exist | The title says `last 24h`; yesterday's session is listed, the older one isn't | The default window is 24 hours |
+| 29 | Run `usdash` with no options while a session from 4 days ago and one from 6 days ago exist | The idle pane's title says `last 5d`; the 4-day-old session is listed, the 6-day-old one isn't | The default window is 5 days |
 
 ### Prices, fast mode and web search
 
