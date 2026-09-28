@@ -30,6 +30,10 @@ usage. The long-turn checks (23–27) take about 10 minutes each.
   `~/.claude/projects/<its folder's path, with / and spaces as ->/<session id>.jsonl`
   (`ls -t ~/.claude/projects/*/*.jsonl | head` lists the newest), one JSON record
   per line; a reply's token counts are in `message.usage`.
+- **Transcript saving:** a terminal started from inside a Claude Code session
+  inherits `CLAUDE_CODE_CHILD_SESSION`, and sessions started from it save no
+  transcript (they show `⚠ Transcript saving is off`), so they never appear.
+  Start the terminals for these checks fresh.
 - **Report** each check as pass, fail (what you saw instead) or skipped (why).
 
 **Prices to check amounts against** (per million tokens): Opus 5.5 reads its
@@ -43,10 +47,10 @@ uses the 1-hour cache, an API key the 5-minute one.
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
 | 1 | In a git repo (say `shop`, on `main`), start two sessions, and a third in a worktree of it on another branch (`git worktree add ../shop-fix -b fix`). Send a different message in each | Three sessions in the live pane. PROJECT says `shop`, `shop`, `shop-fix@fix`, and the `├` line under each shows the message you sent there, so you can tell them apart without the ID | Rows must map to your windows, not to session ids |
-| 2 | In one of them, `/rename parser work` | Within about 2 seconds its SESSION becomes `parser work` | A rename beats Claude Code's automatic title |
+| 2 | In one of them, `/rename parser work`. Then start a new session, run `/model` as its first command, and send a message | Within about 2 seconds the first one's SESSION becomes `parser work`. The new one is never named `/model`: it's named after your message until Claude Code's title arrives | A rename beats Claude Code's automatic title; a built-in command says nothing about the task (a skill with arguments does) |
 | 3 | `[GUI]` Start one session each in a terminal, the VS Code extension's chat panel (not `claude` in its terminal: that's `CLI`) and the Desktop app's Code tab (the Desktop one without choosing a folder), and send a message in each | All three appear within about 5 seconds. WHERE says `CLI`, `IDE` and `Desktop`; the Desktop one's PROJECT says `no folder`, and within about 10 seconds its SESSION shows its title in the app's sidebar | Every local surface writes to the same transcripts folder |
 | 4 | In one folder, run `claude -p "say hi"` twice | One row for both in the exited pane: `2 runs`, WHERE `script`, CACHE `exited · …`, TOTAL the two runs' costs added | A loop of script runs mustn't bury the real sessions |
-| 5 | `[remote]` Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal | That session appears; your laptop's sessions don't | usdash shows the sessions of the machine it runs on |
+| 5 | `[remote]` Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal. Then do the same from the Desktop app's SSH connection to it | Both sessions appear there (the Desktop one under Claude Code's own title); your laptop's sessions don't, and neither remote session appears on the laptop | usdash shows the sessions of the machine it runs on; both run Claude Code on the remote machine |
 | 6 | `[GUI]` In the Desktop app, archive a session that usdash lists | Within about 10 seconds it leaves the sessions; its requests stay in the request list | An archived session is done with |
 | 7 | Run `usdash --once`, then `usdash --window 30m --once` | First: the last pane's title says `last 5d`, and no session's CACHE age is over 5 days. Then: only sessions used in the last 30 minutes, and the last pane's title says `last 30m` (with no session at all: `no Claude Code activity in the last 30m`) | The default window is 5 days; `--window` changes it |
 
@@ -76,7 +80,7 @@ uses the 1-hour cache, an API key the 5-minute one.
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 20 | Press `r`. While another session works, scroll down a few rows (`j`), then press `g` | While scrolled: the title says `paused · rows …`, the rows in view stay put as new ones arrive, and the new ones are counted as `… new above`. After `g`: the newest row is on top again | Reading back must not jump while requests arrive |
+| 20 | Press `r`. While another session works, scroll down a few rows (`j`), then press `g` | While scrolled: the title says `paused · rows …`, the rows in view stay put as new ones arrive, and the new ones are counted as `… new above`. After `g`: the newest row is on top again. Press `G`: a `── <day> ──` line above the first row of each earlier day, and one above the top row whenever it's from an earlier day | Reading back must not jump while requests arrive; TIME has no date |
 | 21 | Ask a session for two subagents in parallel: one waits 30 seconds, the other 60 (in Bash, with `python3 -c 'import time; time.sleep(30)'`), and each then replies "done" | `🤖 subagent` rows from both, and TIME never goes up as you read down the list | Rows are in the order their requests started, including those from a subagent's transcript found a few seconds late |
 | 22 | Scroll the sessions down a session or two (`j`), press `r`, scroll the request list, then press `r` twice | Each view comes back where you left it | Each view keeps its own place |
 
@@ -101,7 +105,7 @@ These check the cache clock when one turn runs longer than the cache lifetime. O
 | 28 | Start `usdash --once` with the network off, then `usdash --once --offline` with it on | The header's second line says `API list prices of <date> (couldn't refresh them)`, then `(offline)`: the date of the last prices read. Every amount is the same as with the network on | It falls back to the last prices it read, and says how fresh they are |
 | 29 | Start `usdash --once` with the network on, then read `~/.cache/usdash/docs.json` | The header says `current API list prices`. The file has today's date under `pricing` and `models`, and `models` lists the models overview's comparison table, most capable first | The copy it falls back to is refreshed on every start |
 | 30 | `[record]` In an Opus 5.5 session, turn `/fast` on and send a message. Then `/model`, pick Opus 5 (it has fast mode too), and send another | With fast on: MODEL says `Opus 5.5 … fast`, the request list shows `⟳ … speed change` and about twice the usual cost, and the next message on Opus 5.5 costs about twice as much. After `/model`: report whether the Opus 5 row says `fast` | Fast mode is priced from each reply's `usage.speed`. The next message on Opus 5 or Opus 4.8 is priced as if fast mode stays on; this settles whether it does |
-| 31 | `[record]` Ask Claude Code to search the web for something, then `/exit` | The request list shows `🔍 N web searches (+$…)` on that reply, and its COST is its tokens plus $0.01 a search. If there's no 🔍, report that reply's `message.usage` from the transcript | Server-side web search costs $10 per 1,000 searches on top of tokens; this settles whether Claude Code's search is logged that way |
+| 31 | Ask Claude Code to search the web for something, then `/exit` | The request list shows `🔍 N web searches (cost not logged)` on the reply that called WebSearch. After `/exit`, TOTAL (Claude Code's figure) is higher than the transcripts' figure by more than usual | Claude Code's WebSearch tool searches in a request of its own that the transcripts don't log; Claude Code's own total counts it |
 
 **Overall pass:** after `/exit`, each session's TOTAL is Claude Code's own figure. On an API key, an open session's TOTAL is a little below `/cost` in that session (Claude Code doesn't log some requests; the README's Limitations has the measured gap). Nothing in the header is yellow.
 """

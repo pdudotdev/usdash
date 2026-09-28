@@ -89,6 +89,9 @@ class Request:
     reason: str | None = None  # why, when it re-wrote
     speed: str | None = None  # usage.speed: "fast" or "standard"
     geo: str | None = None  # usage.inference_geo
+    # Claude Code's WebSearch tool calls in the reply, by tool_use id. Each search runs in a
+    # request of its own that the transcripts don't log, so its cost isn't in any amount.
+    tool_searches: set[str] = field(default_factory=set)
 
     @property
     def prompt(self) -> int:
@@ -139,6 +142,22 @@ def command_text(text: str) -> str | None:
     if text.lstrip().startswith("<") or text.startswith("Caveat:"):
         return None
     return text
+
+
+def is_command(record: Record) -> bool:
+    """Whether a user record is a slash command (/model, /compact, a skill…)."""
+    return "<command-name>" in json.dumps((record.data.get("message") or {}).get("content"))
+
+
+def is_skill_body(record: Record) -> bool:
+    """Whether a user record is a skill's instructions, which Claude Code adds
+    right after the command that ran it (a built-in command like /model gets
+    its output instead)."""
+    content = (record.data.get("message") or {}).get("content")
+    blocks = content if isinstance(content, list) else [{"text": content or ""}]
+    return bool(record.data.get("isMeta")) and any(
+        isinstance(block, dict) and str(block.get("text", "")).startswith("Base directory for this skill")
+        for block in blocks)
 
 
 def prompt_text(record: Record) -> str | None:
@@ -199,7 +218,9 @@ class Session:
     ai_title: str | None = None
     desktop_title: str | None = None
     archived: bool = False
-    first_prompt: str | None = None
+    first_prompt: str | None = None  # the first thing typed that says what the session is for
+    first_command: str | None = None  # the first slash command, even a built-in (/model)
+    last_command: str | None = None  # the command just typed, until a skill's body shows it ran one
     last_prompt: str | None = None
     last_prompt_at: float | None = None
     last_activity: float | None = None
@@ -233,10 +254,12 @@ class Session:
     @property
     def name(self) -> str:
         """What the user calls this session: /rename, the Desktop sidebar title,
-        Claude Code's own title, or failing those the first thing they typed."""
+        Claude Code's own title, or failing those the first thing they typed
+        (a skill with its arguments counts; a built-in command like /model
+        only if that's all there is)."""
         return (
             self.custom_title or self.desktop_title or self.agent_name or self.ai_title
-            or snippet(self.first_prompt, 40) or "(new session)"
+            or snippet(self.first_prompt or self.first_command, 40) or "(new session)"
         )
 
     @property
@@ -394,10 +417,19 @@ class Store:
             text = prompt_text(record)
             if text:
                 session.ended = False
-                session.first_prompt = session.first_prompt or text
+                command = is_command(record)
+                session.last_command = text if command else None
+                if command:
+                    session.first_command = session.first_command or text
+                else:
+                    session.first_prompt = session.first_prompt or text
                 session.last_prompt = text
                 session.last_prompt_at = record.when
                 session.last_activity = max(session.last_activity or 0, record.when or 0) or None
+            elif session.last_command and not record.subagent and is_skill_body(record):
+                # The command ran a skill: its arguments say what the session is for.
+                session.first_prompt = session.first_prompt or session.last_command
+                session.last_command = None
         elif kind == "custom-title" and data.get("customTitle"):
             session.custom_title = data["customTitle"]
         elif kind == "agent-name" and data.get("agentName"):
@@ -474,6 +506,10 @@ class Store:
             request.end = end or request.end
         request.usage = usage_parts(usage)
         request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
+        content = message.get("content")
+        for block in content if isinstance(content, list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "WebSearch":
+                request.tool_searches.add(str(block.get("id")))
         base = self.prices.get(model_key(model))
         price = as_paid(base, model_key(model), request.speed, request.geo) if base else None  # fast mode, US-only
         if price is None and old is None:

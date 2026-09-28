@@ -247,9 +247,20 @@ def test_first_and_last_prompt_skip_generated_text(store):
     t.user("in a subagent", T0 + 6, subagent="a1")
     t.into(store)
     session = store.sessions["sess-1"]
-    assert session.first_prompt == "/review the parser"
+    assert session.first_prompt == "/review the parser"  # a skill: the next record is its body
     assert session.last_prompt == "now fix the bug"
     assert session.last_prompt_at == T0 + 5
+    # A built-in command says nothing about the task: the first prompt names the session.
+    builtin = Transcript(session="sess-2")
+    builtin.user("<command-name>/model</command-name><command-args>sonnet</command-args>", T0)
+    builtin.user("<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", T0 + 1)
+    builtin.user("fix the parser", T0 + 2)
+    builtin.into(store)
+    assert store.sessions["sess-2"].name == "fix the parser"
+    only = Transcript(session="sess-3")
+    only.user("<command-name>/model</command-name>", T0)
+    only.into(store)
+    assert store.sessions["sess-3"].name == "/model"  # all there is
 
 
 def test_command_text():

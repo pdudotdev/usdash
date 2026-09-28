@@ -44,7 +44,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | Shown | What it is |
 |---|---|
 | **ID** | The first 4 characters of the session id (as in `/status` and `claude --resume`), in a fixed colour per session |
-| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else the agent's name, else Claude Code's automatic title, else the first thing you typed |
+| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else the agent's name, else Claude Code's automatic title, else the first thing you typed (a skill with its arguments counts; a built-in command like `/model` only if it's all there is) |
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `no folder` for a Desktop session started without one (WHERE says `Desktop`) |
 | **WHERE** | Where it runs: `CLI` (a terminal, including an IDE's built-in one), `IDE` (the VS Code extension's panel, also in forks like Cursor), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs). Any other app shows as Claude Code names it; `?` if the transcript doesn't say |
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
@@ -77,12 +77,12 @@ Your own model (in bold) reads the conversation back from its cache; any other m
 
 | Shown | What it is |
 |---|---|
-| **TIME** | When the request was sent |
+| **TIME** | When the request was sent. A line like `── Sun 27 Sep ──` goes above the first row of each earlier day, and above the top row when it's from an earlier day |
 | **ID** · **SESSION** · **MODEL** | Which session sent it, on which model and effort (and `fast` in fast mode) |
 | **PROMPT** | Tokens sent: the whole conversation so far |
 | **CACHED** | The share of them read back from the cache: green from 80%, yellow from 30%, red below |
 | **OUT** · **COST** | Output tokens (thinking included), and the request's cost at list prices (`?` with no known price) |
-| **NOTE** | `🤖 subagent` for a subagent's request; `🔍 2 web searches (+$0.02)` for server-side web searches, charged on top of tokens; `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
+| **NOTE** | `🤖 subagent` for a subagent's request; `🔍 2 web searches (+$0.02)` for server-side web searches, charged on top of tokens; `🔍 2 web searches (cost not logged)` when Claude Code's WebSearch tool searched ([Limitations](#️-limitations)); `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
 - [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only requests go to two pages of Anthropic's docs, at start (none with `--offline`), and the only file it writes is its copy of them
@@ -138,28 +138,33 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 
 ## 🚀 Installation & Usage
 
-▫️ **Prerequisites:**
+▫️ **Step 1 - Install it on the machine where Claude Code runs:**
 
-| | macOS | Ubuntu |
-|---|---|---|
-| Python 3.11+ | `brew install python` | `sudo apt install python3 python3-venv` |
-| [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) | ✓ | ✓ |
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) (`brew install uv` on macOS, `curl -LsSf https://astral.sh/uv/install.sh | sh` on Linux), which brings its own Python 3.11+ if the machine's is older (Ubuntu 22.04 has 3.10):
+```
+uv tool install git+https://github.com/pdudotdev/usdash
+```
 
-▫️ **Step 1 - Clone and install:**
+Or with [pipx](https://pipx.pypa.io/), where Python 3.11+ is already there (macOS with Homebrew, Ubuntu 24.04):
 ```
-git clone https://github.com/pdudotdev/usdash
-cd usdash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install .
+pipx install git+https://github.com/pdudotdev/usdash
 ```
+
+Either puts `usdash` on your PATH; `uv tool upgrade usdash` or `pipx upgrade usdash` updates it.
 
 ▫️ **Step 2 - Run it next to your sessions:**
 ```
 usdash                    # the last 5 days, then live
 ```
 
-> ⚠️ **NOTE:** The `usdash` command lives in the virtual environment, so a new terminal says `command not found` until you run `source .venv/bin/activate` in the `usdash` folder. To run it from anywhere, link it onto your PATH once, from that folder: `mkdir -p ~/.local/bin && ln -s "$PWD/.venv/bin/usdash" ~/.local/bin/usdash` (and add `~/.local/bin` to your PATH if it isn't there).
+▫️ **Or from a clone,** to change it (running the tests: [Project Files](#-project-files)). Python 3.11+ is needed, and `usdash` works while the virtual environment is active:
+```
+git clone https://github.com/pdudotdev/usdash
+cd usdash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
 
 | Option | Meaning | Default |
 |---|---|---|
@@ -171,7 +176,11 @@ usdash                    # the last 5 days, then live
 
 ↑/↓, the mouse wheel or `j`/`k` scroll the sessions a session at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `r` switches to every request and back; there the same keys scroll the list, and while you're scrolled back its rows stay put and the title counts the new ones above them. `q` quits.
 
-> ⚠️ **NOTE:** usdash shows the sessions **of the machine it runs on**. With VS Code Remote-SSH, Claude Code runs on the server, so run usdash in a terminal on that server.
+> ⚠️ **NOTE:** usdash shows the sessions **of the machine it runs on**: it reads Claude Code's transcripts there, and Claude Code writes them where it runs. When you work on a remote machine over SSH, that's the remote machine, so install and run usdash there:
+> - **VS Code, or a fork like Cursor, with Remote-SSH:** the Claude Code extension runs on the server. Run usdash in the editor's built-in terminal
+> - **The Desktop app's SSH connections:** Desktop [installs Claude Code on the remote machine and runs it there](https://code.claude.com/docs/en/desktop). Run usdash in an SSH terminal to it. The session's sidebar title and archive state stay in the app on your computer, so there usdash shows Claude Code's own title, and an archived session doesn't leave its list
+>
+> A container adds nothing: it would need your `~/.claude` mounted, and can't reach another machine's.
 
 ## ⚠️ Limitations
 
@@ -180,10 +189,16 @@ usdash                    # the last 5 days, then live
 | You use Claude Code in… | Covered? |
 |---|---|
 | A terminal, the VS Code extension, the Desktop app's Code tab, scripts (`claude -p`) | Yes |
-| VS Code Remote-SSH or a terminal on a server | Yes, with usdash running on that server |
+| VS Code Remote-SSH, the Desktop app's SSH connections, or a terminal on a server | Yes, with usdash running on that server |
 | claude.ai/code and other cloud sessions | No: their transcripts aren't on your machine |
 | Amazon Bedrock, Google Cloud | Partly: see below |
-| Windows | Not tested; use WSL |
+| Windows | Not natively (usdash reads keys through the Unix terminal); use WSL |
+
+▫️ **Sessions with transcript saving off don't appear:**
+Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION` in the session. That happens in a terminal started from inside a Claude Code session (e.g. a terminal app launched by one): it inherits that variable, and every `claude` started from it saves no transcript. Quit the terminal app and open it again from the Dock or launcher.
+
+▫️ **Claude Code's web search isn't in any amount until the session exits:**
+Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. The request list marks the reply that called it (`🔍 2 web searches (cost not logged)`). Claude Code's own total counts them, so an exited session's TOTAL includes them.
 
 ▫️ **Amounts read low until a session exits:**
 Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.

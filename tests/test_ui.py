@@ -248,6 +248,14 @@ def test_the_request_list_shows_web_searches(store):
     t.turn(T0, text="look it up", write=40_000, tools={"web_search_requests": 2})
     t.into(store)
     assert "🔍 2 web searches (+$0.02)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
+    # Claude Code's WebSearch tool runs each search in a request the transcripts don't log.
+    tool = Transcript(session="sess-2")
+    tool.turn(T0 + 30, write=40_000, stop="tool_use", tools={"web_search_requests": 0},
+              content=[{"type": "tool_use", "id": "toolu_1", "name": "WebSearch", "input": {"query": "x"}}])
+    tool.into(store)
+    text = screen(store, ui.View(now=T0 + 60, mode="requests"))
+    assert "🔍 1 web search (cost not logged)" in text and "🔍 0" not in text
+
 
 
 def test_the_last_session_can_always_be_scrolled_to(store):
@@ -324,6 +332,35 @@ def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store)
     assert "exited · " in text and "└ resuming re-sends" in text
     assert "List .claude/skills" in text
     assert "Desktop" in next(line for line in text.splitlines() if "Three-word greeting" in line)
+
+
+def test_the_request_list_marks_each_earlier_day(store):
+    t = Transcript()
+    for day in range(3):
+        for i in range(3):
+            t.turn(T0 + 86_400 * day + 60 * i, read=40_000, write=100)
+    t.into(store)
+    now = T0 + 2 * 86_400 + 600
+    label = lambda when: datetime.fromtimestamp(when).strftime("%a %d %b").replace(" 0", " ")
+    lines = [line.strip("│ ") for line in screen(store, ui.View(now=now, mode="requests")).splitlines()]
+    rows = [line for line in lines if line[:2].isdigit() or line.startswith("── ")]
+    # None above today's rows: the header already says today.
+    assert [line.split(" ─")[0] for line in rows if line.startswith("── ")] == [f"── {label(T0 + 86_400)}", f"── {label(T0)}"]
+    assert rows[0][:2].isdigit() and rows[3].startswith("── ") and rows[7].startswith("── ")
+    # Scrolled into an earlier day, the top row still says which day it's on.
+    view = ui.View(now=now, mode="requests")
+    screen(store, view)
+    for _ in range(4):  # past today's three rows and one of yesterday's
+        ui.press(store, view, "down")
+    top = [line.strip("│ ") for line in screen(store, view).splitlines() if "TIME" in line or "── " in line]
+    assert top[1].startswith(f"── {label(T0 + 86_400)} ─")
+    # The last page shows the oldest row at every height, day lines and all.
+    oldest = datetime.fromtimestamp(T0).strftime("%H:%M:%S")
+    for height in range(9, 30):
+        view = ui.View(now=now, mode="requests")
+        screen(store, view, height=height)
+        ui.press(store, view, "end")
+        assert oldest in screen(store, view, height=height), height
 
 
 def test_scrolling_the_feed(store):

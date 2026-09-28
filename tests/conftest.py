@@ -82,7 +82,7 @@ class Transcript:
               write: int = 0, fresh: int = 2, out: int = 100, ttl: str = "1h", blocks: int = 1,
               subagent: str | None = None, request_id: str | None = "auto", message_id: str | None = None,
               version: str | None = None, speed: str | None = None, tools: dict | None = None,
-              stop: str | None = None, **extra) -> str:
+              stop: str | None = None, content: list | None = None, **extra) -> str:
         """One API reply, written as `blocks` records sharing a message id,
         each a second apart (streamed content blocks)."""
         message_id = message_id or f"msg_{next(self.ids)}"
@@ -100,7 +100,8 @@ class Transcript:
                 "type": "assistant", "uuid": uuid, "parentUuid": self.last_uuid, "timestamp": iso(at + block),
                 "isSidechain": bool(subagent), "cwd": self.cwd, "gitBranch": self.branch,
                 "entrypoint": self.entrypoint, "version": version or self.version, "effort": effort,
-                "message": {"id": message_id, "model": model, "role": "assistant", "usage": usage, "stop_reason": stop},
+                "message": {"id": message_id, "model": model, "role": "assistant", "usage": usage, "stop_reason": stop,
+                            "content": content or []},
                 **extra,
             }
             if request_id:
