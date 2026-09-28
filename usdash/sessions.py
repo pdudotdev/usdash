@@ -90,7 +90,7 @@ class Request:
     speed: str | None = None  # usage.speed: "fast" or "standard"
     geo: str | None = None  # usage.inference_geo
     # Claude Code's WebSearch tool calls in the reply: tool_use id -> searches it made (1 until
-    # its result says: `toolUseResult.searchCount`). They run in a request of their own that
+    # its result says: `toolUseResult.searchCount`, or 0 if it failed). They run in a request of their own that
     # the transcripts don't log, so their cost isn't in any amount.
     tool_searches: dict[str, int] = field(default_factory=dict)
 
@@ -133,14 +133,25 @@ def reason_group(reason: str | None) -> str:
     return re.sub(r" (?:from|\().*$", "", reason or "")
 
 
+def command_name(text: str) -> str | None:
+    """'/name args' if this is a slash command's record: Claude Code's tags, from
+    the start (a typed prompt that mentions a tag isn't one)."""
+    if not text.lstrip().startswith("<"):
+        return None
+    name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
+    if not name:
+        return None
+    args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
+    return f"{name.group(1).strip()} {args.group(1).strip() if args else ''}".strip()
+
+
 def command_text(text: str) -> str | None:
     """A prompt as the user typed it: a slash command's tags -> '/name args';
-    other tagged text (command output, reminders, caveats) -> None."""
-    name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
-    if name:
-        args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
-        return f"{name.group(1).strip()} {args.group(1).strip() if args else ''}".strip()
-    if text.lstrip().startswith("<") or text.startswith("Caveat:"):
+    other tagged text (command output, reminders, caveats) and Claude Code's
+    '[Request interrupted by user…]' -> None."""
+    if command := command_name(text):
+        return command
+    if text.lstrip().startswith(("<", "[Request interrupted")) or text.startswith("Caveat:"):
         return None
     return text
 
@@ -167,9 +178,10 @@ def typed(record: Record) -> tuple[str, bool] | None:
     if record.subagent or data.get("isSidechain") or data.get("isMeta") or data.get("isCompactSummary"):
         return None
     raw = record_text(record)
-    text = command_text(raw) if raw else None
-    text = " ".join(text.split()) if text else None
-    return (text, "<command-name>" in raw) if text else None
+    if not raw:
+        return None
+    text = " ".join((command_text(raw) or "").split())
+    return (text, command_name(raw) is not None) if text else None
 
 
 def at_work_after(record: Record) -> bool | None:
@@ -404,10 +416,9 @@ class Store:
         if kind in ("user", "assistant") and not record.subagent and not data.get("isSidechain"):
             if (at_work := at_work_after(record)) is not None:
                 session.at_work = at_work
+            self._settle_command(session, record)
         if kind == "assistant":
             return self._add_assistant(session, record)
-        if kind in ("user", "assistant") and not record.subagent and not data.get("isSidechain"):
-            self._settle_command(session, record)
         if kind == "user":
             self._count_searches(session, record)
             found = typed(record)
@@ -460,36 +471,51 @@ class Store:
     @staticmethod
     def _settle_command(session: Session, record: Record) -> None:
         """A command just typed is settled by the next main-conversation
-        record: a built-in (/model, /effort, /compact…) is answered with
-        `<local-command-stdout>` and says nothing about the task; anything
-        else (a skill's body, /init's prompt, a reply) means it ran a prompt,
-        which does."""
+        record. One that runs a prompt (a skill, /init) is followed by that
+        prompt, logged as a meta record, or by a reply: it says what the
+        session is for. Anything else (a built-in's `<local-command-stdout>`
+        or stderr, a prompt typed next, another command, an interrupt) makes
+        it a built-in (/model, /effort, /compact…), which doesn't."""
         command = session.pending_command
-        text = record_text(record) if record.type == "user" else ""
-        if not command or text is None or "<local-command-caveat>" in text:
+        if not command:
             return
-        if "<command-name>" in text:
-            return  # the command itself
-        if "<local-command-stdout>" in text:
-            session.first_command = session.first_command or command
-        else:
+        ran_prompt = record.type == "assistant"
+        if record.type == "user":
+            text = record_text(record)
+            if text is None:
+                return  # a tool result, or no text at all
+            if record.data.get("isMeta"):
+                if text.lstrip().startswith("<"):
+                    return  # Claude Code's own notes, like the caveat before a command
+                ran_prompt = True
+        if ran_prompt:
             session.first_prompt = session.first_prompt or command
+        else:
+            session.first_command = session.first_command or command
         session.pending_command = None
 
     @staticmethod
     def _count_searches(session: Session, record: Record) -> None:
-        """A WebSearch tool result says how many searches the call made."""
-        result = record.data.get("toolUseResult")
-        searches = result.get("searchCount") if isinstance(result, dict) else None
+        """A WebSearch call's result says how many searches it made: the record's
+        toolUseResult.searchCount, if the record carries that one result only
+        (with more, there's no telling whose it is). One that failed (denied,
+        an error, interrupted) made none."""
         content = (record.data.get("message") or {}).get("content")
-        if not isinstance(searches, int) or not isinstance(content, list):
+        if not isinstance(content, list):
             return
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                key = session.search_calls.get(str(block.get("tool_use_id")))
-                request = session.requests.get(key) if key else None
-                if request is not None:
-                    request.tool_searches[str(block.get("tool_use_id"))] = searches
+        results = [block for block in content if isinstance(block, dict) and block.get("type") == "tool_result"]
+        found = record.data.get("toolUseResult")
+        searches = found.get("searchCount") if isinstance(found, dict) and len(results) == 1 else None
+        for block in results:
+            call = str(block.get("tool_use_id"))
+            key = session.search_calls.get(call)
+            request = session.requests.get(key) if key else None
+            if request is None:
+                continue
+            if block.get("is_error"):
+                request.tool_searches[call] = 0
+            elif isinstance(searches, int):
+                request.tool_searches[call] = searches
 
     def _start_of(self, session: Session, record: Record, message_id: str | None) -> float | None:
         """When the request behind this reply started: the time of the record

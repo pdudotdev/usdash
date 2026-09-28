@@ -261,6 +261,22 @@ def test_the_request_list_shows_web_searches(store):
               toolUseResult={"query": "x", "searchCount": 3})
     tool.into(store)
     assert "🔍 3 web searches (cost not logged)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
+    # A call that failed (denied, an error, interrupted) searched nothing.
+    denied = Transcript(session="sess-3")
+    denied.turn(T0 + 45, write=40_000, stop="tool_use",
+                content=[{"type": "tool_use", "id": "toolu_2", "name": "WebSearch", "input": {"query": "y"}}])
+    denied.user([{"type": "tool_result", "tool_use_id": "toolu_2", "content": "denied", "is_error": True}], T0 + 50,
+                toolUseResult="Error: permission denied")
+    denied.into(store)
+    assert store.feed[0].tool_searches == {"toolu_2": 0}
+    # A record carrying two calls' results can't say whose searchCount it is: neither takes it.
+    both = Transcript(session="sess-4")
+    both.turn(T0 + 52, write=40_000, stop="tool_use",
+              content=[{"type": "tool_use", "id": f"toolu_{n}", "name": "WebSearch", "input": {}} for n in (3, 4)])
+    both.user([{"type": "tool_result", "tool_use_id": f"toolu_{n}", "content": "…"} for n in (3, 4)], T0 + 55,
+              toolUseResult={"searchCount": 3})
+    both.into(store)
+    assert store.feed[0].tool_searches == {"toolu_3": 1, "toolu_4": 1}
 
 
 
@@ -368,6 +384,14 @@ def test_the_request_list_marks_each_earlier_day(store):
         ui.press(store, view, "end")
         text = screen(store, view, height=height)
         assert oldest in text or view.lines == 0, height  # below 9 lines there's no room for a row
+    # With no room, the title claims no rows and a page key moves nothing unseen.
+    view = ui.View(now=now, mode="requests")
+    screen(store, view, height=8)
+    ui.press(store, view, "down")
+    before = view.scroll
+    ui.press(store, view, "pgdn")
+    text = screen(store, view, height=8)
+    assert view.lines == 0 and view.scroll == before and "rows" not in text and "paused" in text
 
 
 def test_the_scroll_limit_matches_counting_every_start():

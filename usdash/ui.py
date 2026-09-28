@@ -498,16 +498,17 @@ def feed_panel(store: Store, view: View, rows: int) -> Panel:
     view.lines = max(0, rows)
     scroll_to(store, view, view.scroll)
     fits = feed_fits(store, view, view.scroll)
-    view.page = max(1, fits)  # what a page key moves
+    view.page = max(1, fits) if view.lines else 0  # what a page key moves: with no room, nothing
     # With room for one line only, the row goes in without its day line; with none, nothing does.
-    shown = list(itertools.islice(store.feed, view.scroll, view.scroll + (view.page if view.lines else 0)))
+    shown = list(itertools.islice(store.feed, view.scroll, view.scroll + view.page))
     days = [feed_day(r) for r in shown]
-    # Room for one line only: the row, not its day line.
     lines = feed_lines([feed_row(store, request) for request in shown], days, day_of(view.now),
                        above=days[0] if shown and not fits else None)
     total = len(store.feed)
     if view.scroll:
-        title = f"requests · paused · rows {view.scroll + 1}–{view.scroll + len(shown)} of {total}"
+        title = "requests · paused"
+        if shown:
+            title += f" · rows {view.scroll + 1}–{view.scroll + len(shown)} of {total}"
         if view.unseen:
             title += f" · {view.unseen} new above"
         subtitle = Text("g: back to live", style="bold yellow")

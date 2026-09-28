@@ -4,9 +4,10 @@
     python3 scripts/make_fixture.py <session-id-prefix> [name]
 
 Keeps what usdash reads (record types, ids, parent links, timestamps, model,
-effort, usage, titles, cost-state, compaction sizes) and replaces everything
-people wrote or tools returned: prompts become "prompt 1", "prompt 2"...
-(slash commands keep their name), replies and tool output become empty.
+effort, usage, titles, cost-state, compaction sizes, tool names, whether a tool
+failed, WebSearch's search counts) and replaces everything people wrote or tools
+returned: prompts become "prompt 1", "prompt 2"... (slash commands keep their
+name, Claude Code's tagged text its tag), replies and tool output become empty.
 The folder becomes /home/user/<folder name>. Subagent transcripts come along.
 Check the output before committing it.
 """
@@ -32,11 +33,12 @@ class Redactor:
         self.prompts = 0
 
     def text(self, text: str) -> str:
-        command = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
-        if command:
-            return f"<command-name>{command.group(1).strip()}</command-name><command-args>args</command-args>"
         if text.lstrip().startswith("<"):
-            return "<redacted/>"
+            command = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
+            if command:
+                return f"<command-name>{command.group(1).strip()}</command-name><command-args>args</command-args>"
+            tag = re.match(r"\s*<([\w-]+)", text)  # <local-command-stdout>, a caveat…: which one, not what it says
+            return f"<{tag.group(1)}>redacted</{tag.group(1)}>" if tag else "<redacted/>"
         self.prompts += 1
         return f"prompt {self.prompts}"
 
@@ -53,7 +55,12 @@ class Redactor:
                 if kind == "user" and block.get("type") == "text":
                     blocks.append({"type": "text", "text": self.text(block.get("text", ""))})
                 elif block.get("type") == "tool_result":
-                    blocks.append({"type": "tool_result", "tool_use_id": block.get("tool_use_id"), "content": ""})
+                    result = {"type": "tool_result", "tool_use_id": block.get("tool_use_id"), "content": ""}
+                    if block.get("is_error"):
+                        result["is_error"] = True
+                    blocks.append(result)
+                elif block.get("type") == "tool_use":
+                    blocks.append({key: block[key] for key in ("type", "id", "name") if key in block})
                 else:
                     blocks.append({"type": block.get("type")})
             kept["content"] = blocks
@@ -68,6 +75,9 @@ class Redactor:
             out["cwd"] = f"/home/user/{Path(out['cwd']).name}"
         if isinstance(data.get("message"), dict):
             out["message"] = self.message(data["message"], kind)
+        result = data.get("toolUseResult")
+        if isinstance(result, dict) and isinstance(result.get("searchCount"), int):
+            out["toolUseResult"] = {"searchCount": result["searchCount"]}
         if data.get("quotaLimits") is not None:
             out["quotaLimits"] = {"rateLimitType": data["quotaLimits"].get("rateLimitType")}
         if kind == "last-prompt":

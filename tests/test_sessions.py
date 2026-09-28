@@ -292,10 +292,49 @@ def test_a_command_that_runs_a_prompt_names_the_session(store):
     assert store.sessions["sess-3"].name == "summarise this"
 
 
+def test_only_a_prompt_or_a_reply_after_a_command_makes_it_the_name(store):
+    def name(session: str, *records) -> str:
+        t = Transcript(session=session)
+        t.user("<command-name>/model</command-name><command-args>foo</command-args>", T0)
+        for i, record in enumerate(records):
+            if record == "reply":
+                t.reply(T0 + 1 + i, write=30_000)
+            else:
+                t.user(record, T0 + 1 + i)
+        t.user("fix the parser", T0 + 10)
+        t.into(store)
+        return store.sessions[session].name
+
+    # A built-in that failed, printed nothing, or was interrupted says nothing about the task.
+    assert name("err", "<local-command-stderr>Unknown model: foo</local-command-stderr>") == "fix the parser"
+    assert name("quiet") == "fix the parser"
+    assert name("stop", [{"type": "text", "text": "[Request interrupted by user]"}]) == "fix the parser"
+    # Nor does one followed by another command: neither is lost for the one that ran a prompt.
+    t = Transcript(session="next")
+    t.user("<command-name>/config</command-name>", T0)
+    t.user([{"type": "text", "text": "<local-command-caveat>Caveat: …</local-command-caveat>"}], T0 + 1, isMeta=True)
+    t.user("<command-name>/review</command-name>", T0 + 2)
+    t.user([{"type": "text", "text": "Review the current diff"}], T0 + 3, isMeta=True)
+    t.into(store)
+    assert store.sessions["next"].name == "/review"
+    # A reply to the command, with no prompt logged apart, means it ran one.
+    assert name("replied", "reply") == "/model foo"
+    # A typed prompt that mentions a command tag is a prompt.
+    typed = Transcript(session="typed")
+    typed.user("why does the <command-name> tag break the parser?", T0)
+    typed.user("<command-name>/model</command-name>", T0 + 1)
+    typed.user("<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", T0 + 2)
+    typed.user("thanks", T0 + 3)
+    typed.into(store)
+    assert store.sessions["typed"].first_prompt == "why does the <command-name> tag break the parser?"
+
+
 def test_command_text():
     assert command_text("<command-name>/compact</command-name>") == "/compact"
     assert command_text("<system-reminder>x</system-reminder>") is None
     assert command_text("plain") == "plain"
+    assert command_text("[Request interrupted by user for tool use]") is None  # Claude Code's, not typed
+    assert command_text("see <command-name>/model</command-name> here") == "see <command-name>/model</command-name> here"
 
 
 @pytest.mark.parametrize(
