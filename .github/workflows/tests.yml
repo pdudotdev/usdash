@@ -7,10 +7,17 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]  # the oldest usdash supports, and a current one
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
+      # Days are local days: a test whose requests straddle midnight somewhere fails only there.
+      - run: pytest -q
+        env:
+          TZ: Asia/Tokyo

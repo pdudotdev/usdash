@@ -279,7 +279,6 @@ def test_the_request_list_shows_web_searches(store):
     assert store.feed[0].tool_searches == {"toolu_3": 1, "toolu_4": 1}
 
 
-
 def test_the_last_session_can_always_be_scrolled_to(store):
     # Two sections on the last page take two labels: at every height, the oldest can be reached.
     two_sessions(store)
@@ -352,6 +351,9 @@ def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store)
     last = max(s.last_activity for s in fixture_store.sessions.values())
     text = screen(fixture_store, ui.View(now=last + 60, window=10 ** 9), height=80)
     assert "exited · " in text and "└ resuming re-sends" in text
+    # Its TOTAL is Claude Code's own $1.41, above the $1.33 its transcript logged; TODAY stays the transcript's.
+    row = next(line for line in text.splitlines() if "Test plan vs test case" in line)
+    assert row.split()[-2] == "$1.41"
     assert "List .claude/skills" in text
     assert "Desktop" in next(line for line in text.splitlines() if "Three-word greeting" in line)
 
@@ -511,17 +513,18 @@ def test_a_90_minute_window_is_labelled_as_such(store):
 
 
 def test_cache_misses_get_a_header_line_of_their_own(store):
-    view = ui.View(now=T0 + 7400, prices=app.prices_label("2026-09-26", offline=False))
+    start = datetime(2026, 9, 21, 11, 0).timestamp()  # local time: every request below falls on the same local day
+    view = ui.View(now=start + 7400, prices=app.prices_label("2026-09-26", offline=False))
     t = Transcript()
-    t.turn(T0, write=40_000)
+    t.turn(start, write=40_000)
     t.into(store)
     lines = screen(store, view, width=90).splitlines()
     assert lines[1].strip("│ ").startswith("TODAY $") and lines[2].strip("│ ").startswith("Estimated at")  # no misses, no line
     t = Transcript()
-    t.turn(T0 + 60, model="claude-sonnet-5", write=41_000)  # model switch
-    t.turn(T0 + 7300, model="claude-sonnet-5", write=42_000)  # cache expired
-    t.record("system", T0 + 7310, subtype="compact_boundary", compactMetadata={"postTokens": 2_000})
-    t.turn(T0 + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
+    t.turn(start + 60, model="claude-sonnet-5", write=41_000)  # model switch
+    t.turn(start + 7300, model="claude-sonnet-5", write=42_000)  # cache expired
+    t.record("system", start + 7310, subtype="compact_boundary", compactMetadata={"postTokens": 2_000})
+    t.turn(start + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
     t.into(store)
     lines = [line.strip("│ ") for line in screen(store, view, width=90).splitlines()]
     assert lines[1].startswith("TODAY $") and "⟳" not in lines[1]
@@ -573,3 +576,21 @@ def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
     app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
     out = capsys.readouterr().out
     assert "expired · 1 session · last 5d" in out and "from 4 days ago" in out and "from 6 days ago" not in out
+
+
+def test_a_miss_cause_under_half_a_cent_is_left_off_the_header(store):
+    two_sessions(store)
+    today = ui.day_of(NOW)
+    store.rewrites[today].update({"model switch": 0.05, "effort change": 0.004})
+    line = next(line for line in ui.top_lines(store, ui.View(now=NOW)) if line.plain.startswith("⟳"))
+    assert line.plain == "⟳ cache misses added $0.05: model switch $0.05"
+
+
+def test_cached_is_coloured_by_how_much_was_read_back(store):
+    # The README: green from 80%, yellow from 30%, red below.
+    t = Transcript()
+    for i, read in enumerate((80_000, 30_000, 29_000)):
+        t.turn(T0 + 60 * i, read=read, write=100_000 - read - 2, message_id=f"msg_{read}")
+    t.into(store)
+    styles = {key: str(ui.feed_row(store, request)[0][5].style) for key, request in store.sessions["sess-1"].requests.items()}
+    assert styles == {"msg_80000": "green", "msg_30000": "yellow", "msg_29000": "red"}

@@ -76,14 +76,6 @@ def test_coming_back_re_writes_the_conversation_but_likely_not_the_tool_list(sto
         "claude-opus-4-6", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"]
 
 
-
-
-
-
-
-
-
-
 def test_after_compact_only_the_tool_list_is_cached(store):
     session = opus_session(store)
     t = Transcript()
@@ -155,6 +147,9 @@ def test_the_summary_size_is_learned_and_grows_with_the_conversation(store):
     assert store.summary_size(60_000) == 3_807
     assert store.summary_size(500_000) == 13_984
     assert store.summary_size(2_000_000) == 16_000  # none within 2×
+    # Several within 2×: their median, so one unusually long summary doesn't set the estimate.
+    store.summaries.update({"u3": (55_000, 5_388), "u4": (62_000, 15_000)})
+    assert store.summary_size(60_000) == 5_388
 
 
 def test_the_tool_list_is_measured_right_after_compact(store):
@@ -244,18 +239,6 @@ def test_the_next_message_elsewhere_uses_what_that_model_has_cached(store):
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
     session = opus_session(store, ttl="5m")  # first prompt 40,000
     pasted = Transcript(session="sess-2")
@@ -264,10 +247,6 @@ def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
     # Haiku has at most what both first prompts share: this session's 40,000, in Haiku's tokens.
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == round(40_000 * 0.77)
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 110 + FIVE_MINUTES) == 0
-
-
-
-
 
 
 def test_a_small_warm_script_does_not_shrink_what_another_session_shares(store):

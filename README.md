@@ -37,7 +37,14 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 ![usdash: today's spend; a live session with its cache countdown and what its next message costs on each model; an expired session, then three folded script runs and an exited session, each with what coming back to it costs](docs/dashboard.svg)
 
-▫️ **The header:** today's spend at list prices and the share of all input that was read back from the cache. If any request today had to send the conversation again at full price instead of reading it back (the `⟳` rows in the request list), a red line of its own says what those cache misses added, by cause, the biggest first. The next line says what the dollars are: Anthropic's current API list prices (if the pricing page can't be read at start, the last prices read from it, with their date), and on a subscription account what the same use would cost on an API key. Any warnings follow it, in yellow: requests with no known price (left out of the totals), a page of Anthropic's docs that no longer reads as expected, and record types usdash doesn't know. The last line says why amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)).
+▫️ **The header,** top to bottom:
+
+| Line | What it says |
+|---|---|
+| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache |
+| **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again instead of reading it back (the `⟳` rows in the request list) cost beyond reading it, by cause, the biggest first |
+| **Prices** | Which prices the dollars are: Anthropic's current API list prices, or, if the pricing page can't be read at start, the last ones read, with their date. On a subscription it adds that your plan isn't billed per token. Warnings follow in yellow: requests with no known price (left out of the totals), a page of Anthropic's docs that no longer reads as expected, and record types usdash doesn't know |
+| **Caveat** | Amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)) |
 
 ▫️ **Each session, and how to tell which window it is:**
 
@@ -48,7 +55,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `no folder` for a Desktop session started without one (WHERE says `Desktop`) |
 | **WHERE** | Where it runs: `CLI` (a terminal, including an IDE's built-in one), `IDE` (the VS Code extension's panel, also in forks like Cursor), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs). Any other app shows as Claude Code names it; `?` if the transcript doesn't say |
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
-| **CACHE** | `● mm:ss` while the prompt cache is warm; `○ expired · 2h` once it has run out, in a session that's still open (`○ expired · working` while Claude Code is still busy there: a tool or subagent running, or its answer to their results on its way; `○ expired · subagent` while it waits for a subagent working in the background); `exited · 3h` after you quit it (`/exit` or closing the window), `exited · ● mm:ss` while its cache outlasts it. The age is how long ago the session was last used. Once the cache has run out, the next message re-writes the whole conversation |
+| **CACHE** | `● mm:ss`: the prompt cache is warm, and runs out in that long<br>`○ expired · 2h`: it has run out, in a session that's still open, last used 2 hours ago. `○ expired · working` while Claude Code is still busy there (a tool or subagent running, or its answer to their results on its way); `○ expired · subagent` while it waits for a subagent working in the background<br>`exited · ● mm:ss`: you quit it (`/exit` or closing the window), and its cache outlasts it<br>`exited · 3h`: you quit it, and its cache has run out<br>Once the cache has run out, the next message re-writes the whole conversation |
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size: the summary plus what the session sent before its first message, which Claude Code attaches again |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
 
@@ -69,9 +76,9 @@ Your own model (in bold) reads the conversation back from its cache; any other m
 └ resuming re-sends 420k tokens: ≈$8.40 on Fable 5.1, ≈$3.18 on Opus 5.5, ≈$1.68 on Sonnet 5, ≈$0.65 on Haiku 4.5
 ```
 
-(`continuing` in the expired pane, `resuming` in the exited one.) Resuming reads the cache back while it lasts, so in the first minutes (or hour) after `/exit` the session's own model shows `(cached)` and a small amount. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
+(`continuing` in the expired pane, `resuming` in the exited one.) Resuming reads the cache back while it lasts, so until it runs out (5 minutes or an hour after the session's last request) its own model shows `(cached)` and a small amount. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
 
-▫️ **Exact or ≈:** only a live session's next message on its own model is exact: the conversation's size as its last request sent it (the transcript records it), read back at list prices. Every other amount is `≈`, because part of it can't be known in advance: whether Claude Code's tool list (the first ~23k tokens of every request) is still cached. usdash prices what usually happens, and says so; see [Limitations](#️-limitations). What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of all of them.
+▫️ **Exact or ≈:** only a live session's next message on its own model is exact: the conversation's size as its last request sent it (the transcript records it), read back at list prices. Right after `/compact` even that is `≈`, until the next request measures the new size. Every other amount is `≈`, because part of it can't be known in advance: whether Claude Code's tool list (the first ~23k tokens of every request) is still cached. usdash prices what usually happens, and says so; see [Limitations](#️-limitations). What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of all of them.
 
 ▫️ **Every request** (press `r`), newest first:
 
@@ -101,9 +108,9 @@ Your own model (in bold) reads the conversation back from its cache; any other m
 
 ▫️ **Every reply:**
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
-2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
+2. The request's start is the time of the record it answers: your prompt or a tool result, or what Claude Code attached to them just before sending. The cache clock counts from there
 3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage, and each web search adds the page's per-search price ($10 per 1,000). Web fetches cost only their tokens
-4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have, not counting the tool list (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, resumed, fast mode turned on or off, Claude Code upgrade, or effort change. Right after `/compact`, only the tool list could be read back: the summary is new, so writing it isn't a re-write
+4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have, not counting the tool list (and 5,000 tokens or more, counted in its own model's tokens after a switch), it's a **re-write**, with the likely cause: model switch, cache expired, resumed, fast mode turned on or off, Claude Code upgrade, or effort change. Right after `/compact`, only the tool list could be read back: the summary is new, so writing it isn't a re-write
 5. The session's cache clock and what re-sending it costs on each model are recomputed
 
 ▫️ **What it knows about the models, and where from:**
@@ -119,7 +126,15 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 
 > ⚠️ **NOTE:** The transcript format is internal to Claude Code and can change with any release. usdash reads it leniently (missing fields are "unknown", not a crash) and counts record types it doesn't know. If the header reports unknown records after a Claude Code update, check usdash with the [manual sanity suite](tests/sanity/manual.py).
 
-▫️ **The one warning** (`⚡`, between your last prompt and the prices): when the conversation is 100k+ tokens, the cache expires within 10 minutes (within half its lifetime, if that's shorter), and compacting saves at least $0.005 a message. *"Taking a break? /compact first: ≈$0.11 now, ≈$0.49 once the cache expires in 5:00."* `/compact`'s own request sends the whole conversation without caching it: while the cache is warm it reads back what came before your last prompt and sends the rest at the input price; after it has expired, it sends nearly all of it at the input price. So the warning only shows when compacting first saves at least $0.01: not when one prompt built most of the conversation.
+▫️ **The one warning** (`⚡`, between your last prompt and the prices):
+
+> ⚡ *Taking a break? /compact first: ≈$0.11 now, ≈$0.49 once the cache expires in 5:00.*
+
+`/compact`'s own request sends the whole conversation without caching it. While the cache is warm, it reads back everything up to your last prompt and sends the rest at the input price; once the cache has expired, it sends nearly all of it at the input price. So the warning shows only when all of these hold:
+- the conversation is 100k tokens or more
+- the cache expires within 10 minutes (within half its lifetime, if that's shorter)
+- compacting saves at least $0.005 on each later message
+- compacting now saves at least $0.01 over compacting after the break: not so when one prompt built most of the conversation
 
 ▫️ **When switching model is cheap:** while the cache is warm, another model has to write the whole conversation into its own cache, so the next message costs more there (the prices line shows how much). Once the cache has expired, the next message writes everything again on any model, so switching then costs nothing extra: the session's line shows what each model costs from there. Right after `/compact`, another model can even be cheaper now, if a session in the same folder, from the same app and with the same cache lifetime keeps its copy of the tool list cached; ✅ then moves to it.
 
@@ -134,7 +149,7 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 | 5 | `/model sonnet`, then send a message | Press `r`: a red row `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`. The header's `cache misses added` total goes up |
 | 6 | Step away until the cache expires | The session moves to the expired pane, `○ expired · 1h`, with a line saying what continuing costs on each model |
 | 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look again | `⚡` *"Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in 8:00."* |
-| 8 | `/exit` | `exited · ● 59:xx` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
+| 8 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
 
 ## 🚀 Installation & Usage
 
@@ -198,10 +213,10 @@ pip install -e .
 Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION` in the session. That happens in a terminal started from inside a Claude Code session (e.g. a terminal app launched by one): it inherits that variable, and every `claude` started from it saves no transcript. Quit the terminal app and open it again from the Dock or launcher.
 
 ▫️ **Claude Code's web search isn't in any amount until the session exits:**
-Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. The request list marks the reply that called it (`🔍 2 web searches (cost not logged)`). Claude Code's own total counts them, so an exited session's TOTAL includes them.
+Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. The request list marks the reply that called it (`🔍 2 web searches (cost not logged)`). Claude Code's own total counts them, so an exited session's TOTAL includes them. They can be most of a session's cost: in one real `claude -p` session, the requests behind four searches were 72% of it.
 
 ▫️ **Amounts read low until a session exits:**
-Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.
+Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions (87% in an interactive session checked later, with a `/compact`). When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, and the header's TODAY, stay the transcripts' figures: Claude Code's total isn't split by day.
 
 ▫️ **Code execution:** without web search or web fetch in the same request, it's billed per container-hour against a free monthly allowance per organisation, so one session's share can't be known. It isn't counted; with them, it's free.
 
@@ -211,16 +226,16 @@ Some requests Claude Code makes never appear in its transcripts: session titles,
 Sessions appear, their cache lifetime and costs are read the same way, and Bedrock model ids like `us.anthropic.claude-opus-5-5` are recognised. But:
 - Prices are Anthropic's list prices, which match the **global** endpoints (`global.`). Claude Code's default Bedrock ids use geographic prefixes (`us.`, `eu.`, `apac.`) in most regions, and those cost **10% more**. The same 10% applies to Google Cloud's regional and multi-region endpoints
 - Application inference profile ARNs aren't mapped to a model, so those requests have no cost; the header counts them
-- Not yet checked with a real Bedrock or Google Cloud transcript: whether Claude Code records the provider's model id or the plain model name. If it's the plain name, the effort tip would wrongly say an effort change keeps the cache there
+- Not yet checked with a real Bedrock or Google Cloud transcript: whether Claude Code records the provider's model id or the plain model name. If it's the plain name, a re-write after an effort change there would show as `cause unknown` instead of `effort change`
 
 ▫️ **What's exact and what's an estimate (`≈`):**
-- **Exact:** a live session's next message on its own model: its size as the last request sent it (the whole of it is cached), read back at list prices
-- **≈ the tool list:** every request starts with Claude Code's tool list, 22–25k tokens in the CLI, measured per session (what it read back when the rest of its cache was gone). It's much the same in every session, so something else often keeps it cached: another session, or Claude Code's own requests that the transcripts don't log. Whenever the conversation itself has to be written again (the cache expired, the session exited, or another model), usdash prices what usually happens:
+- **Exact:** a live session's next message on its own model: its size as the last request sent it (the whole of it is cached), read back at list prices. Not right after `/compact`, until the next request
+- **≈ the tool list:** every request starts with Claude Code's tool list, 22–25k tokens in the CLI, measured per session (what it read back when the rest of its cache was gone). It's much the same in every session, so something else often keeps it cached: another session, or Claude Code's own requests that the transcripts don't log. Whenever the conversation itself has to be written again (its cache ran out, or on another model), usdash prices what usually happens:
   - **Read back** on the session's own model with a 1-hour cache: on this machine it was, on 36 of 39 such starts, even after hours idle
   - **Written** otherwise, unless a session in the same folder, from the same app and with the same cache lifetime used that model within that lifetime. With a 5-minute cache, 9 of 48 starts read it back when no other session was seen using that model, 13 of 22 when one was. The 5-minute and 1-hour tool lists differ, so they never share
   - On Opus 5.5 with a 1-hour cache, the difference is about $0.18: most of the cost of coming back to a small conversation, little of a big one's
-- **≈ the tokenizer:** the same text is ~0.77× the tokens on Haiku 4.5 and every other model before Claude Opus 4.7, so a switch between the two tokenizers can be off by a few percent
-- **≈ /compact:** the summary's size is learned from earlier compactions on this machine (`postTokens`: 3.2–6k tokens for 54–65k conversations, 14–16k for very long ones). Its request isn't logged; Claude Code's own totals around five real compactions show what it reads back and sends (above), within 30% of usdash's amounts, most of the gap the summary's length. Right after `/compact` the conversation is the summary plus the session's first prompt: within 6% of what three real sessions sent next (the tool list alone was 13–32% short)
+- **≈ the tokenizer:** the same text is ~0.77× the tokens on Haiku 4.5 and every other model before Claude Opus 4.7 (0.74–0.76 in real switches), so an amount across the two tokenizers can be off by a few percent
+- **≈ /compact:** the summary's size is learned from earlier compactions on this machine (`postTokens`: 3.2–6k tokens for 54–65k conversations, 14–16k for very long ones). Its request isn't logged; Claude Code's own totals around five real compactions show what it reads back and sends (see the one warning, under [How It Works](#-how-it-works)), within 30% of usdash's amounts, most of the gap the summary's length. Right after `/compact` the conversation is the summary plus the session's first prompt: within 6% of what three real sessions sent next (the tool list alone was 13–32% short)
 - **Resuming reads the cache back while it lasts:** 6 of 6 resumes did, one a minute after `/exit` with a file written in between, one on a 5-minute cache. It's still `≈`: a resumed session sends a fresh system prompt, and one that changed (a new day, an edited `CLAUDE.md`) re-writes all but the tool list
 - **The cache lifetime is a minimum:** a 5-minute cache was still there 6¾ minutes later on some requests, and gone after 5⅔ on others. usdash counts a cache as expired once its lifetime is up, so an expired session's amounts are what coming back may cost, not what it must
 - Cost isn't the only goal: a stronger model can finish in fewer messages. The dollars are there to decide with
@@ -277,8 +292,8 @@ The other model has to write the whole conversation into its own cache, while st
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
 | [`docs/`](docs/) | The README's pictures: the dashboard and how usdash works |
-| [`tests/`](tests/) | Automated tests on redacted real transcripts and synthetic ones, plus the manual sanity suite in [`tests/sanity/`](tests/sanity/manual.py) |
-| [`.github/workflows/tests.yml`](.github/workflows/tests.yml) | Runs the automated tests on every push and pull request |
+| [`tests/`](tests/) | Automated tests on synthetic transcripts and redacted real ones; [`tests/test_real_checks.py`](tests/test_real_checks.py) holds usdash's estimates to what real sessions sent and what Claude Code charged. Plus the manual sanity suite, [`tests/sanity/manual.py`](tests/sanity/manual.py) |
+| [`.github/workflows/tests.yml`](.github/workflows/tests.yml) | Runs the automated tests on every push and pull request, on Python 3.11 and 3.12, in UTC and in UTC+9 |
 
 Run the tests with `pip install -r requirements-dev.txt && pytest -q`, and print the manual suite with `python3 tests/sanity/manual.py`.
 
