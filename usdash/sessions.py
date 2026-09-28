@@ -23,7 +23,8 @@ from .transcripts import Record, account_file
 FEED_HISTORY = 10_000
 # A request re-wrote the conversation when it failed to read back at least
 # this share of what it could have (the smaller of its prompt and the
-# previous one), and the miss is this big.
+# previous one, less the tool list, which usually stays cached anyway), and
+# the miss is this big.
 REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
@@ -65,6 +66,7 @@ class ChainState:
     touched: float | None = None  # when its cache was last read or written (a request's start)
     ttl: int | None = None
     compacted: bool = False  # /compact ran since the last request
+    resumed: bool = False  # the session exited since the last request (and was resumed)
     speed: str | None = None  # "fast" or "standard", as the last request ran
     geo: str | None = None  # where it ran: "us" (US-only), "global", …
 
@@ -103,14 +105,16 @@ class Request:
 
 
 def rewrite_reason(request: Request, prev: ChainState, facts: Facts) -> str:
-    """Why a request's cache missed, from what changed since the chain's last request."""
-    if prev.compacted:
-        return "/compact"
+    """Why a request's cache missed, from what changed since the chain's last
+    request. Not /compact: it replaces the conversation with a summary, which
+    is new, and after it only the tool list could be read back."""
     if model_key(request.model) != model_key(prev.model):
         return f"model switch from {pretty_model(prev.model)}"
     ttl = prev.ttl or FIVE_MINUTES
     if prev.touched is not None and request.start - prev.touched >= ttl:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
+    if prev.resumed:
+        return "resumed"  # a fresh system prompt: only the tool list before it can be read back
     if request.speed and prev.speed and request.speed != prev.speed:
         return "speed change"  # fast mode on or off: only the tool list stays cached
     if request.version and prev.version and request.version != prev.version:
@@ -202,6 +206,8 @@ class Session:
     ended: bool = False  # Claude Code wrote its closing cost-state, and nothing since
     at_work: bool = False  # running a tool or a subagent, or answering their results (at_work_after)
     heard: float | None = None  # the latest record's time, its subagents' included
+    subagent_heard: float | None = None  # the latest record's time in any of its subagents
+    replied: float | None = None  # the latest reply's time in the main conversation
     cost_state: float | None = None  # Claude Code's own total, written when the session exits
     cost_at_state: float = 0.0  # cost_total when Claude Code last wrote it
     compact_post_tokens: int | None = None
@@ -214,6 +220,10 @@ class Session:
     # switch, the first prompt on the new model is the whole conversation.
     prefix: int = 0
     prefix_model: str | None = None
+    # (tokens, model family) of its tool list, measured: what a request that couldn't read
+    # the whole conversation back (the first, or one after /compact, a resume, an expired
+    # cache or a model switch) read back all the same
+    tool_list: tuple[int, str | None] | None = None
     revision: int = 0  # bumped on every change to its requests
     _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -251,7 +261,8 @@ class Session:
 
     @property
     def scripted(self) -> bool:
-        return self.entrypoint not in (None, "cli", "claude-vscode", "claude-desktop")
+        """`claude -p` and the SDKs (sdk-cli, sdk-py, sdk-ts): no one types in them."""
+        return (self.entrypoint or "").startswith("sdk-")
 
     # --- Main conversation ----------------------------------------------------
 
@@ -300,6 +311,14 @@ class Session:
         return (self.at_work and not self.ended and self.heard is not None
                 and now - self.heard < WORKING_QUIET)
 
+    def subagent_running(self, now: float) -> bool:
+        """Whether a subagent is at work in the background while the main
+        conversation waits for it: one wrote a record after the main
+        conversation's last reply, within WORKING_QUIET."""
+        heard = self.subagent_heard
+        return (not self.ended and heard is not None and heard > (self.replied or 0)
+                and now - heard < WORKING_QUIET)
+
     @property
     def total(self) -> float:
         """What the session has cost since it started: Claude Code's own total
@@ -326,9 +345,9 @@ class Store:
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # requests with no known price, by model ("Opus 5.5 fast": its fast prices)
         self.summaries: dict[str, tuple[int, int]] = {}  # record id -> (conversation, summary) tokens of each /compact
-        # (folder, entrypoint) -> (tokens, model family): the tool list and system prompt as a
-        # request right after /compact read them back from the cache
-        self.measured_prefix: dict[tuple, tuple[int, str | None]] = {}
+        # (folder, entrypoint), and entrypoint alone -> (tokens, model family): the tool list
+        # as the latest session there measured it (Session.tool_list)
+        self.measured_prefix: dict[tuple | str, tuple[int, str | None]] = {}
         self.revision = 0  # bumped on every change to any request
         self._memo: tuple = (-1, None)  # see memo()
 
@@ -362,6 +381,10 @@ class Store:
                         self.revision += 1  # memo()s group sessions by these
         if record.when is not None:
             session.heard = max(session.heard or 0, record.when)
+            if record.subagent:
+                session.subagent_heard = max(session.subagent_heard or 0, record.when)
+            elif kind == "assistant" and not data.get("isSidechain"):
+                session.replied = max(session.replied or 0, record.when)
         if kind in ("user", "assistant") and not record.subagent and not data.get("isSidechain"):
             if (at_work := at_work_after(record)) is not None:
                 session.at_work = at_work
@@ -387,7 +410,7 @@ class Store:
             total = float(data["totalCostUSD"])
             if total != session.cost_state:  # the same record read again (a file re-read) changes nothing
                 session.cost_state, session.cost_at_state = total, session.cost_total
-            session.ended = True
+            session.ended = session.main.resumed = True
         elif kind == "system" and not record.subagent:
             main = session.main
             if data.get("subtype") == "compact_boundary":
@@ -456,7 +479,9 @@ class Store:
         if price is None and old is None:
             self.unpriced[pretty_model(model) + (" fast" if base else "")] += 1
         request.cost = request_cost(usage, price) + request.usage["searches"] * self.web_search if price else None
-        self._classify(request, price)
+        if old is None and not record.subagent:
+            self._measure_tool_list(session, request)
+        self._classify(session, request, price)
         self._account(session, request, +1)
         if chain.key in (None, key) or old is None:
             chain.key, chain.prompt, chain.model, chain.effort = key, request.prompt, model, request.effort
@@ -464,17 +489,9 @@ class Store:
             chain.speed, chain.geo = request.speed, request.geo
             chain.ttl = request.ttl or chain.ttl
             if old is None:
-                chain.compacted = False
+                chain.compacted = chain.resumed = False
         if not record.subagent:
             session.ended = False
-            if not session.prefix and request.prompt:
-                session.prefix, session.prefix_model = request.prompt, model
-            read = request.usage.get("read", 0)
-            prefix = self.facts.convert(session.prefix, session.prefix_model, model)
-            if old is None and request.prev is not None and request.prev.compacted and 0 < read <= prefix:
-                # Right after /compact, only the tool list and system prompt were still
-                # cached: what this request read back is their exact size.
-                self.measured_prefix[(session.cwd, session.entrypoint)] = (read, model_key(model))
         session.last_activity = max(session.last_activity or 0, request.end)
         if old is None:
             self._to_feed(request)
@@ -494,14 +511,46 @@ class Store:
             feed.pop()
         feed.insert(at, request)
 
-    def _classify(self, request: Request, price: dict | None) -> None:
+    def _measure_tool_list(self, session: Session, request: Request) -> None:
+        """A main-conversation request that couldn't read the whole conversation
+        back (the session's first, or one after /compact, a resume, an expired
+        cache or a model switch) still reads back what is cached: Claude Code's tool
+        list (and, when another session just sent the same, its system
+        prompt). That is the tool list's size, measured."""
+        if not session.prefix and request.prompt:
+            session.prefix, session.prefix_model = request.prompt, request.model
+        prev, read = request.prev, request.usage.get("read", 0)
+        if prev is None or not prev.prompt:
+            cold, could_read = True, request.prompt
+        else:
+            expired = prev.touched is not None and request.start - prev.touched >= (prev.ttl or FIVE_MINUTES)
+            switched = model_key(request.model) != model_key(prev.model)
+            cold, could_read = prev.compacted or prev.resumed or expired or switched, min(request.prompt, prev.prompt)
+        # Not more than the first prompt: a forked conversation reads back more than the tool list.
+        first_prompt = self.facts.convert(session.prefix, session.prefix_model, request.model)
+        if cold and 0 < read < could_read and read <= first_prompt:
+            session.tool_list = (read, model_key(request.model))
+            self.measured_prefix[(session.cwd, session.entrypoint)] = session.tool_list
+            self.measured_prefix[session.entrypoint or ""] = session.tool_list
+
+    def _classify(self, session: Session, request: Request, price: dict | None) -> None:
+        """Whether a request wrote again what it could have read back, and why.
+        What counts is the conversation after the tool list: the tool list
+        is often read back anyway (another session keeps it cached), so a
+        request that misses the whole conversation can still read a big part
+        of its prompt. Right after /compact, only the tool list could be read."""
         prev = request.prev
         request.rewritten, request.rewrite_cost, request.reason = 0, 0.0, None
         if prev is None or not prev.key or not prev.prompt:
             return
+        tool_list = 0.0 if request.subagent else self.tool_list(session, request.model, measured=True)
         could_read = min(request.prompt, prev.prompt)
+        if prev.compacted and not request.subagent:
+            if not tool_list:
+                return  # no telling what was still cached
+            could_read = min(could_read, round(tool_list))
         missed = max(0, could_read - request.usage.get("read", 0))
-        if missed < max(REWRITE_MIN_TOKENS, REWRITE_SHARE * could_read):
+        if missed < max(REWRITE_MIN_TOKENS, REWRITE_SHARE * max(could_read - tool_list, 0)):
             return
         request.rewritten = missed
         request.reason = rewrite_reason(request, prev, self.facts)
@@ -546,18 +595,25 @@ class Store:
         """The sessions in this folder that have sent a main-conversation request."""
         return memo(self, ("folder", cwd), lambda: [s for s in self.sessions.values() if s.cwd == cwd and s.prefix])
 
-    def tool_list(self, session: Session, model: str | None) -> float:
-        """Claude Code's tool list and system prompt as `session` sends them,
-        in `model`'s tokens. Measured, if a request from the same app in this
-        folder read them back right after /compact. Otherwise estimated: every
-        first prompt is those plus a first message, which may paste a whole
-        file, so the estimate is the smallest first prompt among this session
-        and the other interactive ones in its folder started from the same app.
-        A scripted run can bring a system prompt of its own, so it's compared
+    def tool_list(self, session: Session, model: str | None, measured: bool = False) -> float:
+        """Claude Code's tool list as `session` sends it, in `model`'s tokens.
+        Measured (Session.tool_list): by this session, else by the latest
+        session from the same app in this folder, else anywhere (the tool
+        list is much the same everywhere: 22–25k tokens in the CLI). Else
+        estimated, unless `measured`: every first prompt is the tool list and
+        system prompt plus a first message, which may paste a whole file, so
+        the estimate is the smallest first prompt among this session and the
+        other interactive ones in its folder started from the same app. A
+        scripted run can bring a system prompt of its own, so it's compared
         with nothing else."""
-        if not session.scripted and (session.cwd, session.entrypoint) in self.measured_prefix:
-            tokens, family = self.measured_prefix[(session.cwd, session.entrypoint)]
-            return self.facts.convert(tokens, family, model)
+        found = session.tool_list
+        if found is None and not session.scripted:
+            found = (self.measured_prefix.get((session.cwd, session.entrypoint))
+                     or self.measured_prefix.get(session.entrypoint or ""))
+        if found is not None:
+            return self.facts.convert(found[0], found[1], model)
+        if measured:
+            return 0.0
         peers = [session] if session.scripted else [
             s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
         return min((self.prefix_on(s, model) for s in peers if s.prefix), default=0.0)
@@ -572,18 +628,28 @@ class Store:
         return round(min(SUMMARY_MAX, max(SUMMARY_MIN, SUMMARY_SHARE * conversation)))
 
     def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
-        """Tokens `model` likely already has cached for `session`: its tool list
-        and system prompt, if a session in the same folder used that model
-        within its cache lifetime (research/CACHE-DECISIONS.md §7). This
-        session counts too, if it left that model a moment ago; only its tool
-        list, as the rest may be too far back to be found (§6, round trips).
+        """Tokens of `session`'s next request that `model` likely has cached
+        when its conversation's own cache can't be read: its tool list
+        (research/CACHE-DECISIONS.md §7). What usually happens, not what's
+        certain:
 
-        Another session shares at most its own first prompt (a scripted run's
-        can be small, with a system prompt of its own), so the best match
+        - on its own model with a 1-hour cache, the tool list was read back
+          on 36 of 39 cold starts measured (after hours idle, too: something
+          usdash can't see keeps it cached);
+        - otherwise only if a session in the same folder, from the same app
+          and with the same cache lifetime (the 5-minute and 1-hour tool
+          lists differ), used that model within that lifetime. This session
+          counts too, if it left that model a moment ago.
+
+        Another session shares at most its own first prompt, so the best match
         among those still cached is the estimate."""
         own, shared = self.tool_list(session, model), 0.0
+        ttl = session.ttl or FIVE_MINUTES
+        if model_key(model) == model_key(session.model) and ttl >= ONE_HOUR:
+            return round(own)
         for other in self.folder(session.cwd):
-            if other.cached_on(model, now):
+            if (other.entrypoint == session.entrypoint and (other.ttl or FIVE_MINUTES) == ttl
+                    and other.cached_on(model, now)):
                 shared = max(shared, min(own, self.prefix_on(other, model)))
         return round(shared)
 

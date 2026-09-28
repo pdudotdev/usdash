@@ -39,7 +39,8 @@ def test_the_next_message_on_each_model_and_the_cheapest(store):
     assert prices(tip) == pytest.approx({"claude-fable-5-1": 42_000 * 20 / 1e6, "claude-opus-5-5": 42_000 * 0.2 / 1e6,
                                          "claude-sonnet-5": 42_000 * 4 / 1e6,
                                          "claude-haiku-4-5": 42_000 * 0.77 * 2 / 1e6})
-    assert all(exact for _, _, exact in tip.prices)
+    # Exact on its own model; ≈ on the others, which may have the tool list cached.
+    assert [exact for _, _, exact in tip.prices] == [False, True, False, False]
     assert tip.cheapest == "claude-opus-5-5" and tip.warning is None
 
 

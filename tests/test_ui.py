@@ -75,17 +75,19 @@ def test_sections_and_counts(store):
 def test_a_live_session_shows_its_next_message_on_each_model(store):
     two_sessions(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    # 42,002 tokens read back on Opus 5.5 at $0.20, or written at the others' 1-hour prices (×0.77 on Haiku).
-    assert len(a) == 3 and a[2].strip("│ ") == ("└ next message re-sends 42k tokens: $0.84 on Fable 5.1, "
-                                                 "$0.01 on Opus 5.5 (cached) ✅, $0.17 on Sonnet 5, $0.06 on Haiku 4.5")
+    # 42,002 tokens read back on Opus 5.5 at $0.20, or written at the others' 1-hour prices (×0.77 on Haiku):
+    # ≈, as another model may have the tool list cached.
+    assert len(a) == 3 and a[2].strip("│ ") == ("└ next message re-sends 42k tokens: ≈$0.84 on Fable 5.1, "
+                                                 "$0.01 on Opus 5.5 (cached) ✅, ≈$0.17 on Sonnet 5, ≈$0.06 on Haiku 4.5")
 
 
 def test_an_idle_session_shows_what_coming_back_costs(store):
     two_sessions(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    # 30,002 tokens written again on the 5-minute cache, on every model, the more capable ones too.
-    assert b[1].strip("│ ") == ("└ continuing re-sends 30k tokens: $0.38 on Fable 5.1, $0.15 on Opus 5.5, "
-                                 "$0.08 on Sonnet 5, $0.03 on Haiku 4.5")
+    # 30,002 tokens written again on the 5-minute cache, on every model, the more capable ones too:
+    # ≈, as the tool list may still be cached.
+    assert b[1].strip("│ ") == ("└ continuing re-sends 30k tokens: ≈$0.38 on Fable 5.1, ≈$0.15 on Opus 5.5, "
+                                 "≈$0.08 on Sonnet 5, ≈$0.03 on Haiku 4.5")
     closing = Transcript(session="bbbb-2222")
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
@@ -210,8 +212,25 @@ def test_a_session_still_at_work_after_its_cache_expired_says_so(store):
     t.into(store)
     row = block(screen(store, ui.View(now=T0 + 370)), "wwww")[0]
     assert "○ expired · working" in row
+
     row = block(screen(store, ui.View(now=T0 + 40 * 60)), "wwww")[0]
     assert "○ expired · 39m" in row  # 39 minutes without a word: no longer at work
+
+
+def test_a_session_waiting_on_a_subagent_after_its_cache_expired_says_so(store):
+    t = Transcript(session="ssss-1111", cwd="/home/user/other")
+    t.turn(T0, text="use a subagent", write=40_000, ttl="5m", stop="end_turn")
+    t.reply(T0 + 360, subagent="agent-1", write=25_000)
+    t.into(store)
+    assert "○ expired · subagent" in block(screen(store, ui.View(now=T0 + 370)), "ssss")[0]
+
+
+def test_an_app_usdash_doesnt_know_shows_as_claude_code_names_it(store):
+    t = Transcript(session="jjjj-1111", entrypoint="claude-jetbrains")
+    t.turn(T0, text="hello from the ide", write=40_000)
+    t.into(store)
+    row = block(screen(store, ui.View(now=T0 + 60)), "jjjj")[0]
+    assert "claude-jetbrains" in row and "script" not in row
 
 
 def test_a_fast_session_says_so(store):
@@ -252,7 +271,7 @@ def test_only_the_markers_are_dim(store):
     two_sessions(store)
     view = ui.View(now=NOW)
     live, idle = store.sessions["aaaa-1111"], store.sessions["bbbb-2222"]
-    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.comeback_lines(store, idle))]
+    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.comeback_lines(store, idle, view))]
     for line in lines:
         assert not line.style, line.plain  # a base style would cover the amounts too
     dim = [line.plain[span.start:span.end] for line in lines for span in line.spans if span.style == "dim"]

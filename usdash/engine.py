@@ -77,32 +77,42 @@ def models_for(store: Store, session: Session) -> list[str]:
     return [m for m in (lineup if own in lineup else [own, *lineup]) if m in store.prices]
 
 
-def next_message(store: Store, session: Session, model: str, now: float) -> tuple[float, bool] | None:
-    """(what re-sending C costs on `model` right now, whether that's exact).
-    The session's own model reads its cache back while it's warm; another
-    model writes it all, less the tool list if a session in the same folder
-    keeps it cached there (then ≈: how much is inferred)."""
+def cold_resend(store: Store, session: Session, model: str, now: float) -> float | None:
+    """≈ $ to re-send C on `model` when the conversation's own cache can't be
+    read (it expired, the session exited, or another model): all written
+    again, but the tool list read back if it's likely still cached there
+    (Store.shared_prefix). Whether it is can't be known, so this is ≈."""
     ctx, price = context(store, session), store.price(model, session)
-    warm, _, ttl = cache_clock(session, now)
-    own = model_key(model) == model_key(session.model)
-    cost = resend(store, session, model, warm and own)
+    cost = resend(store, session, model, warm=False)
     if ctx is None or price is None or cost is None:
         return None
-    if own:
-        return cost, ctx.exact
+    ttl = session.ttl or FIVE_MINUTES
     shared = min(store.shared_prefix(session, model, now), store.facts.convert(ctx.tokens, session.model, model))
-    return cost - shared * (write_price(price, ttl) - price["cache_read"]) / 1e6, ctx.exact and not shared
+    return cost - shared * (write_price(price, ttl) - price["cache_read"]) / 1e6
 
 
-def comeback(store: Store, session: Session) -> tuple[Context, list[tuple[str, float]]] | None:
-    """What coming back to an expired or exited session costs: re-sending all of C,
-    written again, on each model. Other sessions' cached tool lists aren't
-    subtracted: a resumed session gets a fresh system prompt (git status,
-    date), which may not match theirs."""
+def next_message(store: Store, session: Session, model: str, now: float) -> tuple[float, bool] | None:
+    """(what re-sending C costs on `model` right now, whether that's exact).
+    The session's own model reads its cache back while it's warm: exact
+    (but ≈ right after /compact). Otherwise cold_resend: ≈."""
+    warm, _, _ = cache_clock(session, now)
+    ctx = context(store, session)
+    if ctx is not None and warm and model_key(model) == model_key(session.model):
+        cost = resend(store, session, model, warm=True)
+        return None if cost is None else (cost, ctx.exact)
+    cost = cold_resend(store, session, model, now)
+    return None if cost is None else (cost, False)
+
+
+def comeback(store: Store, session: Session, now: float) -> tuple[Context, list[tuple[str, float]]] | None:
+    """What coming back to an expired or exited session costs, on each model: ≈ cold_resend.
+    Resuming re-writes all of the conversation even minutes later: a resumed
+    session sends a fresh system prompt, and only the tool list before it
+    can still be read back."""
     ctx = context(store, session)
     if ctx is None:
         return None
-    costs = [(m, resend(store, session, m, warm=False)) for m in models_for(store, session)]
+    costs = [(m, cold_resend(store, session, m, now)) for m in models_for(store, session)]
     return ctx, [(m, cost) for m, cost in costs if cost is not None]
 
 

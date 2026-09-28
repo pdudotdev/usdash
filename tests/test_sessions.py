@@ -162,12 +162,19 @@ def test_compaction(fixture_store, store):
     t = Transcript()
     t.turn(T0, write=80_000)
     t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 3_000})
-    # Only the tool list and system prompt were read back; the summary and the rest were written.
+    # The tool list was read back and the summary written: new, not a re-write. It measures the tool list.
     t.turn(T0 + 60, read=20_000, write=19_000)
     t.into(store)
-    latest = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
-    assert latest.reason == "/compact"
-    assert not store.sessions["sess-1"].main.compacted
+    session = store.sessions["sess-1"]
+    latest = max(session.requests.values(), key=lambda r: r.start)
+    assert latest.reason is None and store.tool_list(session, "claude-opus-5-5") == 20_000
+    assert not session.main.compacted
+    # Compacted again, and back once the cache expired: the tool list itself was written again.
+    t.record("system", T0 + 90, subtype="compact_boundary", compactMetadata={"postTokens": 3_000})
+    t.turn(T0 + 60 + ONE_HOUR + 120, write=23_002)
+    t.into(store)
+    latest = max(session.requests.values(), key=lambda r: r.start)
+    assert (latest.reason, latest.rewritten) == ("cache expired (idle 62 min)", 20_000)
 
 
 def test_subagents_have_their_own_cache(fixture_store):
@@ -344,6 +351,51 @@ def test_what_says_claude_code_is_still_at_work(store):
     assert session.working(T0 + 620)  # a command typed meanwhile says nothing either way
 
 
+def test_a_miss_counts_against_the_conversation_after_the_tool_list(store):
+    # Check 26 in tests/sanity/manual.py: a 5-minute cache, back after 10½ minutes. The tool list
+    # (24,981, kept cached elsewhere) was read back and the 10,569-token conversation written again:
+    # under 30% of the prompt, but all of the conversation.
+    t = Transcript()
+    t.turn(T0, read=24_981, write=9_909, ttl="5m")
+    t.turn(T0 + 5, read=34_890, write=658, ttl="5m")
+    t.turn(T0 + 5 + 636, read=24_981, write=11_072, ttl="5m")
+    t.into(store)
+    latest = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
+    assert (latest.reason, latest.rewritten) == ("cache expired (idle 11 min)", 10_569)
+
+
+def test_a_quick_resume_re_writes_the_conversation(store):
+    # Check 13 in tests/sanity/manual.py: exited, and resumed 3½ minutes later on a 5-minute
+    # cache. Only the tool list was read back: the resumed session sent a fresh system prompt.
+    t = Transcript()
+    t.turn(T0, read=24_981, write=9_907, ttl="5m")
+    t.record("cost-state", totalCostUSD=0.05)
+    t.turn(T0 + 210, read=24_981, write=9_970, ttl="5m")
+    t.into(store)
+    latest = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
+    assert (latest.reason, latest.rewritten) == ("resumed", 9_909)
+    # Resumed once the cache expired: that's what the miss is down to.
+    t.record("cost-state", totalCostUSD=0.10)
+    t.turn(T0 + 210 + 600, read=24_981, write=10_000, ttl="5m")
+    t.into(store)
+    latest = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
+    assert latest.reason == "cache expired (idle 10 min)"
+
+
+def test_a_subagent_at_work_in_the_background(store):
+    # The main conversation starts a subagent in the background and ends its turn, then waits.
+    t = Transcript()
+    t.turn(T0, write=40_000, stop="end_turn")
+    t.reply(T0 + 20, subagent="agent-1", write=25_000)
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert not session.working(T0 + 400) and session.subagent_running(T0 + 400)
+    assert not session.subagent_running(T0 + 20 + 31 * 60)  # quiet too long: it was stopped
+    t.reply(T0 + 600, read=40_000, write=500, stop="end_turn")  # it reported back, and was answered
+    t.into(store)
+    assert not session.subagent_running(T0 + 610)
+
+
 def test_a_session_quiet_too_long_is_not_at_work(store):
     t = Transcript()
     t.turn(T0, write=40_000, stop="tool_use")  # e.g. it was killed while the tool ran
@@ -367,6 +419,10 @@ def test_scripted_sessions(store):
         t.user("hi", T0)
         t.into(store)
     assert [store.sessions[s].scripted for s in "abcd"] == [False, False, False, True]
+    t = Transcript(session="e", entrypoint="claude-jetbrains")  # an app usdash doesn't know yet: not a script
+    t.user("hi", T0)
+    t.into(store)
+    assert not store.sessions["e"].scripted
 
 
 # --- Long turns and long subagents (research/CACHE-DECISIONS.md §6) --------------------

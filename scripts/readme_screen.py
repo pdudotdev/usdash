@@ -27,8 +27,9 @@ T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
 
 def grow(t: Transcript, start: float, prompts: tuple[int, ...], texts: tuple[str, ...], out: int, **reply) -> None:
-    """A conversation whose prompt grows through `prompts`, one message every two minutes."""
-    previous = 0
+    """A conversation whose prompt grows through `prompts`, one message every two minutes. Its
+    first request reads Claude Code's tool list back, as a real one usually does on a 1-hour cache."""
+    previous = 23_300
     for i, (size, text) in enumerate(zip(prompts, texts)):
         t.turn(start + 120 * i, text=text, read=previous, write=size - previous - 2, out=out, **reply)
         previous = size

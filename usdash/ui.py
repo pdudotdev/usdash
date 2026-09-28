@@ -25,6 +25,7 @@ from .models import model_key, pretty_model
 from .sessions import Request, Session, Store, day_of, snippet
 
 MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
+# The VS Code extension also runs in its forks (Cursor, Windsurf, …): "IDE" is true for all of them.
 APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
 HEADER_HEIGHT = 5  # three lines and the frame
@@ -109,9 +110,12 @@ def model_text(model: str | None, effort: str | None = None, speed: str | None =
 
 
 def app_name(session: Session) -> str:
-    """Where a session runs: CLI, IDE (the VS Code extension), Desktop, or
-    script (`claude -p`, the SDKs); '?' if its transcript doesn't say."""
-    return "script" if session.scripted else APPS.get(session.entrypoint or "", "?")
+    """Where a session runs: CLI, IDE (the VS Code extension, or a fork of it),
+    Desktop, or script (`claude -p`, the SDKs). Any other entrypoint as Claude
+    Code wrote it, so a new one names itself; '?' if the transcript doesn't say."""
+    if session.scripted:
+        return "script"
+    return APPS.get(session.entrypoint or "") or snippet(session.entrypoint, 16) or "?"
 
 
 def visible_sessions(store: Store, view: View) -> list[Session]:
@@ -235,6 +239,8 @@ def cache_cell(session: Session, view: View) -> Text:
         return Text(f"● {clock(left)}", style="green")
     if session.working(view.now):  # its next request will re-write it all
         return Text.assemble(("○ expired · ", "red"), ("working", "yellow"))
+    if session.subagent_running(view.now):  # the same, once the subagent reports back
+        return Text.assemble(("○ expired · ", "red"), ("subagent", "yellow"))
     return Text(f"○ expired · {age}", style="red")
 
 
@@ -289,14 +295,14 @@ def live_lines(session: Session, view: View, advice: Advice) -> list[Text]:
     return lines
 
 
-def comeback_lines(store: Store, session: Session) -> list[Text]:
-    """Under an expired or exited session: what coming back to it costs on each model."""
-    found = comeback(store, session)
+def comeback_lines(store: Store, session: Session, view: View) -> list[Text]:
+    """Under an expired or exited session: what coming back to it costs on each model (≈: engine.cold_resend)."""
+    found = comeback(store, session, view.now)
     if found is None:
         return []
     ctx, costs = found
     verb = "resuming" if session.ended else "continuing"
-    return [prices_text(verb, ctx, [(m, cost, ctx.exact) for m, cost in costs], session.model)]
+    return [prices_text(verb, ctx, [(m, cost, False) for m, cost in costs], session.model)]
 
 
 def tree(lines: list[Text]) -> list[Text]:
@@ -330,7 +336,7 @@ def session_entries(store: Store, view: View) -> list[Entry]:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
             pane = "exited" if session.ended else "expired"
-            panes[pane].append((when, Entry(pane, cells, tree(comeback_lines(store, session)))))
+            panes[pane].append((when, Entry(pane, cells, tree(comeback_lines(store, session, view)))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     panes["exited"].sort(key=lambda item: -item[0])
     return [entry for pane in PANES for _, entry in panes[pane]]

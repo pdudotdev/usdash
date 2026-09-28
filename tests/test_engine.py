@@ -42,21 +42,37 @@ def test_resending_the_conversation_is_priced_from_the_last_prompt(store):
     assert engine.resend(store, session, "claude-haiku-4-5", warm=True) == pytest.approx(42_000 * 0.77 * 2 / 1e6)
 
 
-def test_coming_back_re_sends_everything_on_each_model(store):
-    session = opus_session(store)
-    ctx, costs = engine.comeback(store, session)
-    assert ctx.exact and ctx.tokens == 42_000
-    assert costs == [("claude-fable-5-1", pytest.approx(0.84)), ("claude-opus-5-5", pytest.approx(0.336)),
-                     ("claude-sonnet-5", pytest.approx(0.168)), ("claude-haiku-4-5", pytest.approx(42_000 * 0.77 * 2 / 1e6))]
-    # Another session in the folder keeping Haiku's tool list cached doesn't count:
-    # a resumed session's fresh system prompt may not match it.
+def test_coming_back_re_writes_the_conversation_but_likely_not_the_tool_list(store):
+    t = Transcript()  # a 1-hour cache; its first request read a 25k tool list back
+    t.turn(T0, read=25_000, write=14_998)
+    t.turn(T0 + 60, read=40_000, write=1_998)
+    t.into(store)
+    session, later = store.sessions["sess-1"], T0 + 3 * ONE_HOUR
+    ctx, costs = engine.comeback(store, session, later)
+    assert ctx.exact and ctx.tokens == 42_000 and store.tool_list(session, "claude-opus-5-5") == 25_000
+    # Its own model likely still has the tool list, hours later; the others have nothing of it cached.
+    assert costs == [("claude-fable-5-1", pytest.approx(42_000 * 20 / 1e6)),
+                     ("claude-opus-5-5", pytest.approx((25_000 * 0.2 + 17_000 * 8) / 1e6)),
+                     ("claude-sonnet-5", pytest.approx(42_000 * 4 / 1e6)),
+                     ("claude-haiku-4-5", pytest.approx(42_000 * 0.77 * 2 / 1e6))]
+    # Another 1-hour session from the same app in the folder keeps Haiku's tool list cached;
+    # a 5-minute one on Sonnet doesn't count: its tool list is a different one.
     other = Transcript(session="sess-2")
-    other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000)
+    other.turn(later - 100, model="claude-haiku-4-5", write=30_000)
     other.into(store)
-    assert engine.comeback(store, session)[1][3][1] == pytest.approx(42_000 * 0.77 * 2 / 1e6)
+    five = Transcript(session="sess-3")
+    five.turn(later - 100, model="claude-sonnet-5", write=30_000, ttl="5m")
+    five.into(store)
+    costs = dict(engine.comeback(store, session, later)[1])
+    tools = 25_000 * 0.77
+    assert costs["claude-haiku-4-5"] == pytest.approx(((42_000 * 0.77 - tools) * 2 + tools * 0.1) / 1e6)
+    assert costs["claude-sonnet-5"] == pytest.approx(42_000 * 4 / 1e6)
+    # A 5-minute session's own model: written, unless another 5-minute session just used it.
+    short = opus_session(store, ttl="5m", session="sess-4")
+    assert dict(engine.comeback(store, short, later)[1])["claude-opus-5-5"] == pytest.approx(42_000 * 5 / 1e6)
     # A model outside the current lineup comes first, then the lineup.
-    older = opus_session(store, model="claude-opus-4-6", session="sess-3")
-    assert [model for model, _ in engine.comeback(store, older)[1]] == [
+    older = opus_session(store, model="claude-opus-4-6", session="sess-5")
+    assert [model for model, _ in engine.comeback(store, older, later)[1]] == [
         "claude-opus-4-6", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"]
 
 
@@ -154,6 +170,33 @@ def test_the_tool_list_is_measured_after_a_switch_from_haiku(store):
     assert store.measured_prefix[("/home/user/proj", "cli")] == (36_829, "claude-opus-5-5")
 
 
+def test_the_tool_list_is_what_a_cold_start_reads_back(store):
+    # A new session's first request reads back the tool list another session keeps cached.
+    t = Transcript()
+    t.turn(T0, read=24_856, write=9_910)
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert store.tool_list(session, "claude-opus-5-5") == 24_856  # not its 34,768-token first prompt
+    # Back after the cache expired: what it reads back then is the latest measure.
+    t.turn(T0 + ONE_HOUR + 60, read=23_308, write=12_000)
+    t.into(store)
+    assert store.tool_list(session, "claude-opus-5-5") == 23_308
+    # A session that found nothing cached takes the latest measure from the same app: in its folder,
+    # else anywhere. A script doesn't: its system prompt is its own.
+    cold = Transcript(session="sess-2", cwd="/home/user/new")
+    cold.turn(T0 + 2 * ONE_HOUR, write=35_000)
+    cold.into(store)
+    assert store.tool_list(store.sessions["sess-2"], "claude-opus-5-5") == 23_308
+    script = Transcript(session="sess-3", entrypoint="sdk-cli")
+    script.turn(T0 + 2 * ONE_HOUR, write=20_000)
+    script.into(store)
+    assert store.tool_list(store.sessions["sess-3"], "claude-opus-5-5") == 20_002
+    # Within the cache lifetime nothing is cold: a partial read then isn't the tool list.
+    t.turn(T0 + ONE_HOUR + 120, read=30_000, write=5_310)
+    t.into(store)
+    assert store.tool_list(session, "claude-opus-5-5") == 23_308
+
+
 def test_the_next_message_elsewhere_uses_what_that_model_has_cached(store):
     session = opus_session(store, ttl="5m")
     # A Haiku session in another folder: its cache is no use here.
@@ -161,7 +204,12 @@ def test_the_next_message_elsewhere_uses_what_that_model_has_cached(store):
     elsewhere.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="5m")
     elsewhere.into(store)
     cold, cold_exact = engine.next_message(store, session, "claude-haiku-4-5", T0 + 130)
-    assert cold == pytest.approx(42_000 * 0.77 * 1.25 / 1e6) and cold_exact
+    assert cold == pytest.approx(42_000 * 0.77 * 1.25 / 1e6) and not cold_exact  # ≈: whether it's cached is a guess
+    # A 1-hour session in the same folder: its tool list is a different one.
+    hour = Transcript(session="sess-4")
+    hour.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="1h")
+    hour.into(store)
+    assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == 0
     # Another session in the same folder used Haiku 30 seconds ago.
     other = Transcript(session="sess-2")
     other.turn(T0 + 100, model="claude-haiku-4-5", write=30_000, ttl="5m")
@@ -191,8 +239,8 @@ def test_the_next_message_elsewhere_uses_what_that_model_has_cached(store):
 
 def test_a_pasted_first_message_does_not_count_as_the_tool_list(store):
     session = opus_session(store, ttl="5m")  # first prompt 40,000
-    pasted = Transcript(session="sess-2", entrypoint="sdk-cli")
-    pasted.turn(T0 + 100, model="claude-haiku-4-5", write=80_000, ttl="5m")  # claude -p "$(cat big.log)"
+    pasted = Transcript(session="sess-2")
+    pasted.turn(T0 + 100, model="claude-haiku-4-5", write=80_000, ttl="5m")  # claude "$(cat big.log)"
     pasted.into(store)
     # Haiku has at most what both first prompts share: this session's 40,000, in Haiku's tokens.
     assert store.shared_prefix(session, "claude-haiku-4-5", T0 + 130) == round(40_000 * 0.77)
