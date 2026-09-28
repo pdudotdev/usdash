@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-GPLv3-1a1a2e)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/pdudotdev/usdash?color=1a1a2e)](https://github.com/pdudotdev/usdash/commits/master/)
 
-A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, what your next message will cost, and when switching model, lowering effort or compacting saves money.
+A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, and what your next message will cost on each model.
 
 It reads Claude Code's files, plus two pages of Anthropic's public docs once at start: the prices and the current models (`--offline` skips even that). The only file it writes is its copy of those pages. Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
 
@@ -13,7 +13,7 @@ It reads Claude Code's files, plus two pages of Anthropic's public docs once at 
 - [x] **It expires** 5 minutes or 1 hour after the last request started, and each request restarts that clock
 - [x] **After a miss**, the whole conversation is written again, at 1.25× to 2× the input price
 
-![How usdash works: Claude Code in the terminal, VS Code, the Desktop app and scripts writes transcripts to ~/.claude/projects; usdash turns each reply into a request with its cost, cache misses, a cache clock per session, what re-sending each conversation costs and advice, shown as a header, live sessions, idle sessions and, on `r`, every request](docs/how-it-works.svg)
+![How usdash works: Claude Code in the terminal, VS Code, the Desktop app and scripts writes transcripts to ~/.claude/projects; usdash turns each reply into a request with its cost, cache misses, a cache clock per session and what re-sending each conversation costs on each model, shown as a header, live sessions, idle sessions and, on `r`, every request](docs/how-it-works.svg)
 
 ## 📖 **Table of Contents**
 - 💲 **usdash**
@@ -31,11 +31,11 @@ It reads Claude Code's files, plus two pages of Anthropic's public docs once at 
 
 ## 🔭 Overview
 
-usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 24 hours: the ones you're in, with what to do and what each option costs, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
+usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 24 hours: the ones you're in, with what the next message costs on each model, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
 
 ▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
 
-![usdash: today's spend; a live session with its cache countdown, the action to take and the price of each option; an idle session, three folded script runs and an exited session, each with what coming back to it costs](docs/dashboard.svg)
+![usdash: today's spend; a live session with its cache countdown and what its next message costs on each model; an idle session, three folded script runs and an exited session, each with what coming back to it costs](docs/dashboard.svg)
 
 ▫️ **The header:** today's spend at list prices, the share of all input that was read back from the cache, and what cache misses added today, by cause: requests that had to send the conversation again at full price instead of reading it back (the `⟳` rows in the request list). The second line says what the dollars are: Anthropic's current API list prices (if the pricing page can't be read at start, the last prices read from it, with their date), and on a subscription account what the same use would cost on an API key. Any warnings follow it, in yellow: requests with no known price (left out of the totals), a page of Anthropic's docs that no longer reads as expected, and record types usdash doesn't know. The third line says why amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)).
 
@@ -52,31 +52,24 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
 
-▫️ **Live sessions** (the cache is still warm, and you haven't quit) have their own pane at the top, with idle ones in a second pane below; the columns line up across both. A live session opens up:
-- `└` what you last typed in that window, and how long ago
-- the action: what to do now (`⚡` when acting right away is clearly cheaper)
-- one row per option, with what it costs:
+▫️ **Live sessions** (the cache is still warm, and you haven't quit) have their own pane at the top, with idle ones in a second pane below; the columns line up across both. Under each live session, what you last typed there and what your next message costs on each model:
 
 ```
-     Stay       re-sends 182k tokens: $0.04 now, $1.46 once the cache expires
-   ↑ Fable 5.1  $3.60 more now, then ≈$0.49 more a message
-   ↓ Sonnet 5   $0.69 more now, then ≈$0.16 less a message · evens out after ≈4 messages
-   ↓ Haiku 4.5  $0.24 more now, then ≈$0.28 less a message · evens out after ≈1 message
-     /compact   ≈$0.15 now, ≈$1.02 once the cache expires; then ≈$0.03 less a message
-     /effort    costs nothing now
+├ 23m ago · "run the suite and tell me what fails"
+└ next message re-sends 182k tokens: $3.64 on Fable 5.1, $0.04 on Opus 5.5 (cached) ✅, $0.73 on Sonnet 5, $0.28 on Haiku 4.5
 ```
 
-**Stay** (bold, in the model's colour) is what continuing costs, the row to compare the others with: the conversation read back from the cache now, or written again once the cache has expired. Each other model (`↑` more capable, `↓` cheaper) shows what switching costs now, how much more or less each later message costs, and after how many messages a cheaper one evens out. `/effort` costs nothing on Opus 5.5 and Fable 5.1, which keep the cache; elsewhere it shows what re-writing the conversation costs. In fast mode (MODEL says `fast`), every amount is at fast mode's prices.
+Your own model (in bold) reads the conversation back from its cache; any other model has to write all of it into its own. ✅ marks the cheapest next message: almost always staying where you are. Whether a cheaper model is good enough for the task is your call. In fast mode (MODEL says `fast`), every amount is at fast mode's prices. When a big conversation's cache is about to expire, a warning comes in between (see below).
 
-▫️ **An idle session** (its cache expired, or you quit it) gets one line in the idle pane, with what coming back to it costs on its own model and on each cheaper one:
+▫️ **An idle session** (its cache expired, or you quit it) gets one line in the idle pane, with what coming back to it costs on each model:
 
 ```
-└ resuming re-sends 420k tokens: $3.36 on Opus 5.5, $1.68 on Sonnet 5, $0.65 on Haiku 4.5
+└ resuming re-sends 420k tokens: $8.40 on Fable 5.1, $3.36 on Opus 5.5, $1.68 on Sonnet 5, $0.65 on Haiku 4.5
 ```
 
 (`continuing` for a session you haven't quit.) A folder's finished script runs (`claude -p`, SDKs) fold into one row, so a loop of them doesn't bury your sessions.
 
-▫️ **Exact or ≈:** an amount without `≈` is exact: the conversation's size as its last request sent it (the transcript records it), at list prices. What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of those. Amounts with `≈` are averages from the session's history, or depend on a size usdash can only estimate; see [Limitations](#️-limitations).
+▫️ **Exact or ≈:** an amount without `≈` is exact: the conversation's size as its last request sent it (the transcript records it), at list prices. What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of those. Amounts with `≈` depend on a size usdash can only estimate: right after `/compact`, or when another session keeps a model's tool list cached; see [Limitations](#️-limitations).
 
 ▫️ **Every request** (press `r`), newest first:
 
@@ -93,7 +86,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 - [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only requests go to two pages of Anthropic's docs, at start (none with `--offline`), and the only file it writes is its copy of them
 - [x] **Every surface on the machine:** terminal, VS Code extension, Desktop app Code tab, scripts
 - [x] **Subscription or API key:** the cache lifetime of each session is read from its own usage data (1 hour or 5 minutes)
-- [x] **Advice in dollars:** switching model, lowering effort, `/compact`, with the rent-or-buy rule deciding when a switch pays off
+- [x] **Prices, not advice:** what the next message costs on each model, and what coming back to an idle session costs; the one tip is a warning to `/compact` before a big conversation's cache expires
 - [x] **Re-writes explained:** each request that had to write the conversation again is marked, with a likely cause
 - [x] **Checked against Claude Code's own numbers:** tested on real (redacted) transcripts; see [Limitations](#️-limitations) for how close the totals are
 
@@ -109,14 +102,14 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 2. The request's start is the time of the message it answers: your prompt, or the tool result before it. The cache clock counts from there
 3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage, and each web search adds the page's per-search price ($10 per 1,000). Web fetches cost only their tokens
 4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have (and 5,000 tokens or more), it's a **re-write**, with the likely cause: model switch, cache expired, `/compact`, fast mode turned on or off, Claude Code upgrade, or effort change
-5. The session's cache clock, what re-sending it costs, and its advice are recomputed
+5. The session's cache clock and what re-sending it costs on each model are recomputed
 
 ▫️ **What it knows about the models, and where from:**
 
 | Fact | Read at start from Anthropic's docs | Else, shipped with usdash |
 |---|---|---|
 | **Prices**: tokens, fast mode, web search | The [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) | [`usdash/pricing.yaml`](usdash/pricing.yaml) |
-| **The current models**, most capable first: the ones switch advice compares | The columns of the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview)'s comparison table | [`usdash/models.yaml`](usdash/models.yaml) |
+| **The current models**, most capable first: the ones every session is priced on | The columns of the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview)'s comparison table | [`usdash/models.yaml`](usdash/models.yaml) |
 | **Where an effort change keeps the cache**: Opus 5.5 and Fable 5.1 | n/a: the API docs say what the API can do, not what Claude Code sends (they list Opus 5 too, where Claude Code re-wrote) | `usdash/models.yaml` |
 | **Tokenizers**: every model before Claude Opus 4.7 counts the same text as about 0.77× the tokens | n/a (only in prose) | `usdash/models.yaml` |
 
@@ -124,21 +117,9 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 
 > ⚠️ **NOTE:** The transcript format is internal to Claude Code and can change with any release. usdash reads it leniently (missing fields are "unknown", not a crash) and counts record types it doesn't know. If the header reports unknown records after a Claude Code update, check usdash with the [manual sanity suite](tests/sanity/manual.py).
 
-▫️ **The action a live session gets** (the first that applies):
+▫️ **The one warning** (`⚡`, between your last prompt and the prices): when the conversation is 100k+ tokens, the cache expires within 10 minutes (within half its lifetime, if that's shorter), and compacting saves at least $0.005 a message. *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* Compacting while the cache is warm reads the conversation back; after it has expired, it has to write it all again first.
 
-| Action | When | Example |
-|---|---|---|
-| ⚡ **Compact before a break** | The conversation is 100k+ tokens, the cache expires within 10 minutes (within half its lifetime, if that's shorter), and compacting saves at least $0.005 a message | *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* |
-| ⚡ **Switch now** | A cheaper model is cheaper even counting the re-write | *"Switch to Haiku 4.5 now: it's already cheaper."* |
-| 💡 **Switch now** | Staying has cost as much as switching would (the rent-or-buy rule) | *"Switch to Haiku 4.5 now: it would have saved $0.21 by now; switching costs $0.08."* |
-| 💡 **Lower the effort** | On Opus 5.5 or Fable 5.1 (they keep the cache when effort changes), a lower effort saves at least $0.005 a message. The saving comes from this session's own replies at that effort, or, if it has none, from how much shorter replies got in sessions that used both | *"Try /effort medium: ≈$0.04 less a message, at no cost now."* |
-| 💡 **Stay** | A cheaper model saves at least $0.005 a message, but switching now costs extra | *"Stay on Opus 5.5 for now; switching is free once the cache expires (1 hour without a message)."* |
-
-▫️ **How the switch advice decides:**
-- **While the cache is warm**, switching costs extra: the other model has to write the whole conversation into its own cache. So usdash says to stay for now and switch once the cache has expired (after an hour without a message on a subscription, 5 minutes on an API key). The next message after that writes everything again on any model, so switching then is free.
-- **If you keep going without a break**, usdash adds up what staying costs compared with each cheaper model. Once that passes the cost of switching to one of them, it says to switch. This is the rent-or-buy rule (see [Concepts 101](#-concepts-101)).
-- **When switching is cheaper even now**, it says so straight away. That happens, for example, right after `/compact`, if another session in the same folder keeps the other model's copy of the tool list cached.
-- Whether the cheaper model is good enough for the task is your call: the option rows show the dollars for each.
+▫️ **When switching model is cheap:** while the cache is warm, another model has to write the whole conversation into its own cache, so the next message costs more there (the prices line shows how much). Once the cache has expired, the next message writes everything again on any model, so switching then costs nothing extra: the idle line shows what each model costs from there. Right after `/compact`, another model can even be cheaper now, if a session in the same folder keeps its copy of the tool list cached; ✅ then moves to it.
 
 ## 🧪 Example Session
 
@@ -147,7 +128,7 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 | 1 | Start `claude` in `shop` on branch `checkout-fix` and ask a question | A new live session: your first words as its name, `shop@checkout-fix`, `● 59:5x` on a subscription (`● 4:5x` on an API key) |
 | 2 | Wait for Claude Code to title the session | The name changes to that title |
 | 3 | `/rename checkout bug` | The name becomes `checkout bug` |
-| 4 | Keep working on Opus 5.5 | *"Stay on Opus 5.5 for now; switching is free once the cache expires (1 hour without a message)."*, and a price for each option |
+| 4 | Keep working on Opus 5.5 | `next message re-sends …k tokens: … $… on Opus 5.5 (cached) ✅, …`: staying is the cheapest next message |
 | 5 | `/model sonnet`, then send a message | Press `r`: a red row `⟳ re-wrote 53k: model switch from Opus 5.5 (+$…)`. The header's `cache misses added` total goes up |
 | 6 | Step away until the cache expires | The session moves to the idle pane, `○ expired · 1h`, with a line saying what continuing costs on each model |
 | 7 | Come back and keep going until the context is large; then, with 8 minutes of cache left, look again | `⚡` *"Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in 8:00."* |
@@ -207,7 +188,7 @@ Some requests Claude Code makes never appear in its transcripts: session titles,
 
 ▫️ **Code execution:** without web search or web fetch in the same request, it's billed per container-hour against a free monthly allowance per organisation, so one session's share can't be known. It isn't counted; with them, it's free.
 
-▫️ **Fast mode:** a switch to another model that has fast mode (Opus 5, Opus 4.8) is priced as if it stays fast. Whether Claude Code keeps fast mode across `/model` isn't checked yet (the [manual sanity suite](tests/sanity/manual.py), check 34).
+▫️ **Fast mode:** in a fast session, the next message on another model that has fast mode (Opus 5, Opus 4.8) is priced as if it stays fast. Whether Claude Code keeps fast mode across `/model` isn't checked yet (the [manual sanity suite](tests/sanity/manual.py), check 32).
 
 ▫️ **Amazon Bedrock and Google Cloud:**
 Sessions appear, their cache lifetime and costs are read the same way, and Bedrock model ids like `us.anthropic.claude-opus-5-5` are recognised. But:
@@ -217,7 +198,6 @@ Sessions appear, their cache lifetime and costs are read the same way, and Bedro
 
 ▫️ **What's exact and what's an estimate (`≈`):**
 - **Exact:** re-sending a conversation, now or once the cache has expired, on its own model or another: its size as the last request sent it (the whole of it is cached, and resuming re-sends all of it), times list prices. The one approximation is the tokenizer: the same text is ~0.77× the tokens on Haiku 4.5 and every other model before Claude Opus 4.7, so a switch between the two tokenizers can be off by a few percent
-- **≈ per message:** what a later message costs more or less on another model or effort. It assumes messages and replies stay as long as they have been in this session (averages over its recent messages); a stronger model or a lower effort may write more or less
 - **≈ /compact:** the summary's size is learned from earlier compactions on this machine (3.8k tokens typical, 14–16k for very long conversations). What compacting now saves over compacting once the cache has expired is exact
 - **≈ another session's cache:** when another session in the same folder keeps a model's tool list cached, switching there costs less; how much is inferred
 - **Resuming soon after `/exit`:** within a cache lifetime, a resumed session may still read its cache; the idle line shows the full re-send, the most it can cost
@@ -253,11 +233,9 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 - A long skill run stays warm, since each tool step is a new request, unless a single step or tool runs longer than the lifetime
 - A subagent refreshes its own cache, not the parent's: a parent waiting on a long subagent can go cold
 
-▫️ **The rent-or-buy rule**
+▫️ **Switching model mid-conversation**
 
-Switching model costs a one-time re-write; staying costs a little extra on every message. usdash says to switch when it's already cheaper, or once staying has cost as much as switching would; until then it says to stay, and that switching is free once the cache has expired. That never costs more than about twice the best choice in hindsight.
-
-Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to Sonnet 5 cost $0.143; staying on Opus cost about $0.02.
+The other model has to write the whole conversation into its own cache, while staying reads it back. Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to Sonnet 5 cost $0.143; staying on Opus cost about $0.02. A cheaper model saves on every later message, so a switch can pay for itself over a long session, if that model is good enough for the task; after a break long enough for the cache to expire, it costs nothing extra.
 
 ▫️ **The full math**
 
@@ -267,10 +245,10 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 
 | File | Role |
 |---|---|
-| [`usdash/`](usdash/) | The dashboard: transcript reader, Anthropic's docs reader, sessions, cost engine, advice, screen |
+| [`usdash/`](usdash/) | The dashboard: transcript reader, Anthropic's docs reader, sessions, cost engine, screen |
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
 | [`usdash/models.yaml`](usdash/models.yaml) | What usdash knows about the models besides their prices: where an effort change keeps the cache, the tokenizers, and the current lineup when the models overview can't be read |
-| [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number and piece of advice |
+| [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number, and the research behind it |
 | [`research/REDESIGN-PLAN.md`](research/REDESIGN-PLAN.md) | The plan for the session-first screen, and its assumptions checked against real transcripts |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
@@ -281,7 +259,7 @@ Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to
 Run the tests with `pip install -r requirements-dev.txt && pytest -q`, and print the manual suite with `python3 tests/sanity/manual.py`.
 
 ## ⬆️ Planned Upgrades
-- [x] Live cache countdown, the price of continuing and dollar advice per session
+- [x] Live cache countdown, and what the next message costs on each model
 - [x] A session-first screen: the last 24 hours, what coming back to each session costs
 - [x] Prices and the current models read from Anthropic's docs at start, with a saved copy to fall back on
 - [ ] Bedrock and Google Cloud prices: the 10% regional premium, and inference-profile ARNs mapped to their model

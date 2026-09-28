@@ -28,8 +28,6 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
 SNIPPET = 60
-DEFAULT_GROWTH = 1_000  # tokens a message adds, before a session has history
-RECENT = 20  # messages that describe what a session is doing now
 # The summary /compact writes, when no compaction of a conversation this size
 # has been seen: a share of the conversation, within bounds. Fitted to the
 # compactions on the machine usdash was built on (research/CACHE-DECISIONS.md §7).
@@ -193,8 +191,6 @@ class Session:
     prefix_model: str | None = None
     revision: int = 0  # bumped on every change to its requests
     _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
-    # (model family, effort) -> [output tokens, requests], main chain only
-    outputs: dict[tuple, list] = field(default_factory=lambda: defaultdict(lambda: [0, 0]))
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
 
     # --- Naming ---------------------------------------------------------------
@@ -272,32 +268,6 @@ class Session:
                 return False
             touched, ttl = last.start, last.ttl or self.main.ttl
         return touched is not None and now - touched < (ttl or FIVE_MINUTES)
-
-    def growth(self) -> int:
-        """Tokens an average message adds to the conversation: the mean rise
-        between consecutive main-conversation prompts on the same model, over
-        the last RECENT. The mean, not the median: a big tool result is a real
-        cost, and per-message amounts are averages (research/CACHE-DECISIONS.md §7)."""
-        def compute() -> int:
-            requests = self.main_requests()
-            rises = [b.prompt - a.prompt for a, b in zip(requests, requests[1:])
-                     if b.prompt > a.prompt and model_key(a.model) == model_key(b.model)][-RECENT:]
-            return round(sum(rises) / len(rises)) if rises else DEFAULT_GROWTH
-        return memo(self, "growth", compute)
-
-    def output_totals(self, model: str | None, effort: str | None = None) -> tuple[int, int]:
-        """(output tokens, requests) in the main conversation on this model (and effort, if given)."""
-        family = model_key(model)
-        total = count = 0
-        for (m, e), (tokens, n) in self.outputs.items():
-            if m == family and (effort is None or e == effort):
-                total, count = total + tokens, count + n
-        return total, count
-
-    def average_output(self, model: str | None, effort: str | None = None) -> float | None:
-        """Output tokens per main-conversation request on this model (and effort, if given)."""
-        total, count = self.output_totals(model, effort)
-        return total / count if count else None
 
     @property
     def total(self) -> float:
@@ -517,10 +487,6 @@ class Store:
         session.cost_by_day[day_of(request.end)] += sign * cost
         if request.reason:
             self.rewrites[day_of(request.end)][reason_group(request.reason)] += sign * request.rewrite_cost
-        if not request.subagent:
-            stats = session.outputs[(model_key(request.model), request.effort)]
-            stats[0] += sign * request.usage.get("output", 0)
-            stats[1] += sign
 
     # --- Across sessions --------------------------------------------------------
 
@@ -584,28 +550,6 @@ class Store:
             if other.cached_on(model, now):
                 shared = max(shared, min(own, self.prefix_on(other, model)))
         return round(shared)
-
-    def average_output(self, model: str | None, effort: str | None = None) -> float | None:
-        """Output tokens per main-conversation request on this model (and effort),
-        across interactive sessions. Scripted runs are left out: a `claude -p
-        'say OK'` would make a model or effort look nearly free."""
-        def compute() -> float | None:
-            totals = [s.output_totals(model, effort) for s in self.sessions.values() if not s.scripted]
-            tokens, count = sum(t for t, _ in totals), sum(n for _, n in totals)
-            return tokens / count if count else None
-        return memo(self, ("output", model_key(model), effort), compute)
-
-    def output_ratio(self, model: str | None, effort: str | None, other: str | None) -> float | None:
-        """How long replies on this model are at effort `other`, compared with
-        `effort`: from the interactive sessions that used both, so that each
-        compares a task with itself. None if none did."""
-        def compute() -> float | None:
-            pairs = [(s.average_output(model, effort), s.average_output(model, other))
-                     for s in self.sessions.values() if not s.scripted]
-            pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
-            base = sum(a for a, _ in pairs)
-            return sum(b for _, b in pairs) / base if base else None
-        return memo(self, ("ratio", model_key(model), effort, other), compute)
 
     def apply_desktop(self, desktop: dict[str, dict]) -> None:
         """Titles and archive state from the Desktop app's own session files."""

@@ -22,7 +22,7 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 OUT = ROOT / "docs" / "dashboard.svg"
-WIDTH, HEIGHT = 140, 27
+WIDTH, HEIGHT = 140, 21
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
 

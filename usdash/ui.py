@@ -18,9 +18,9 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.text import Text
 
-from .advice import Advice, Memory, advise, clock, money, plural, resends, tokens_text
+from .advice import Advice, advise, clock, money, plural, resends, tokens_text
 from .engine import cache_clock, comeback, context
-from .models import pretty_model
+from .models import model_key, pretty_model
 from .sessions import Request, Session, Store, day_of, snippet
 
 MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
@@ -49,7 +49,6 @@ class View:
     top: Request | None = None  # the request at the top of the view, while scrolled back
     page: int = 1
     unseen: int = 0
-    memory: Memory = field(default_factory=Memory)  # when each switch first became worth it
 
 
 # --- Small pieces ----------------------------------------------------------------
@@ -242,43 +241,56 @@ def session_cells(store: Store, session: Session, view: View) -> list[Text]:
             today_cell(session.cost_by_day.get(day_of(view.now), 0.0)), Text(_money(session.total))]
 
 
-def prompt_line(session: Session, view: View) -> Text:
-    line = Text.assemble(("└ ", "dim"))
-    if session.last_prompt_at:
-        line.append(f"{_ago(view.now - session.last_prompt_at)} · ", style="dim")
+def prompt_text(session: Session, view: View) -> Text:
+    """How long ago you last typed in that window, and what."""
+    line = Text(f"{_ago(view.now - session.last_prompt_at)} · " if session.last_prompt_at else "", style="dim")
     line.append(f"\"{snippet(session.last_prompt, 200)}\"" if session.last_prompt else "no prompt yet", style="italic")
     return line
 
 
-def advice_lines(advice: Advice) -> list[Text]:
-    """The action, then the options as a small table: arrow, label, what it costs."""
-    lines = []
-    if advice.action:
-        lines.append(Text.assemble("⚡ " if advice.urgent else "💡 ", (advice.action, "bold" if advice.urgent else "")))
-    width = max((len(option.label) for option in advice.options), default=0)
-    for option in advice.options:
-        line = Text.assemble((f"   {option.arrow or ' '} ", "dim"))
-        style = " ".join(filter(None, [model_style(option.model) if option.model else "", "bold" if option.bold else ""]))
-        line.append(option.label.ljust(width), style=style)
-        line.append(f"  {option.text}")
-        lines.append(line)
+def prices_text(verb: str, ctx, prices: list[tuple[str, float, bool]], own: str | None,
+                cached: bool = False, best: str | None = None) -> Text:
+    """'next message re-sends 632k tokens: $12.63 on Fable 5.1, $0.13 on Opus
+    5.5 (cached) ✅, …': the same line for live and idle sessions, the
+    session's own model in bold, ✅ on `best`."""
+    line = Text(f"{verb} {resends(ctx)}")
+    for i, (model, cost, exact) in enumerate(prices):
+        mine = model_key(model) == model_key(own)
+        line.append(": " if i == 0 else ", ")
+        line.append(f"{'' if exact else '≈'}{_money(cost)} on ")
+        line.append(pretty_model(model), style=" ".join(filter(None, [model_style(model), "bold" if mine else ""])))
+        if mine and cached:
+            line.append(" (cached)")
+        if model == best:
+            line.append(" ✅")
+    return line
+
+
+def live_lines(session: Session, view: View, advice: Advice) -> list[Text]:
+    """Under a live session: your last prompt, the ⚡ warning if it applies,
+    and what the next message costs on each model."""
+    lines = [prompt_text(session, view)]
+    if advice.warning:
+        lines.append(Text.assemble("⚡ ", (advice.warning, "bold")))
+    if advice.prices:
+        lines.append(prices_text("next message", advice.ctx, advice.prices, session.model, cached=True,
+                                 best=advice.cheapest))
     return lines
 
 
-def comeback_line(store: Store, session: Session) -> Text:
-    """'└ resuming re-sends 533k tokens: $4.27 on Opus 5.5, $2.13 on Sonnet 5, …'"""
-    line = Text.assemble(("└ ", "dim"))
+def idle_lines(store: Store, session: Session) -> list[Text]:
+    """Under an idle session: what coming back to it costs on each model."""
     found = comeback(store, session)
     if found is None:
-        return line
+        return []
     ctx, costs = found
-    approx = "" if ctx.exact else "≈"
-    line.append(f"{'resuming' if session.ended else 'continuing'} {resends(ctx)}")
-    for i, (model, cost) in enumerate(costs):
-        line.append(": " if i == 0 else ", ")
-        line.append(f"{approx}{_money(cost)} on ")
-        line.append(pretty_model(model), style=model_style(model))
-    return line
+    verb = "resuming" if session.ended else "continuing"
+    return [prices_text(verb, ctx, [(m, cost, ctx.exact) for m, cost in costs], session.model)]
+
+
+def tree(lines: list[Text]) -> list[Text]:
+    """├ before each line, └ before the last."""
+    return [Text.assemble(("└ " if i == len(lines) - 1 else "├ ", "dim"), line) for i, line in enumerate(lines)]
 
 
 def script_runs(runs: list[Session], view: View) -> Entry:
@@ -297,14 +309,14 @@ def session_entries(store: Store, view: View) -> list[Entry]:
     """Live sessions first, then idle ones, each newest first."""
     live, idle, runs = [], [], defaultdict(list)
     for session in visible_sessions(store, view):
-        advice = advise(store, session, view.now, view.memory)
+        advice = advise(store, session, view.now)
         cells = session_cells(store, session, view)
         if advice is not None:
-            live.append(Entry(True, cells, [prompt_line(session, view), *advice_lines(advice)]))
+            live.append(Entry(True, cells, tree(live_lines(session, view, advice))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
-            idle.append((session.last_activity or 0, Entry(False, cells, [comeback_line(store, session)])))
+            idle.append((session.last_activity or 0, Entry(False, cells, tree(idle_lines(store, session)))))
     idle += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     return live + [entry for _, entry in sorted(idle, key=lambda item: -item[0])]
 

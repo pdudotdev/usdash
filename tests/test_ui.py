@@ -52,7 +52,7 @@ def test_sessions_are_told_apart_by_name_place_and_id(store):
     a = block(text, "aaaa")
     assert "Fix checkout totals" in a[0] and "shop@checkout-fix  CLI" in a[0] and "Opus 5.5 high" in a[0]
     assert "● 50:00" in a[0] and " sub" not in a[0]  # the countdown shows the lifetime; no billing tag
-    assert '└ 10m ago · "ok, fix it and add a test"' in a[1]  # what was last typed in that window
+    assert '├ 10m ago · "ok, fix it and add a test"' in a[1]  # what was last typed in that window
     b = block(text, "bbbb")
     assert "Release notes" in b[0] and "shop               IDE" in b[0] and "○ expired · 10m" in b[0]
 
@@ -67,22 +67,20 @@ def test_sections_and_counts(store):
     assert len(names) == 2 and names[0] == names[1]
 
 
-def test_a_live_session_opens_up_with_its_action_and_options(store):
+def test_a_live_session_shows_its_next_message_on_each_model(store):
     two_sessions(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    assert "💡 Stay on Opus 5.5 for now; switching is free once the cache expires (1 hour without a message)." in a[2]
-    options = [line.strip("│ ").split("  ")[0].strip() for line in a[3:]]
-    assert options == ["Stay", "↑ Fable 5.1", "↓ Sonnet 5", "↓ Haiku 4.5", "/effort"]
-    # 42,002 tokens read back at $0.20, or written again at $8 once the cache expires.
-    assert "Stay       re-sends 42k tokens: $0.01 now, $0.34 once the cache expires" in a[3]
-    assert "evens out after ≈" in a[5] and "/effort    costs nothing now" in a[7]
+    # 42,002 tokens read back on Opus 5.5 at $0.20, or written at the others' 1-hour prices (×0.77 on Haiku).
+    assert len(a) == 3 and a[2].strip("│ ") == ("└ next message re-sends 42k tokens: $0.84 on Fable 5.1, "
+                                                 "$0.01 on Opus 5.5 (cached) ✅, $0.17 on Sonnet 5, $0.06 on Haiku 4.5")
 
 
 def test_an_idle_session_shows_what_coming_back_costs(store):
     two_sessions(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    # 30,002 tokens written again on the 5-minute cache: $2.50 on Sonnet 5, $1.25 on Haiku 4.5 (×0.77).
-    assert b[1].strip("│ ") == "└ continuing re-sends 30k tokens: $0.08 on Sonnet 5, $0.03 on Haiku 4.5"
+    # 30,002 tokens written again on the 5-minute cache, on every model, the more capable ones too.
+    assert b[1].strip("│ ") == ("└ continuing re-sends 30k tokens: $0.38 on Fable 5.1, $0.15 on Opus 5.5, "
+                                 "$0.08 on Sonnet 5, $0.03 on Haiku 4.5")
     closing = Transcript(session="bbbb-2222")
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
@@ -160,7 +158,7 @@ def test_a_narrow_terminal_cuts_lines_and_never_wraps(store):
     wide, narrow = screen(store, ui.View(now=NOW)), screen(store, ui.View(now=NOW), width=100)
     assert len(block(narrow, "aaaa")) == len(block(wide, "aaaa"))
     assert all(len(line) <= 100 for line in narrow.splitlines())
-    assert '└ 10m ago · "ok, fix it and add a test"' in narrow
+    assert '├ 10m ago · "ok, fix it and add a test"' in narrow
 
 
 def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
@@ -171,7 +169,7 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
         idle.into(store)
     view = ui.View(now=NOW)
     text = screen(store, view, height=30)
-    assert "· showing 1–5 of 14" in text and len(block(text, "aaaa")) == 8  # the live one, whole, and four idle
+    assert "· showing 1–6 of 14" in text and len(block(text, "aaaa")) == 3  # the live one, whole, and five idle
     ui.press(store, view, "down")
     text = screen(store, view, height=30)
     assert "aaaa" not in text and "· showing 2–" in text and "g: back to the top" in text
@@ -187,6 +185,17 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
     assert view.session_scroll == view.session_last - 1 > 0
 
 
+def test_the_compact_warning_sits_between_the_prompt_and_the_prices(store):
+    t = Transcript(session="eeee-1111")
+    t.turn(T0, text="read the whole codebase", write=40_000, ttl="5m")
+    t.turn(T0 + 60, text="and summarise it", read=40_000, write=100_000, ttl="5m")
+    t.into(store)
+    lines = [line.strip("│ ") for line in block(screen(store, ui.View(now=T0 + 60 + 180)), "eeee")]
+    assert lines[1].startswith('├ 3m ago · "and summarise it"')
+    assert lines[2].startswith("├ ⚡ Taking a break? /compact first: ≈$") and lines[2].endswith("once the cache expires in 2:00.")
+    assert lines[3].startswith("└ next message re-sends 140k tokens: ")
+
+
 def test_a_fast_session_says_so(store):
     t = Transcript(session="ffff-1111")
     t.turn(T0, text="ship it fast", write=40_000, speed="fast")
@@ -194,7 +203,7 @@ def test_a_fast_session_says_so(store):
     t.into(store)
     lines = block(screen(store, ui.View(now=T0 + 120)), "ffff")
     assert "Opus 5.5 high fast" in lines[0]
-    assert any("Stay       re-sends 42k tokens: $0.02 now" in line for line in lines)  # read back at $0.40
+    assert "$0.02 on Opus 5.5 (cached) ✅" in lines[2]  # read back at fast mode's $0.40
 
 
 def test_the_request_list_shows_web_searches(store):
@@ -225,11 +234,11 @@ def test_only_the_markers_are_dim(store):
     two_sessions(store)
     view = ui.View(now=NOW)
     live, idle = store.sessions["aaaa-1111"], store.sessions["bbbb-2222"]
-    lines = [ui.prompt_line(live, view), *ui.advice_lines(advice.advise(store, live, NOW)), ui.comeback_line(store, idle)]
+    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.idle_lines(store, idle))]
     for line in lines:
         assert not line.style, line.plain  # a base style would cover the amounts too
     dim = [line.plain[span.start:span.end] for line in lines for span in line.spans if span.style == "dim"]
-    assert "└ " in dim and "   ↓ " in dim
+    assert "├ " in dim and "└ " in dim and not any("$" in text for text in dim)
 
 
 def test_r_swaps_views_and_each_keeps_its_scroll(store):
@@ -244,7 +253,7 @@ def test_r_swaps_views_and_each_keeps_its_scroll(store):
     ui.press(store, view, "down")
     ui.press(store, view, "view")
     assert (view.mode, view.scroll, view.session_scroll) == ("sessions", 1, 0)
-    screen(store, view, height=20)  # too short for all three sessions
+    screen(store, view, height=15)  # too short for all three sessions
     ui.press(store, view, "down")
     ui.press(store, view, "view")
     assert (view.mode, view.scroll, view.session_scroll) == ("requests", 1, 1)

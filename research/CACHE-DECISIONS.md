@@ -2,7 +2,7 @@
 
 How to decide, in dollars, whether to switch model or effort, `/compact`, `/clear`, or just keep going in a Claude Code session. This is the reference for usdash's cost numbers and advice.
 
-Written 2026-09-27. Prices and rules were checked against Anthropic's pricing page, the Claude API prompt-caching docs, and Claude Code's prompt-caching docs (links at the end) on that date. Every example was computed by script, not by hand. Updated the same day with what building usdash v1 found in real transcripts (§7, §8, §9), and again for its session-first screen (§3, §6, §7, §9, §10); the examples in §4 and §6 and the three real moves in §8 are automated tests in [`tests/test_engine.py`](../tests/test_engine.py).
+Written 2026-09-27. Prices and rules were checked against Anthropic's pricing page, the Claude API prompt-caching docs, and Claude Code's prompt-caching docs (links at the end) on that date. Every example was computed by script, not by hand. Updated the same day with what building usdash v1 found in real transcripts (§7, §8, §9), and again for its session-first screen (§3, §6, §7, §9, §10), and again when it moved from advice to prices (§10). The /compact example in §6 is an automated test in [`tests/test_engine.py`](../tests/test_engine.py); the switching examples in §4 and the real moves in §8 were tested while usdash gave switch advice, and are kept here as the reasoning behind its numbers.
 
 ---
 
@@ -281,46 +281,29 @@ A scripted Claude Code session through llm-trunk, on an API key with the 5-minut
 
 ---
 
-## 10. The advice engine, in short
+## 10. What usdash shows, in short
 
-What usdash does, per session in the last 24 hours (`usdash/engine.py`, `usdash/advice.py`):
+Per session in the last 24 hours (`usdash/engine.py`, `usdash/advice.py`). It shows prices, not advice: which model is good enough for the task is the user's call. The switching rules above (§3, §5) are how to read them.
 
 ```
 lifetime = from the session's latest main-conversation write: 1 hour or 5 minutes
 alive    = now − start_of_last_request < lifetime
 C        = the last request's prompt (exact); right after /compact, tool list + summary (≈)
-live     = alive and not closed; idle = everything else
+live     = alive and not exited; idle = everything else
+models   = the current lineup, most capable first (its own model first if it isn't one of them)
 
-idle session: "resuming re-sends Ck tokens: $a on E, $b on L1, $c on L2"   (C written again, on E and each
-              cheaper model, no S subtracted; "continuing" if not closed; closed script runs fold
-              into one row per folder)
+idle session: "resuming re-sends Ck tokens: $a on M1, $b on M2, …"   (C written again, on every model,
+              no S subtracted; "continuing" if not exited; exited script runs fold into one row per folder)
 
-live session: one row per option
-    Stay       "re-sends Ck tokens: $X now, $Y once the cache expires"   (C read back / written again)
-    ↑ / ↓ L    "$Z more (less) now, then ≈$s less (more) a message · evens out after ≈m messages"
-               Z = C on L, written − C read back here (≈ if another session keeps L's tool list cached)
-    /compact   "≈$A now, ≈$B once the cache expires; then ≈$c less a message" (summary size learned; shown
-               when not compacted since the last request and c ≥ $0.005)
-    /effort    "costs nothing now" on Opus 5.5 / Fable 5.1 ("/effort X: costs nothing now, then ≈$s less a
-               message" once a lower effort's saving is known), else "re-sends Ck tokens: $W more now"
-    (no amounts if the session's model has no price)
+live session: "next message re-sends Ck tokens: $a on M1, $b on E (cached) ✅, …"
+              on E, its own model: C read back; on any other L: C on L written, less S (≈ if S > 0);
+              ✅ on the cheapest next message (E on a tie); no amounts if E has no price
 
-and one action, the first that applies:
-    ⚡ C ≥ 100k, not compacted since the last request, c ≥ $0.005, and at most min(10 min, half the lifetime) left:
+and, only when it applies:
+    ⚡ C ≥ 100k, not compacted since the last request, compacting saves $0.005+ a message, and at most
+       min(10 min, half the lifetime) left:
          "Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss."
-    (below, "a cheaper L" is one that saves $0.005+ a message; if several qualify, the largest saving)
-    ⚡ a cheaper L with Z ≤ 0:   "Switch to L now: it's already cheaper."
-    💡 a cheaper L with R ≥ Z:   "Switch to L now: it would have saved $R by now; switching costs $Z."
-                                 (R counts from when switching to L first saved $0.005+ a message)
-    💡 a lower effort saves $0.005+ a message (Opus 5.5 / Fable 5.1, with replies at that effort):
-                                 "Try /effort X: ≈$s less a message, at no cost now."
-    💡 a cheaper L saves $0.005+ a message:
-                                 "Stay on E for now; switching is free once the cache expires (1 hour (5 minutes) without a message)."
 ```
-
-/clear and "use a subagent instead of /model" are not in usdash yet.
-
----
 
 ## Sources
 - Pricing: https://platform.claude.com/docs/en/about-claude/pricing
