@@ -89,9 +89,10 @@ class Request:
     reason: str | None = None  # why, when it re-wrote
     speed: str | None = None  # usage.speed: "fast" or "standard"
     geo: str | None = None  # usage.inference_geo
-    # Claude Code's WebSearch tool calls in the reply, by tool_use id. Each search runs in a
-    # request of its own that the transcripts don't log, so its cost isn't in any amount.
-    tool_searches: set[str] = field(default_factory=set)
+    # Claude Code's WebSearch tool calls in the reply: tool_use id -> searches it made (1 until
+    # its result says: `toolUseResult.searchCount`). They run in a request of their own that
+    # the transcripts don't log, so their cost isn't in any amount.
+    tool_searches: dict[str, int] = field(default_factory=dict)
 
     @property
     def prompt(self) -> int:
@@ -144,40 +145,31 @@ def command_text(text: str) -> str | None:
     return text
 
 
-def is_command(record: Record) -> bool:
-    """Whether a user record is a slash command (/model, /compact, a skill…)."""
-    return "<command-name>" in json.dumps((record.data.get("message") or {}).get("content"))
-
-
-def is_skill_body(record: Record) -> bool:
-    """Whether a user record is a skill's instructions, which Claude Code adds
-    right after the command that ran it (a built-in command like /model gets
-    its output instead)."""
+def record_text(record: Record) -> str | None:
+    """A user record's text: its string content, or its text blocks joined.
+    None if it carries tool results."""
     content = (record.data.get("message") or {}).get("content")
-    blocks = content if isinstance(content, list) else [{"text": content or ""}]
-    return bool(record.data.get("isMeta")) and any(
-        isinstance(block, dict) and str(block.get("text", "")).startswith("Base directory for this skill")
-        for block in blocks)
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    if any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+        return None
+    texts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
+    return "\n".join(texts) if texts else None
 
 
-def prompt_text(record: Record) -> str | None:
-    """What the user typed, if this user record is a real prompt (not a tool
-    result, skill body, compaction summary or other generated text)."""
+def typed(record: Record) -> tuple[str, bool] | None:
+    """(what the user typed, whether it's a slash command), if this user record
+    is a real prompt (not a tool result, skill body, compaction summary or
+    other generated text)."""
     data = record.data
     if record.subagent or data.get("isSidechain") or data.get("isMeta") or data.get("isCompactSummary"):
         return None
-    content = (data.get("message") or {}).get("content")
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        texts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
-        if not texts or any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
-            return None
-        text = "\n".join(texts)
-    else:
-        return None
-    text = command_text(text)
-    return " ".join(text.split()) or None if text else None
+    raw = record_text(record)
+    text = command_text(raw) if raw else None
+    text = " ".join(text.split()) if text else None
+    return (text, "<command-name>" in raw) if text else None
 
 
 def at_work_after(record: Record) -> bool | None:
@@ -219,8 +211,9 @@ class Session:
     desktop_title: str | None = None
     archived: bool = False
     first_prompt: str | None = None  # the first thing typed that says what the session is for
-    first_command: str | None = None  # the first slash command, even a built-in (/model)
-    last_command: str | None = None  # the command just typed, until a skill's body shows it ran one
+    first_command: str | None = None  # the first built-in command (/model), if nothing else says it
+    pending_command: str | None = None  # a command just typed: built-in or not, the next record tells
+    search_calls: dict[str, str] = field(default_factory=dict)  # WebSearch tool_use id -> request key
     last_prompt: str | None = None
     last_prompt_at: float | None = None
     last_activity: float | None = None
@@ -255,11 +248,11 @@ class Session:
     def name(self) -> str:
         """What the user calls this session: /rename, the Desktop sidebar title,
         Claude Code's own title, or failing those the first thing they typed
-        (a skill with its arguments counts; a built-in command like /model
-        only if that's all there is)."""
+        (a command that runs a prompt, like a skill or /init, counts; a
+        built-in like /model only if that's all there is)."""
         return (
             self.custom_title or self.desktop_title or self.agent_name or self.ai_title
-            or snippet(self.first_prompt or self.first_command, 40) or "(new session)"
+            or snippet(self.first_prompt or self.first_command or self.pending_command, 40) or "(new session)"
         )
 
     @property
@@ -413,23 +406,21 @@ class Store:
                 session.at_work = at_work
         if kind == "assistant":
             return self._add_assistant(session, record)
+        if kind in ("user", "assistant") and not record.subagent and not data.get("isSidechain"):
+            self._settle_command(session, record)
         if kind == "user":
-            text = prompt_text(record)
-            if text:
+            self._count_searches(session, record)
+            found = typed(record)
+            if found:
+                text, command = found
                 session.ended = False
-                command = is_command(record)
-                session.last_command = text if command else None
                 if command:
-                    session.first_command = session.first_command or text
+                    session.pending_command = text
                 else:
                     session.first_prompt = session.first_prompt or text
                 session.last_prompt = text
                 session.last_prompt_at = record.when
                 session.last_activity = max(session.last_activity or 0, record.when or 0) or None
-            elif session.last_command and not record.subagent and is_skill_body(record):
-                # The command ran a skill: its arguments say what the session is for.
-                session.first_prompt = session.first_prompt or session.last_command
-                session.last_command = None
         elif kind == "custom-title" and data.get("customTitle"):
             session.custom_title = data["customTitle"]
         elif kind == "agent-name" and data.get("agentName"):
@@ -465,6 +456,40 @@ class Store:
                 if main.touched is not None and started > main.touched:
                     main.touched = started
         return None
+
+    @staticmethod
+    def _settle_command(session: Session, record: Record) -> None:
+        """A command just typed is settled by the next main-conversation
+        record: a built-in (/model, /effort, /compact…) is answered with
+        `<local-command-stdout>` and says nothing about the task; anything
+        else (a skill's body, /init's prompt, a reply) means it ran a prompt,
+        which does."""
+        command = session.pending_command
+        text = record_text(record) if record.type == "user" else ""
+        if not command or text is None or "<local-command-caveat>" in text:
+            return
+        if "<command-name>" in text:
+            return  # the command itself
+        if "<local-command-stdout>" in text:
+            session.first_command = session.first_command or command
+        else:
+            session.first_prompt = session.first_prompt or command
+        session.pending_command = None
+
+    @staticmethod
+    def _count_searches(session: Session, record: Record) -> None:
+        """A WebSearch tool result says how many searches the call made."""
+        result = record.data.get("toolUseResult")
+        searches = result.get("searchCount") if isinstance(result, dict) else None
+        content = (record.data.get("message") or {}).get("content")
+        if not isinstance(searches, int) or not isinstance(content, list):
+            return
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                key = session.search_calls.get(str(block.get("tool_use_id")))
+                request = session.requests.get(key) if key else None
+                if request is not None:
+                    request.tool_searches[str(block.get("tool_use_id"))] = searches
 
     def _start_of(self, session: Session, record: Record, message_id: str | None) -> float | None:
         """When the request behind this reply started: the time of the record
@@ -507,9 +532,11 @@ class Store:
         request.usage = usage_parts(usage)
         request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
         content = message.get("content")
-        for block in content if isinstance(content, list) else []:
+        for i, block in enumerate(content if isinstance(content, list) else []):
             if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "WebSearch":
-                request.tool_searches.add(str(block.get("id")))
+                call = str(block.get("id") or f"{data.get('uuid')}#{i}")
+                request.tool_searches.setdefault(call, 1)
+                session.search_calls[call] = key
         base = self.prices.get(model_key(model))
         price = as_paid(base, model_key(model), request.speed, request.geo) if base else None  # fast mode, US-only
         if price is None and old is None:

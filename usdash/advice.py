@@ -51,8 +51,9 @@ def clock(seconds: int) -> str:
     return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def plural(n: int, word: str) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+def plural(n: int, word: str, words: str | None = None) -> str:
+    """'1 message', '6 messages'; `words` for an irregular plural ('web searches')."""
+    return f"{n} {word}" if n == 1 else f"{n} {words or word + 's'}"
 
 
 def advise(store: Store, session: Session, now: float) -> Advice | None:

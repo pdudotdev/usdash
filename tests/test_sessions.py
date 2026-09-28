@@ -259,8 +259,37 @@ def test_first_and_last_prompt_skip_generated_text(store):
     assert store.sessions["sess-2"].name == "fix the parser"
     only = Transcript(session="sess-3")
     only.user("<command-name>/model</command-name>", T0)
+    only.user("<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", T0 + 1)
     only.into(store)
     assert store.sessions["sess-3"].name == "/model"  # all there is
+
+
+def test_a_command_that_runs_a_prompt_names_the_session(store):
+    # /init runs a prompt of its own (no skill body): it says what the session is for.
+    t = Transcript()
+    t.user("<command-name>/model</command-name><command-args>sonnet</command-args>", T0)
+    t.user("<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", T0 + 1)
+    t.user("<command-name>/init</command-name>", T0 + 2)
+    t.user([{"type": "text", "text": "Please analyze this codebase and create a CLAUDE.md"}], T0 + 3, isMeta=True)
+    t.reply(T0 + 10, write=30_000)
+    t.user("thanks", T0 + 20)
+    t.into(store)
+    assert store.sessions["sess-1"].name == "/init"
+    # A skill the model loads later, after a reply, doesn't turn an earlier built-in into the name.
+    later = Transcript(session="sess-2")
+    later.user("<command-name>/model</command-name><command-args>sonnet</command-args>", T0)
+    later.user("<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", T0 + 1)
+    later.reply(T0 + 5, write=30_000)
+    later.user([{"type": "text", "text": "Base directory for this skill: /x"}], T0 + 6, isMeta=True)
+    later.user("fix the parser", T0 + 7)
+    later.into(store)
+    assert store.sessions["sess-2"].name == "fix the parser"
+    # Only what was typed counts: an attached document that quotes a command tag doesn't.
+    doc = Transcript(session="sess-3")
+    doc.user([{"type": "text", "text": "summarise this"},
+              {"type": "document", "source": {"type": "text", "data": "<command-name>/model</command-name>"}}], T0)
+    doc.into(store)
+    assert store.sessions["sess-3"].name == "summarise this"
 
 
 def test_command_text():

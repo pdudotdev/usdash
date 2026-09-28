@@ -1,17 +1,18 @@
 """The screen, rendered to text, and the CLI."""
 import argparse
 import json
+import random
 import time
 from collections import deque
 from datetime import datetime
 
 import pytest
-from conftest import PROJECTS, T0, Transcript
+from conftest import PRICES, PROJECTS, T0, Transcript
 from rich.console import Console
 
 from usdash import advice, app, ui
 from usdash.prices import ONE_HOUR
-from usdash.sessions import subscription_account
+from usdash.sessions import Request, Store, subscription_account
 from usdash.transcripts import account_file
 
 
@@ -255,6 +256,11 @@ def test_the_request_list_shows_web_searches(store):
     tool.into(store)
     text = screen(store, ui.View(now=T0 + 60, mode="requests"))
     assert "🔍 1 web search (cost not logged)" in text and "🔍 0" not in text
+    # Its result says how many searches the call made.
+    tool.user([{"type": "tool_result", "tool_use_id": "toolu_1", "content": "…"}], T0 + 40,
+              toolUseResult={"query": "x", "searchCount": 3})
+    tool.into(store)
+    assert "🔍 3 web searches (cost not logged)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
 
 
 
@@ -356,11 +362,26 @@ def test_the_request_list_marks_each_earlier_day(store):
     assert top[1].startswith(f"── {label(T0 + 86_400)} ─")
     # The last page shows the oldest row at every height, day lines and all.
     oldest = datetime.fromtimestamp(T0).strftime("%H:%M:%S")
-    for height in range(9, 30):
+    for height in range(3, 30):
         view = ui.View(now=now, mode="requests")
         screen(store, view, height=height)
         ui.press(store, view, "end")
-        assert oldest in screen(store, view, height=height), height
+        text = screen(store, view, height=height)
+        assert oldest in text or view.lines == 0, height  # below 9 lines there's no room for a row
+
+
+def test_the_scroll_limit_matches_counting_every_start():
+    # A made-up feed over several days: the furthest scroll is the first row from which the rest fit.
+    rng = random.Random(7)
+    for _ in range(300):
+        store = Store(PRICES)
+        days = sorted((rng.randrange(4) for _ in range(rng.randrange(1, 25))))
+        for i, day in enumerate(days):  # newest first, like the feed
+            store.feed.append(Request(f"r{i}", "s", None, None, None, T0 - 86_400 * day - i, T0))
+        view = ui.View(now=T0, mode="requests", lines=rng.randrange(1, 12))
+        total = len(store.feed)
+        expected = next((start for start in range(total) if ui.feed_fits(store, view, start) == total - start), total - 1)
+        assert ui.max_scroll(store, view) == max(0, expected)
 
 
 def test_scrolling_the_feed(store):
@@ -390,7 +411,7 @@ def test_a_late_row_below_the_view_is_not_new_above(store):
     for i in range(30):
         t.turn(T0 + 60 * i, read=40_000 + i, write=100)
     t.into(store)
-    view = ui.View(now=T0 + 1800, page=5, mode="requests")
+    view = ui.View(now=T0 + 1800, page=5, lines=5, mode="requests")
     ui.press(store, view, "pgdn")
     shown = list(store.feed)[5:10]
     late = Transcript()  # a subagent's transcript, found late: older than every row in view

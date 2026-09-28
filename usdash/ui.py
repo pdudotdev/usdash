@@ -423,10 +423,6 @@ FEED_COLUMNS = (("TIME", False), ("ID", False), ("SESSION", False), ("MODEL", Fa
                 ("CACHED", True), ("OUT", True), ("COST", True))
 
 
-def searches_text(n: int) -> str:
-    return f"{n} web search" if n == 1 else f"{n} web searches"
-
-
 def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
     """(a cell for every column, the NOTE that runs on to the end of the line)."""
     session = store.sessions[request.session]
@@ -446,9 +442,10 @@ def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
     if request.subagent:
         note.append("🤖 subagent ", style="dim")
     if searches := request.usage.get("searches", 0):
-        note.append(f"🔍 {searches_text(searches)} (+{_money(searches * store.web_search)}) ", style="dim")
-    if searches := len(request.tool_searches):  # Claude Code's WebSearch tool: run in a request not logged
-        note.append(f"🔍 {searches_text(searches)} (cost not logged) ", style="dim")
+        note.append(f"🔍 {plural(searches, 'web search', 'web searches')} (+{_money(searches * store.web_search)}) ",
+                    style="dim")
+    if searches := sum(request.tool_searches.values()):  # Claude Code's WebSearch tool: in requests not logged
+        note.append(f"🔍 {plural(searches, 'web search', 'web searches')} (cost not logged) ", style="dim")
     if request.reason:
         note.append(f"⟳ re-wrote {_tokens(request.rewritten)}: {request.reason} (+{_money(request.rewrite_cost)})",
                     style="bold red")
@@ -469,13 +466,15 @@ def day_line(day: str, today: str) -> Text:
 
 def feed_fits(store: Store, view: View, start: int) -> int:
     """How many feed rows from `start` fit in view.lines, with a day line before each
-    row on another day than the one above it (the first row's: today)."""
+    row on another day than the one above it (the first row's: today). The one
+    place that rule is counted; feed_lines draws it."""
     used, shown, above = 0, 0, day_of(view.now)
     for request in itertools.islice(store.feed, start, None):
-        need = 1 + (feed_day(request) != above)
+        day = feed_day(request)
+        need = 1 + (day != above)
         if used + need > view.lines:
             break
-        used, shown, above = used + need, shown + 1, feed_day(request)
+        used, shown, above = used + need, shown + 1, day
     return shown
 
 
@@ -496,11 +495,12 @@ def feed_lines(rows: list[tuple[list[Text], Text | None]], days: list[str], toda
 
 
 def feed_panel(store: Store, view: View, rows: int) -> Panel:
-    view.lines = max(1, rows)
+    view.lines = max(0, rows)
     scroll_to(store, view, view.scroll)
     fits = feed_fits(store, view, view.scroll)
-    view.page = max(1, fits)
-    shown = list(itertools.islice(store.feed, view.scroll, view.scroll + view.page))
+    view.page = max(1, fits)  # what a page key moves
+    # With room for one line only, the row goes in without its day line; with none, nothing does.
+    shown = list(itertools.islice(store.feed, view.scroll, view.scroll + (view.page if view.lines else 0)))
     days = [feed_day(r) for r in shown]
     # Room for one line only: the row, not its day line.
     lines = feed_lines([feed_row(store, request) for request in shown], days, day_of(view.now),
@@ -524,24 +524,22 @@ def feed_panel(store: Store, view: View, rows: int) -> Panel:
 
 def max_scroll(store: Store, view: View) -> int:
     """The furthest the feed can scroll: the first row from which all the rest fit,
-    their day lines included."""
-    feed, used, start = store.feed, 0, len(store.feed)
-    while start > 0:
-        request = feed[start - 1]
-        # Putting this row on top: its own line, a day line under it if the row that was on top
-        # starts another day, and one above it unless it's today (the one the old top had is dropped).
-        below = feed_day(feed[start]) if start < len(feed) else None
-        need = used + 1 + (below is not None and below != feed_day(request))
-        top_line = feed_day(request) != day_of(view.now)
-        if need + top_line > view.lines:
-            break
-        used, start = need, start - 1
-    return max(0, start if start < len(feed) else len(feed) - 1)
+    day lines included (at least the last row). The lines the rows from a start need
+    only grow as it moves up, so it's a binary search over feed_fits."""
+    total = len(store.feed)
+    low, high = 0, max(0, total - 1)
+    while low < high:
+        middle = (low + high) // 2
+        if feed_fits(store, view, middle) == total - middle:
+            high = middle
+        else:
+            low = middle + 1
+    return low
 
 
 def scroll_to(store: Store, view: View, row: int) -> None:
     """Show the feed from `row` down, and remember the request there (see track_feed)."""
-    view.scroll = max(0, min(row, max_scroll(store, view)))
+    view.scroll = 0 if row <= 0 else min(row, max_scroll(store, view))
     view.top = store.feed[view.scroll] if view.scroll else None
     if not view.scroll:
         view.unseen = 0
@@ -590,7 +588,7 @@ def press(store: Store, view: View, key: str) -> None:
 def render(store: Store, view: View, height: int) -> Layout:
     body = max(3, height - HEADER_HEIGHT)
     if view.mode == "requests":
-        panel = feed_panel(store, view, max(1, body - 3))  # the panel's border and the column names
+        panel = feed_panel(store, view, max(0, body - 3))  # the panel's border and the column names
     else:
         panel = sessions_view(store, view, body)  # the panes, their frames included
     layout = Layout()

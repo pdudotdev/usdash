@@ -44,7 +44,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | Shown | What it is |
 |---|---|
 | **ID** | The first 4 characters of the session id (as in `/status` and `claude --resume`), in a fixed colour per session |
-| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else the agent's name, else Claude Code's automatic title, else the first thing you typed (a skill with its arguments counts; a built-in command like `/model` only if it's all there is) |
+| **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else the agent's name, else Claude Code's automatic title, else the first thing you typed (a command that runs a prompt, like a skill or `/init`, counts; a built-in like `/model` only if it's all there is) |
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `no folder` for a Desktop session started without one (WHERE says `Desktop`) |
 | **WHERE** | Where it runs: `CLI` (a terminal, including an IDE's built-in one), `IDE` (the VS Code extension's panel, also in forks like Cursor), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs). Any other app shows as Claude Code names it; `?` if the transcript doesn't say |
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
@@ -82,7 +82,7 @@ Your own model (in bold) reads the conversation back from its cache; any other m
 | **PROMPT** | Tokens sent: the whole conversation so far |
 | **CACHED** | The share of them read back from the cache: green from 80%, yellow from 30%, red below |
 | **OUT** · **COST** | Output tokens (thinking included), and the request's cost at list prices (`?` with no known price) |
-| **NOTE** | `🤖 subagent` for a subagent's request; `🔍 2 web searches (+$0.02)` for server-side web searches, charged on top of tokens; `🔍 2 web searches (cost not logged)` when Claude Code's WebSearch tool searched ([Limitations](#️-limitations)); `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
+| **NOTE** | `🤖 subagent` for a subagent's request; `🔍 2 web searches (+$0.02)` for server-side web searches, charged on top of tokens; `🔍 2 web searches (cost not logged)` when Claude Code's WebSearch tool searched, as many times as its results say ([Limitations](#️-limitations)); `⟳ re-wrote 38k: model switch from Opus 5.5 (+$0.09)` when a request had to write the conversation again, with the likely cause and what that cost beyond reading it back |
 
 ▫️ **Key characteristics:**
 - [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only requests go to two pages of Anthropic's docs, at start (none with `--offline`), and the only file it writes is its copy of them
@@ -150,7 +150,7 @@ Or with [pipx](https://pipx.pypa.io/), where Python 3.11+ is already there (macO
 pipx install git+https://github.com/pdudotdev/usdash
 ```
 
-Either puts `usdash` on your PATH; `uv tool upgrade usdash` or `pipx upgrade usdash` updates it.
+Either installs `usdash` into `~/.local/bin`. If a new terminal then says `command not found`, that folder isn't on your PATH yet: run `uv tool update-shell` (or `pipx ensurepath`) once and open a new terminal. `uv tool upgrade usdash` or `pipx upgrade usdash` updates it.
 
 ▫️ **Step 2 - Run it next to your sessions:**
 ```
