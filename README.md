@@ -257,7 +257,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 
 - **Price:** a cache read costs 0.1× the input price (0.05× on Opus 5.5, 0.025× on Fable 5.1). A cache write costs 1.25× (5-minute cache) or 2× (1-hour cache)
 - **Per model:** each model has its own cache, so a model switch writes the whole conversation again. Opus 5.5 and Sonnet 5 even read the cache at the same price, so moving a cached conversation from Opus to Sonnet saves almost nothing on its cached part
-- **Reset by:** a model switch; an effort change (except on Opus 5.5 and Fable 5.1 with an API key or subscription); turning fast mode on or off; `/compact`; a Claude Code upgrade. The tool list at the start often survives: see [Limitations](#️-limitations)
+- **Reset by:** a model switch; an effort change (except on Opus 5.5 and Fable 5.1 with an API key or subscription); turning fast mode on (in Claude Code, only the first time in a conversation); `/compact`; a Claude Code upgrade. The tool list at the start often survives: see [Limitations](#️-limitations)
 
 ▫️ **Cache lifetime**
 
@@ -276,9 +276,9 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 
 The other model has to write the whole conversation into its own cache, while staying reads it back. Example (from a real run): moving a warm 56k-token conversation from Opus 5.5 to Sonnet 5 cost $0.143; staying on Opus cost about $0.02. A cheaper model saves on every later message, so a switch can pay for itself over a long session, if that model is good enough for the task; after a break long enough for the cache to expire, it costs nothing extra.
 
-▫️ **The full math**
+▫️ **The full picture**
 
-[`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) has the formulas, worked examples in dollars, the compact/clear/effort decisions, how each input is read from the transcripts, and the checks against real data.
+[`research/AI-TOKENOMICS-GUIDE.md`](research/AI-TOKENOMICS-GUIDE.md) is a field guide to what LLM usage costs and why: the cost equation, prompt caching, the other levers (model, effort, batch, fast mode), agents and `/compact`, FinOps practice, practice problems, and the evidence behind usdash's estimates.
 
 ## 📂 Project Files
 
@@ -287,8 +287,7 @@ The other model has to write the whole conversation into its own cache, while st
 | [`usdash/`](usdash/) | The dashboard: transcript reader, Anthropic's docs reader, sessions, cost engine, screen |
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
 | [`usdash/models.yaml`](usdash/models.yaml) | What usdash knows about the models besides their prices: where an effort change keeps the cache, the tokenizers, and the current lineup when the models overview can't be read |
-| [`research/CACHE-DECISIONS.md`](research/CACHE-DECISIONS.md) | The math behind every number, and the research behind it |
-| [`research/REDESIGN-PLAN.md`](research/REDESIGN-PLAN.md) | The plan for the session-first screen, and its assumptions checked against real transcripts |
+| [`research/AI-TOKENOMICS-GUIDE.md`](research/AI-TOKENOMICS-GUIDE.md) | The principles behind every number, with worked examples, checked against Anthropic's docs and real sessions |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's picture of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg), from made-up sessions |
 | [`docs/`](docs/) | The README's pictures: the dashboard and how usdash works |

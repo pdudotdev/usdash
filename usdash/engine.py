@@ -2,13 +2,13 @@
 
 Amounts are the conversation as the last request sent it, at list prices:
 the transcript records that size, and the whole of it is cached
-(research/CACHE-DECISIONS.md §7). What the next message adds (your text,
+(research/AI-TOKENOMICS-GUIDE.md, Appendix B). What the next message adds (your text,
 tool results, the reply) isn't known yet, so it's left out.
 
     C      the conversation the next request re-sends (the last prompt)
     now    re-sending C right now: read back while the cache is warm, else written
 
-Formulas: research/CACHE-DECISIONS.md (§3 on another model, §6 /compact).
+The reasoning: research/AI-TOKENOMICS-GUIDE.md (§15 another model, §16 /compact).
 """
 from dataclasses import dataclass
 
@@ -39,7 +39,7 @@ def after_compact(store: Store, session: Session, model: str | None) -> tuple[in
     listings, files read), and the tool list. The tool list alone plus
     `compactMetadata.postTokens` was 13–32% short of the real first prompt after
     three compactions; the first prompt plus postTokens, within 6%
-    (research/CACHE-DECISIONS.md §7)."""
+    (research/AI-TOKENOMICS-GUIDE.md, Appendix B)."""
     cached = round(store.tool_list(session, model))
     return max(cached, round(store.first_prompt(session, model))), cached
 
@@ -134,7 +134,7 @@ def comeback(store: Store, session: Session, now: float) -> tuple[Context, list[
 def compact(store: Store, session: Session, now: float) -> Compact | None:
     """/compact's own request re-sends the conversation without caching it, and
     writes a summary; later messages send after_compact() and the summary
-    instead of the conversation (research/CACHE-DECISIONS.md §6). What it
+    instead of the conversation (research/AI-TOKENOMICS-GUIDE.md §16). What it
     reads back, per Claude Code's own totals around five real compactions:
     while warm, what the latest turn's first request left cached (the
     conversation up to that prompt); after a break, the tool list at most.
