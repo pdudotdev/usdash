@@ -63,7 +63,7 @@ def test_sections_and_counts(store):
     # A pane each for live and expired sessions (no one exited yet), with the column names lined up;
     # the last one says the window.
     titles = [line.split(" ─")[0] for line in text.splitlines() if line.startswith("╭─") and "usdash" not in line]
-    assert titles == ["╭─ live · 1 session · cache warm", "╭─ expired · 1 session · last 5d · still open: type in its window"]
+    assert titles == ["╭─ live · 1 session · cache warm", "╭─ expired · 1 session · last 5d · cache ran out, not exited"]
     names = [line for line in text.splitlines() if "SESSION" in line and "CACHE" in line]
     assert len(names) == 2 and names[0] == names[1]
     closing = Transcript(session="bbbb-2222")
@@ -147,7 +147,8 @@ def test_closed_script_runs_fold_into_one_row(store):
     assert "summarize the log" in rows[0]  # an open run shows like any session
     assert text.count("└ ") == 1  # only the open run has a line under it
     assert "╭─ live" not in text  # no pane without a session in it
-    assert "expired · 1 session · still open" in text and "exited · 1 session · last 5d" in text  # the runs are exited
+    assert "expired · 1 session · cache ran out, not exited" in text  # the run still going (or killed)
+    assert "exited · 3 sessions · last 5d" in text  # the folded row counts every run in it
 
 
 def test_archived_and_long_idle_sessions_are_hidden(store):
@@ -175,10 +176,11 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
         idle.into(store)
     view = ui.View(now=NOW)
     text = screen(store, view, height=30)
-    assert "· showing 1–6 of 14" in text and len(block(text, "aaaa")) == 3  # the live one, whole, and five idle
+    assert "· rows 1–6 of 14" in text and len(block(text, "aaaa")) == 3  # the live one, whole, and five idle
+    assert "expired · 13 sessions · rows 1–6 of 14 ·" in screen(store, view, width=80, height=30)  # before the hint
     ui.press(store, view, "down")
     text = screen(store, view, height=30)
-    assert "aaaa" not in text and "· showing 2–" in text and "g: back to the top" in text
+    assert "aaaa" not in text and "· rows 2–" in text and "g: back to the top" in text
     assert "╭─ live" not in text  # the live pane scrolled away with its only session
     ui.press(store, view, "end")
     text = screen(store, view, height=30)
@@ -250,7 +252,7 @@ def test_only_the_markers_are_dim(store):
     two_sessions(store)
     view = ui.View(now=NOW)
     live, idle = store.sessions["aaaa-1111"], store.sessions["bbbb-2222"]
-    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.idle_lines(store, idle))]
+    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.comeback_lines(store, idle))]
     for line in lines:
         assert not line.style, line.plain  # a base style would cover the amounts too
     dim = [line.plain[span.start:span.end] for line in lines for span in line.spans if span.style == "dim"]

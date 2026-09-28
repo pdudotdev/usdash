@@ -211,9 +211,10 @@ SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("PROJECT", False), ("WHER
                    ("CACHE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True))
 
 
-# The panes, top to bottom: (title, how to come back to its sessions).
-PANES = {"live": ("live", "cache warm"), "expired": ("expired", "still open: type in its window"),
-         "exited": ("exited", "claude --resume <id>")}
+# The panes, top to bottom, and what their titles say about their sessions. An expired
+# session may still be open in its window, or have been killed without exiting: either
+# way, `claude --resume <id>` brings it back.
+PANES = {"live": "cache warm", "expired": "cache ran out, not exited", "exited": "claude --resume <id>"}
 
 
 @dataclass
@@ -222,6 +223,7 @@ class Entry:
     pane: str  # a key of PANES
     cells: list[Text]
     below: list[Text] = field(default_factory=list)  # from the SESSION column on
+    sessions: int = 1  # a folded row of script runs stands for several
 
 
 def cache_cell(session: Session, view: View) -> Text:
@@ -287,8 +289,8 @@ def live_lines(session: Session, view: View, advice: Advice) -> list[Text]:
     return lines
 
 
-def idle_lines(store: Store, session: Session) -> list[Text]:
-    """Under an idle session: what coming back to it costs on each model."""
+def comeback_lines(store: Store, session: Session) -> list[Text]:
+    """Under an expired or exited session: what coming back to it costs on each model."""
     found = comeback(store, session)
     if found is None:
         return []
@@ -311,11 +313,12 @@ def script_runs(runs: list[Session], view: View) -> Entry:
     return Entry("exited", [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
                          Text(app_name(latest), style="dim"), model_text(latest.model),
                          Text(f"exited · {age}", style="dim"), Text(""),
-                         today_cell(today), Text(_money(sum(s.total for s in runs)))])
+                         today_cell(today), Text(_money(sum(s.total for s in runs)))], sessions=len(runs))
 
 
 def session_entries(store: Store, view: View) -> list[Entry]:
-    """Live sessions, then expired ones, then exited ones, each newest first."""
+    """Live sessions, then expired ones, then exited ones, each newest first
+    (visible_sessions' order; the folded script runs go in by their latest)."""
     panes: dict[str, list[tuple[float, Entry]]] = {pane: [] for pane in PANES}
     runs = defaultdict(list)
     for session in visible_sessions(store, view):
@@ -327,9 +330,10 @@ def session_entries(store: Store, view: View) -> list[Entry]:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
             pane = "exited" if session.ended else "expired"
-            panes[pane].append((when, Entry(pane, cells, tree(idle_lines(store, session)))))
+            panes[pane].append((when, Entry(pane, cells, tree(comeback_lines(store, session)))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
-    return [entry for pane in PANES for _, entry in sorted(panes[pane], key=lambda item: -item[0])]
+    panes["exited"].sort(key=lambda item: -item[0])
+    return [entry for pane in PANES for _, entry in panes[pane]]
 
 
 def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
@@ -385,19 +389,19 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     view.session_scroll = max(0, min(view.session_scroll, last))
     panes, shown = page_from(entries, blocks, view.session_scroll, rows, head)
     view.session_page = shown
-    counts = Counter(entry.pane for entry in entries)
+    counts: Counter = Counter()
+    for entry in entries:
+        counts[entry.pane] += entry.sessions
     parts = []
     for i, (key, lines) in enumerate(panes):
         final = i == len(panes) - 1
-        name, back = PANES[key]
-        title, subtitle = f"{name} · {plural(counts[key], 'session')}", None
-        if final:
-            title += f" · last {window}"
-        title += f" · {back}"
-        if final:
+        title, subtitle = f"{key} · {plural(counts[key], 'session')}", None
+        if final:  # what matters most first: a narrow terminal cuts the title from the right
             if shown < len(entries):
-                title += f" · showing {view.session_scroll + 1}–{view.session_scroll + shown} of {len(entries)}"
+                title += f" · rows {view.session_scroll + 1}–{view.session_scroll + shown} of {len(entries)}"
+            title += f" · last {window}"
             subtitle = Text("g: back to the top", style="bold yellow") if view.session_scroll else keys
+        title += f" · {PANES[key]}"
         pane = Panel(Group(*columns, *lines), title=Text(title, style="bold"), title_align="left",
                      subtitle=subtitle, subtitle_align="right")
         parts.append(Layout(pane) if final else Layout(pane, size=head + len(lines)))  # the last takes what's left

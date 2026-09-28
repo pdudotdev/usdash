@@ -31,7 +31,7 @@ It reads Claude Code's files, plus two pages of Anthropic's public docs once at 
 
 ## 🔭 Overview
 
-usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 5 days: the ones you're in, with what the next message costs on each model, and the idle ones, with what coming back to them costs. Press `r` for the list of every request.
+usdash is a small Python program you keep open in a terminal next to your Claude Code sessions. At the top: today's spend. Below it, every session from the last 5 days: the ones you're in, with what the next message costs on each model, and the ones you've left, with what coming back to them costs. Press `r` for the list of every request.
 
 ▫️ **What it looks like** (made-up sessions, drawn by usdash's own screen code):
 
@@ -52,7 +52,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far). `≈` right after `/compact`, until the next message shows the new size |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since |
 
-▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (still open, but its cache ran out: type in its window) and **exited** (you quit it: `claude --resume <id>`). A pane with no session in it isn't shown.
+▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (its cache ran out, but it wasn't exited: type in its window if it's still open, else `claude --resume <id>`; a session killed or crashed without exiting shows here too) and **exited** (you quit it: `claude --resume <id>`). A pane with no session in it isn't shown.
 
 ▫️ **A live session** shows what you last typed there and what your next message costs on each model:
 
@@ -121,7 +121,7 @@ Each page is fetched as plain Markdown, all at once, within 4 seconds in all, an
 
 ▫️ **The one warning** (`⚡`, between your last prompt and the prices): when the conversation is 100k+ tokens, the cache expires within 10 minutes (within half its lifetime, if that's shorter), and compacting saves at least $0.005 a message. *"Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00."* Compacting while the cache is warm reads the conversation back; after it has expired, it has to write it all again first.
 
-▫️ **When switching model is cheap:** while the cache is warm, another model has to write the whole conversation into its own cache, so the next message costs more there (the prices line shows how much). Once the cache has expired, the next message writes everything again on any model, so switching then costs nothing extra: the idle line shows what each model costs from there. Right after `/compact`, another model can even be cheaper now, if a session in the same folder keeps its copy of the tool list cached; ✅ then moves to it.
+▫️ **When switching model is cheap:** while the cache is warm, another model has to write the whole conversation into its own cache, so the next message costs more there (the prices line shows how much). Once the cache has expired, the next message writes everything again on any model, so switching then costs nothing extra: the session's line shows what each model costs from there. Right after `/compact`, another model can even be cheaper now, if a session in the same folder keeps its copy of the tool list cached; ✅ then moves to it.
 
 ## 🧪 Example Session
 

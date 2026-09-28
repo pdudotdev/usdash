@@ -95,7 +95,7 @@ def next_message(store: Store, session: Session, model: str, now: float) -> tupl
 
 
 def comeback(store: Store, session: Session) -> tuple[Context, list[tuple[str, float]]] | None:
-    """What coming back to an idle session costs: re-sending all of C,
+    """What coming back to an expired or exited session costs: re-sending all of C,
     written again, on each model. Other sessions' cached tool lists aren't
     subtracted: a resumed session gets a fresh system prompt (git status,
     date), which may not match theirs."""

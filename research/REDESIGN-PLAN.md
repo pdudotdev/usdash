@@ -89,7 +89,7 @@ Not counted anywhere exact: the new message you'll type, tool results, the reply
 ### 3.2 Idle line rules
 - Models listed: the session's own, then each cheaper model in `LADDER` order (never more expensive ones). A session on the cheapest model lists only its own.
 - Other sessions' cached tool lists are **not** subtracted: a resumed session gets a fresh system prompt (git status, date) that may not match them (§8d saw only 0 or ~22k read back).
-- A session closed less than one cache lifetime ago might still read its cache if resumed at once; the line shows the full re-send (worst case) until manual check 27 settles it.
+- A session closed less than one cache lifetime ago might still read its cache if resumed at once; the line shows the full re-send (worst case) until manual check 13 settles it.
 - After `/compact` with no request since: `P` is replaced by `tool list + summary` (§3.3) and the line is marked ≈.
 - Own model unpriced: `└ resuming re-sends Nk tokens` with no amounts; unpriced other models are left out.
 
@@ -174,7 +174,7 @@ b. **"/compact writes a ~3,000-token summary."** ✘ 9 compactions: median 3,807
 
 c. **"Haiku counts ~0.77× the tokens."** No Haiku switches in this history to check; stays 0.77 from the research run (0.758). Haiku figures ±a few %.
 
-d. **"Resuming re-sends the whole conversation."** 31 resumes: the first request after resuming was 0.1–4% larger than the last one before (the new message) and read 0 or ~22k from cache. ✔ Not seen: a resume within a cache lifetime (all gaps ≥ 92 min) → manual check 27.
+d. **"Resuming re-sends the whole conversation."** 31 resumes: the first request after resuming was 0.1–4% larger than the last one before (the new message) and read 0 or ~22k from cache. ✔ Not seen: a resume within a cache lifetime (all gaps ≥ 92 min) → manual check 13.
 
 e. **"Effort changes keep the cache on Opus 5.5 only."** Opus 5.5: 4 of 4 read 100% back. Opus 5: 7%. ✔
 

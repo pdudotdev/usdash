@@ -277,7 +277,7 @@ A scripted Claude Code session through llm-trunk, on an API key with the 5-minut
 8. **Cloud prices differ.** On Bedrock and Google Cloud, regional and multi-region endpoints cost 10% more than global ones (Claude 4.5 models and later), and Bedrock's flex and priority service tiers are priced differently again. The tables here are Anthropic's list prices, which match the global endpoints.
 9. **Cost is not the only goal.** A stronger model or higher effort can finish a task in fewer messages. Advice should show the dollars, and the user decides.
 10. **Exact and ≈ on screen.** Exact: re-sending C now or after a break, on any model (Haiku through the ×0.77 conversion). ≈: per-message amounts (1), `/compact`'s absolute price (its summary is learned; the request itself isn't logged), anything that subtracts another session's cached tool list, and the conversation right after `/compact` (tool list + summary until the next request).
-11. **Resuming soon after `/exit`.** Within a cache lifetime, a resumed session may still read its cache: every resume seen here came 92+ minutes later and read none of its conversation back. The idle line shows the full re-send, the most it can cost, until manual check 27 settles it.
+11. **Resuming soon after `/exit`.** Within a cache lifetime, a resumed session may still read its cache: every resume seen here came 92+ minutes later and read none of its conversation back. The exited session's line shows the full re-send, the most it can cost, until manual check 13 settles it.
 
 ---
 
