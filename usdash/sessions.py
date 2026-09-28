@@ -250,6 +250,10 @@ class Session:
     # the whole conversation back (the first, or one after /compact, a resume, an expired
     # cache or a model switch) read back all the same
     tool_list: tuple[int, str | None] | None = None
+    # (tokens, model family) the first request of the latest turn (a prompt or command typed)
+    # left cached: what /compact reads back while the cache is warm. It sends the rest uncached.
+    turn_cached: tuple[int, str | None] | None = None
+    turn_pending: bool = False  # a prompt was typed; its first request hasn't come yet
     revision: int = 0  # bumped on every change to its requests
     _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -425,6 +429,7 @@ class Store:
             if found:
                 text, command = found
                 session.ended = False
+                session.turn_pending = True
                 if command:
                     session.pending_command = text
                 else:
@@ -570,6 +575,10 @@ class Store:
         request.cost = request_cost(usage, price) + request.usage["searches"] * self.web_search if price else None
         if old is None and not record.subagent:
             self._measure_tool_list(session, request)
+        if session.turn_pending and not record.subagent:  # also a request seen before, in a file read again
+            u = request.usage  # the input side is final from the reply's first record
+            session.turn_cached = (u["read"] + u["write_5m"] + u["write_1h"], model_key(model))
+            session.turn_pending = False
         self._classify(session, request, price)
         self._account(session, request, +1)
         if chain.key in (None, key) or old is None:
@@ -614,7 +623,8 @@ class Store:
         else:
             expired = prev.touched is not None and request.start - prev.touched >= (prev.ttl or FIVE_MINUTES)
             switched = model_key(request.model) != model_key(prev.model)
-            cold, could_read = prev.compacted or prev.resumed or expired or switched, min(request.prompt, prev.prompt)
+            previous = round(self.facts.convert(prev.prompt, prev.model, request.model))  # in this request's tokens
+            cold, could_read = prev.compacted or prev.resumed or expired or switched, min(request.prompt, previous)
         # Not more than the first prompt: a forked conversation reads back more than the tool list.
         first_prompt = self.facts.convert(session.prefix, session.prefix_model, request.model)
         if cold and 0 < read < could_read and read <= first_prompt:
@@ -633,7 +643,8 @@ class Store:
         if prev is None or not prev.key or not prev.prompt:
             return
         tool_list = 0.0 if request.subagent else self.tool_list(session, request.model, measured=True)
-        could_read = min(request.prompt, prev.prompt)
+        # In this request's tokens: after a switch from an older tokenizer, the same conversation is ~1.3× the tokens.
+        could_read = min(request.prompt, round(self.facts.convert(prev.prompt, prev.model, request.model)))
         if prev.compacted and not request.subagent:
             if not tool_list:
                 return  # no telling what was still cached
@@ -689,20 +700,23 @@ class Store:
         Measured (Session.tool_list): by this session, else by the latest
         session from the same app in this folder, else anywhere (the tool
         list is much the same everywhere: 22–25k tokens in the CLI). Else
-        estimated, unless `measured`: every first prompt is the tool list and
-        system prompt plus a first message, which may paste a whole file, so
-        the estimate is the smallest first prompt among this session and the
-        other interactive ones in its folder started from the same app. A
-        scripted run can bring a system prompt of its own, so it's compared
-        with nothing else."""
+        estimated, unless `measured`: first_prompt, which is the tool list and
+        a bit more."""
         found = session.tool_list
         if found is None and not session.scripted:
             found = (self.measured_prefix.get((session.cwd, session.entrypoint))
                      or self.measured_prefix.get(session.entrypoint or ""))
         if found is not None:
             return self.facts.convert(found[0], found[1], model)
-        if measured:
-            return 0.0
+        return 0.0 if measured else self.first_prompt(session, model)
+
+    def first_prompt(self, session: Session, model: str | None) -> float:
+        """What every request of `session` sends before the conversation: the tool
+        list, the system prompt, and what Claude Code attaches at the start (the
+        environment, the agent, skill and tool listings), plus a first message. The
+        smallest first prompt among this session and the other interactive ones in
+        its folder from the same app, since a first message may paste a whole file;
+        a scripted run can bring a system prompt of its own, so only its own."""
         peers = [session] if session.scripted else [
             s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
         return min((self.prefix_on(s, model) for s in peers if s.prefix), default=0.0)

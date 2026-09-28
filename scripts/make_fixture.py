@@ -4,9 +4,10 @@
     python3 scripts/make_fixture.py <session-id-prefix> [name]
 
 Keeps what usdash reads (record types, ids, parent links, timestamps, model,
-effort, usage, titles, cost-state, compaction sizes, tool names, whether a tool
-failed, WebSearch's search counts) and replaces everything people wrote or tools
-returned: prompts become "prompt 1", "prompt 2"... (slash commands keep their
+effort, usage, stop reasons, titles, cost-state, compaction sizes and duration,
+tool names, whether a tool failed, WebSearch's search counts, and each
+attachment's type: a reply's parent link often points at one) and replaces
+everything people wrote or tools returned: prompts become "prompt 1", "prompt 2"... (slash commands keep their
 name, Claude Code's tagged text its tag), replies and tool output become empty.
 The folder becomes /home/user/<folder name>. Subagent transcripts come along.
 Check the output before committing it.
@@ -43,7 +44,7 @@ class Redactor:
         return f"prompt {self.prompts}"
 
     def message(self, message: dict, kind: str | None) -> dict:
-        kept = {key: message[key] for key in ("id", "model", "role", "usage") if key in message}
+        kept = {key: message[key] for key in ("id", "model", "role", "usage", "stop_reason") if key in message}
         content = message.get("content")
         if kind == "user" and isinstance(content, str):
             kept["content"] = self.text(content)
@@ -85,9 +86,11 @@ class Redactor:
         if kind == "system":
             metadata = data.get("compactMetadata")
             if isinstance(metadata, dict):
-                out["compactMetadata"] = {k: metadata.get(k) for k in ("trigger", "preTokens", "postTokens")}
+                out["compactMetadata"] = {k: metadata.get(k) for k in ("trigger", "preTokens", "postTokens", "durationMs")}
             if data.get("subtype") == "away_summary":
                 out["content"] = "recap"
+        if kind == "attachment" and isinstance(data.get("attachment"), dict):
+            out["attachment"] = {"type": data["attachment"].get("type")}  # which one, not what it holds
         return out
 
 
@@ -98,7 +101,7 @@ def convert(source: Path, target: Path) -> int:
             data = json.loads(line)
         except ValueError:
             continue
-        if data.get("type") in ("attachment", "file-history-snapshot", "file-history-delta", "queue-operation"):
+        if data.get("type") in ("file-history-snapshot", "file-history-delta", "queue-operation"):
             continue
         lines.append(json.dumps(redactor.record(data)))
     target.parent.mkdir(parents=True, exist_ok=True)

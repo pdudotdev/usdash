@@ -443,9 +443,10 @@ def test_a_miss_counts_against_the_conversation_after_the_tool_list(store):
     assert (latest.reason, latest.rewritten) == ("cache expired (idle 11 min)", 10_569)
 
 
-def test_a_quick_resume_re_writes_the_conversation(store):
-    # Check 13 in tests/sanity/manual.py: exited, and resumed 3½ minutes later on a 5-minute
-    # cache. Only the tool list was read back: the resumed session sent a fresh system prompt.
+def test_a_resume_that_misses_the_cache_says_so(store):
+    # Exited, and resumed 3½ minutes later on a 5-minute cache, reading back only the tool list:
+    # the resumed session's fresh system prompt had changed. (Usually it hasn't, and a resume within
+    # the cache lifetime reads it all back: tests/test_real_checks.py.)
     t = Transcript()
     t.turn(T0, read=24_981, write=9_907, ttl="5m")
     t.record("cost-state", totalCostUSD=0.05)
