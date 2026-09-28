@@ -242,6 +242,8 @@ def cache_cell(session: Session, view: View) -> Text:
     warm, left, _ = cache_clock(session, view.now)
     age = age_text(view.now - (session.last_activity or view.now))
     if session.ended:
+        if warm:  # its cache outlives it: resuming reads it back until it runs out
+            return Text.assemble(("exited · ", "dim"), (f"● {clock(left)}", "green"))
         return Text(f"exited · {age}", style="dim")
     if warm:
         return Text(f"● {clock(left)}", style="green")
@@ -304,13 +306,15 @@ def live_lines(session: Session, view: View, advice: Advice) -> list[Text]:
 
 
 def comeback_lines(store: Store, session: Session, view: View) -> list[Text]:
-    """Under an expired or exited session: what coming back to it costs on each model (≈: engine.cold_resend)."""
+    """Under an expired or exited session: what coming back to it costs on each
+    model (≈: engine.comeback), its own model read back while an exited one's cache lasts."""
     found = comeback(store, session, view.now)
     if found is None:
         return []
     ctx, costs = found
     verb = "resuming" if session.ended else "continuing"
-    return [prices_text(verb, ctx, [(m, cost, False) for m, cost in costs], session.model)]
+    cached = cache_clock(session, view.now)[0]
+    return [prices_text(verb, ctx, [(m, cost, False) for m, cost in costs], session.model, cached=cached)]
 
 
 def tree(lines: list[Text]) -> list[Text]:

@@ -2,7 +2,7 @@
 
 How to decide, in dollars, whether to switch model or effort, `/compact`, `/clear`, or just keep going in a Claude Code session. This is the reference for usdash's cost numbers and advice.
 
-Written 2026-09-27. Prices and rules were checked against Anthropic's pricing page, the Claude API prompt-caching docs, and Claude Code's prompt-caching docs (links at the end) on that date. Every example was computed by script, not by hand. Updated the same day with what building usdash v1 found in real transcripts (§7, §8, §9), and again for its session-first screen (§3, §6, §7, §9, §10), and again when it moved from advice to prices (§10). Updated 2026-09-28 with what the manual sanity checklist found: the tool list survives most misses, resuming re-writes the conversation, and the cache lifetime is a minimum (§7, §9, §10). The /compact example in §6 is an automated test in [`tests/test_engine.py`](../tests/test_engine.py); the switching examples in §4 and the real moves in §8 were tested while usdash gave switch advice, and are kept here as the reasoning behind its numbers.
+Written 2026-09-27. Prices and rules were checked against Anthropic's pricing page, the Claude API prompt-caching docs, and Claude Code's prompt-caching docs (links at the end) on that date. Every example was computed by script, not by hand. Updated the same day with what building usdash v1 found in real transcripts (§7, §8, §9), and again for its session-first screen (§3, §6, §7, §9, §10), and again when it moved from advice to prices (§10). Updated 2026-09-28 with what the manual sanity checklist found: the tool list survives most misses, resuming re-writes the conversation, and the cache lifetime is a minimum (§7, §9, §10); and again the same day with what a review found by running Claude Code 2.1.283 itself and reading its own totals: `/compact`'s request doesn't read the conversation back the way assumed, the conversation after it is bigger than the tool list plus `postTokens`, and resuming reads the cache back while it lasts (§6, §7, §9, §10; the sessions are fixtures in `tests/test_real_checks.py`). The /compact example in §6 is an automated test in [`tests/test_engine.py`](../tests/test_engine.py); the switching examples in §4 and the real moves in §8 were tested while usdash gave switch advice, and are kept here as the reasoning behind its numbers.
 
 ---
 
@@ -172,15 +172,18 @@ The cache is kept, so the saving is immediate: `(output_before − output_after)
 - On other models, an effort change re-writes the conversation like a model switch; use the §3 formulas.
 
 ### Compact now or later
-Compaction re-sends the whole conversation plus an instruction, and writes a summary. Right afterwards, the tool list and system prompt are still cached, but the summary is new.
-- **Timing (140,000-token Opus conversation, ~3,000-token summary):**
-  - with the cache alive: 140,000 × $0.20 + 3,000 × $20 = **$0.088** (usdash computes exactly this, with the summary's size learned from earlier compactions, §7; with none seen yet it assumes 3% of the conversation, 4,200 tokens here, so ≈$0.11);
-  - after a break: 140,000 × $5.00 + $0.06 = **$0.76**. Claude Code sends compaction with the 5-minute cache even on a subscription, so this price applies either way;
-  - **So: if you're going to compact, compact before you step away.**
+Compaction re-sends the whole conversation plus an instruction, and writes a summary. Its request isn't in the transcripts, but Claude Code's own totals (`cost-state`, written at each exit) before and after five real `/compact`s show what it did. It doesn't cache what it sends (it wrote 147–555 tokens, 3,981 once, at the 5-minute price):
+- **With the cache alive,** it read back what the latest turn's first request had cached, the conversation up to your last prompt, and sent everything after that at the **input price**: 46,885 read and 10,980 sent after a four-turn session; 15,804 read and 44,545 sent on Opus 5.5 when one turn had read all the files.
+- **After a break** (5-minute cache, 6.8 minutes idle), it read back the tool list (13,790) and sent the rest (37,628) at the input price. Not written at 1.25×, as assumed before.
+- **Its output**, the summary with any thinking, was 1,065–3,804 tokens: 0.3–1× the `postTokens` its boundary record reports.
+- **Timing (139,000-token Opus 5.5 conversation, the last prompt at 120,000, a 25,000-token tool list, ~2,500-token summary):**
+  - with the cache alive: 120,000 × $0.20 + 19,000 × $4 + 2,500 × $20 = **$0.15**;
+  - after a break: 25,000 × $0.20 + 114,000 × $4 + $0.05 = **$0.51**;
+  - **So: if you're going to compact, compact before you step away,** but when one prompt built most of the conversation, the two are nearly the same (a real one: $0.058 warm, $0.060 cold). usdash's ⚡ warning shows only when compacting first saves $0.01 or more.
 - **Is it worth it, on cost alone?** (API key, 5-minute cache)
-  - Extra cost: the compaction ($0.088), plus a first message that re-writes ~10,000 new tokens ($0.057), minus the message you'd have sent anyway ($0.033) = **$0.112**.
+  - Extra cost: the compaction (≈$0.15, above), plus a first message that re-writes ~10,000 new tokens ($0.057), minus the message you'd have sent anyway ($0.033) = **$0.174**.
   - Saving: each later message reads ~45,000 instead of ~140,000 tokens, **$0.019 per message**.
-  - Result: it pays back after **~6 messages**. You also lose detail from the conversation, which is a quality cost the numbers can't see.
+  - Result: it pays back after **~9 messages**. You also lose detail from the conversation, which is a quality cost the numbers can't see.
 
 ### `/clear`
 Starts a fresh conversation. The tool list and system prompt usually stay cached, so it's nearly free.
@@ -235,9 +238,9 @@ B > X × 0.75 ÷ (1.25 − read/input)       → B > 0.652·X  (Sonnet 5, Haiku 
 |---|---|
 | Cost of each request | `message.usage` on assistant records: `input_tokens` (uncached part only) × input price + `cache_read_input_tokens` × read + `cache_creation.ephemeral_5m_input_tokens` × 5-min write + `ephemeral_1h_input_tokens` × 1-hour write + `output_tokens` × output price. A write without the 5m/1h split counts as 5-minute |
 | One request, not several | A streamed reply is written as several records sharing a `message.id`; the last one written wins. Deduplicate by `message.id`, then `requestId`, then the record's `uuid`. **Not by `requestId` alone:** some sessions' records carry none, and one real session then read $0.04 instead of $1.33 |
-| **N** (conversation size) | usdash shows the part it can measure: **C**, the last request's prompt (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`). The whole of it is cached (on this machine the uncached remainder was at most 0.04% of a prompt), and resuming a session re-sends all of it (31 resumes: the first request after was 0.1–4% bigger, the new message). What the next message adds is only in per-message amounts, as the mean rise between the session's consecutive prompts on one model, over its last 20 messages. The mean, not the median: big tool results are a real cost, and the median undercounted the average about 2× here. Right after `/compact`: the tool list and system prompt plus the summary (`compactMetadata.postTokens` on the `compact_boundary` record) |
+| **N** (conversation size) | usdash shows the part it can measure: **C**, the last request's prompt (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`). The whole of it is cached (on this machine the uncached remainder was at most 0.04% of a prompt), and resuming a session re-sends all of it (31 resumes: the first request after was 0.1–4% bigger, the new message). What the next message adds is only in per-message amounts, as the mean rise between the session's consecutive prompts on one model, over its last 20 messages. The mean, not the median: big tool results are a real cost, and the median undercounted the average about 2× here. Right after `/compact`: the summary (`compactMetadata.postTokens` on the `compact_boundary` record) plus the session's first prompt, since Claude Code attaches again what it attached at the start (the environment; the agent, skill and deferred-tool listings; files read). Three real compactions, then the first prompt after: 33,335 / 24,987 / 20,315 tokens; the tool list plus `postTokens` gave 27,279 / 21,617 / 13,797 (13–32% short), the first prompt plus `postTokens` 35,485 / 24,978 / 19,369 (within 6%) |
 | Tool list | Measured per session: what a request that couldn't read the whole conversation back read back all the same. That's the session's first request, and the first after `/compact`, a resume, an expired cache or a model switch. Seen here: 22–25k tokens in the CLI (22,358 / 22,943 / 23,308 / 24,856 / 24,981: it varies a little between sessions, even in one folder, and each session's own value is stable), 20.8k in the VS Code extension, 20.3k for `claude -p`, 36.3k in the Desktop app. When another session in the folder has just sent the same system prompt, the read can include it too (36,829 here). A read bigger than the session's first prompt (both in the same model's tokens) isn't the tool list (a forked conversation) and is ignored. A session with no such read yet takes the latest from the same app in its folder, else anywhere; else ≈ the smallest first prompt among the interactive sessions in its folder from the same app, which is ~10k too high (it includes the system prompt and a first message). A scripted run can bring a system prompt of its own, so it only uses its own |
-| The summary `/compact` writes | The median `postTokens` of earlier compactions of conversations within 2× the size; else 3% of the conversation, between 3,800 and 16,000 tokens. Seen here: 3,807 typical (~58k conversations), 13,984 at 450k, 16,088 at 972k. The compaction request itself isn't in the transcripts, so its price stays an estimate; the difference between compacting now and after a break (re-reading vs re-writing the conversation) is exact |
+| The summary `/compact` writes | The median `postTokens` of earlier compactions of conversations within 2× the size; else 3% of the conversation, between 3,800 and 16,000 tokens. Seen here: 3,807 typical (~58k conversations), 13,984 at 450k, 16,088 at 972k. It's also what usdash takes for the compaction's output, which ran 0.3–1× `postTokens`; what the compaction reads back and sends is in §6. usdash's amounts came within 30% of Claude Code's own totals for four compactions (`tests/test_real_checks.py`) |
 | **W** | The last request's full prompt size, if its cache is still alive |
 | The session's cache lifetime | From its latest main-conversation write: 1 hour if it shows `ephemeral_1h_input_tokens > 0`, 5 minutes if `ephemeral_5m_input_tokens > 0` |
 | Effort | The `effort` field on each assistant record (`low` … `max`) |
@@ -277,8 +280,8 @@ A scripted Claude Code session through llm-trunk, on an API key with the 5-minut
 7. **Prices change.** Keep them in one file with a "verified on" date.
 8. **Cloud prices differ.** On Bedrock and Google Cloud, regional and multi-region endpoints cost 10% more than global ones (Claude 4.5 models and later), and Bedrock's flex and priority service tiers are priced differently again. The tables here are Anthropic's list prices, which match the global endpoints.
 9. **Cost is not the only goal.** A stronger model or higher effort can finish a task in fewer messages. Advice should show the dollars, and the user decides.
-10. **Exact and ≈ on screen.** Exact: re-sending C on its own model while its cache is warm. ≈: every other amount, since whether the tool list is still cached (S) can't be known; the tokenizer conversion (×0.77); per-message amounts (1); `/compact`'s absolute price (its summary is learned; the request itself isn't logged); and the conversation right after `/compact` (tool list + summary until the next request).
-11. **Resuming re-writes the conversation.** Manual check 13: exited and resumed 3½ minutes later on a 5-minute cache, same model and effort. The first request read back only the tool list (24,981 tokens) and wrote the other 9,909 again: the resumed session sends a fresh system prompt. So a resumed session's line prices the conversation written again, less S.
+10. **Exact and ≈ on screen.** Exact: re-sending C on its own model while its cache is warm. ≈: every other amount, since whether the tool list is still cached (S) can't be known; the tokenizer conversion (×0.77; a real Haiku 4.5 → Sonnet 5 switch gave 0.74); per-message amounts (1); `/compact`'s price (its summary is learned; the request itself isn't logged); and the conversation right after `/compact` (first prompt + summary until the next request).
+11. **Resuming reads the cache back while it lasts.** 6 of 6 resumes on Claude Code 2.1.283 read the whole conversation back: three `claude -p --resume` seconds apart, two interactive a minute after `/exit` on a 1-hour cache (one had written a file, so the git status had changed), one on a 5-minute cache 18 seconds after the last reply. The resumed session sends a fresh system prompt, but it was the same. An earlier manual check 13 (resumed 3½ minutes after `/exit` on a 5-minute cache) read back only the tool list; counted from the last request's start rather than the exit, its cache had likely run out. So an exited session whose cache lasts is priced like a live one's next message on its own model, ≈ (a new day or an edited CLAUDE.md changes the system prompt); once it has run out, written again less S.
 
 ---
 
@@ -289,12 +292,13 @@ Per session in the last 24 hours (`usdash/engine.py`, `usdash/advice.py`). It sh
 ```
 lifetime = from the session's latest main-conversation write: 1 hour or 5 minutes
 alive    = now − start_of_last_request < lifetime
-C        = the last request's prompt (exact); right after /compact, tool list + summary (≈)
+C        = the last request's prompt (exact); right after /compact, first prompt + summary (≈)
 live     = alive and not exited; expired = not alive, still open; exited = closed (three panes)
 models   = the current lineup, most capable first (its own model first if it isn't one of them)
 
 expired or exited session: "resuming re-sends Ck tokens: ≈$a on M1, ≈$b on M2, …"
               (C written again on every model, less S, the tool list if that model likely has it cached;
+              on its own model read back instead while an exited session's cache lasts;
               "continuing" if not exited; exited script runs fold into one row per folder)
 
 live session: "next message re-sends Ck tokens: ≈$a on M1, $b on E (cached) ✅, …"
@@ -302,8 +306,8 @@ live session: "next message re-sends Ck tokens: ≈$a on M1, $b on E (cached) �
               ✅ on the cheapest next message (E on a tie); no amounts if E has no price
 
 and, only when it applies:
-    ⚡ C ≥ 100k, not compacted since the last request, compacting saves $0.005+ a message, and at most
-       min(10 min, half the lifetime) left:
+    ⚡ C ≥ 100k, not compacted since the last request, compacting saves $0.005+ a message, compacting now
+       saves $0.01+ over after the break (§6), and at most min(10 min, half the lifetime) left:
          "Taking a break? /compact first: ≈$A now, ≈$B once the cache expires in m:ss."
 ```
 

@@ -13,7 +13,7 @@ Formulas: research/CACHE-DECISIONS.md (§3 on another model, §6 /compact).
 from dataclasses import dataclass
 
 from .models import model_key
-from .prices import FIVE_MINUTES, output_cost, prompt_cost, write_price
+from .prices import FIVE_MINUTES, output_cost, prompt_cost, sent_cost, write_price
 from .sessions import Session, Store
 
 
@@ -32,17 +32,29 @@ class Compact:
     saving: float  # ≈ per later message: reading the summary instead of the conversation
 
 
+def after_compact(store: Store, session: Session, model: str | None) -> tuple[int, int]:
+    """(what a request right after /compact sends besides the summary, what of it is
+    likely cached): the session's first prompt, since Claude Code attaches what it
+    attached at the start again (the environment, the agent, skill and tool
+    listings, files read), and the tool list. The tool list alone plus
+    `compactMetadata.postTokens` was 13–32% short of the real first prompt after
+    three compactions; the first prompt plus postTokens, within 6%
+    (research/CACHE-DECISIONS.md §7)."""
+    cached = round(store.tool_list(session, model))
+    return max(cached, round(store.first_prompt(session, model))), cached
+
+
 def context(store: Store, session: Session) -> Context | None:
     """C: the last prompt, measured. Right after /compact, before the next
-    request, the conversation is the tool list and system prompt plus the
-    summary instead, and only the first part is still cached."""
+    request, the conversation is after_compact() plus the summary instead, and
+    only the tool list is surely still cached."""
     last = session.last_request
     if last is None:
         return None
     if session.main.compacted:
-        prefix = round(store.tool_list(session, last.model))
+        base, cached = after_compact(store, session, last.model)
         summary = session.compact_post_tokens or store.summary_size(last.prompt)
-        return Context(prefix + summary, prefix, False)
+        return Context(base + summary, cached, False)
     return Context(last.prompt, last.prompt, True)
 
 
@@ -105,32 +117,41 @@ def next_message(store: Store, session: Session, model: str, now: float) -> tupl
 
 
 def comeback(store: Store, session: Session, now: float) -> tuple[Context, list[tuple[str, float]]] | None:
-    """What coming back to an expired or exited session costs, on each model: ≈ cold_resend.
-    Resuming re-writes all of the conversation even minutes later: a resumed
-    session sends a fresh system prompt, and only the tool list before it
-    can still be read back."""
+    """What coming back to an expired or exited session costs, on each model: ≈
+    cold_resend. An exited session whose cache hasn't run out yet reads it back
+    on its own model when resumed (6 of 6 resumes within the lifetime did, one
+    after a file edit), so there it's priced like a live one's next message,
+    but ≈: a changed system prompt (a new day, a changed CLAUDE.md) would re-write it."""
     ctx = context(store, session)
     if ctx is None:
         return None
-    costs = [(m, cold_resend(store, session, m, now)) for m in models_for(store, session)]
+    warm = cache_clock(session, now)[0]
+    costs = [(m, resend(store, session, m, warm=True) if warm and model_key(m) == model_key(session.model)
+              else cold_resend(store, session, m, now)) for m in models_for(store, session)]
     return ctx, [(m, cost) for m, cost in costs if cost is not None]
 
 
 def compact(store: Store, session: Session, now: float) -> Compact | None:
-    """/compact re-sends the conversation (read back while warm, written after
-    a break, with the 5-minute cache even on a subscription) and writes a
-    summary; later messages read the tool list and the summary instead of the
-    conversation (research/CACHE-DECISIONS.md §6). The summary's size is
-    learned from earlier compactions (Store.summary_size), so all three
-    amounts are ≈; the difference between now and once the cache expires is exact."""
+    """/compact's own request re-sends the conversation without caching it, and
+    writes a summary; later messages send after_compact() and the summary
+    instead of the conversation (research/CACHE-DECISIONS.md §6). What it
+    reads back, per Claude Code's own totals around five real compactions:
+    while warm, what the latest turn's first request left cached (the
+    conversation up to that prompt); after a break, the tool list at most.
+    The rest goes at the input price. The summary's size is learned from
+    earlier compactions (Store.summary_size), so all three amounts are ≈."""
     price, ctx = store.price(session.model, session), context(store, session)
     if not price or ctx is None or session.main.compacted:
         return None
-    warm, _, _ = cache_clock(session, now)
+    warm, left, _ = cache_clock(session, now)
     summary = store.summary_size(ctx.tokens)
     written = output_cost(price, summary)
-    after_break = prompt_cost(price, ctx.tokens, 0, FIVE_MINUTES) + written
-    now_cost = prompt_cost(price, ctx.tokens, ctx.cached, FIVE_MINUTES) + written if warm else after_break
-    remaining = store.tool_list(session, session.model) + summary
-    saving = max(0.0, (ctx.tokens - remaining) * price["cache_read"] / 1e6)
+    # Once the cache has run out, the tool list may still be cached (Store.shared_prefix, as it will be then).
+    cold = min(store.shared_prefix(session, session.model, now + left), ctx.tokens)
+    after_break = sent_cost(price, ctx.tokens, cold) + written
+    turn, family = session.turn_cached or (0, None)
+    turn = turn if family == model_key(session.model) else 0
+    now_cost = sent_cost(price, ctx.tokens, max(turn, cold)) + written if warm else after_break
+    base, _ = after_compact(store, session, session.model)
+    saving = max(0.0, (ctx.tokens - base - summary) * price["cache_read"] / 1e6)
     return Compact(now_cost, after_break, saving)

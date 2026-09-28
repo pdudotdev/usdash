@@ -12,6 +12,9 @@ from .sessions import Session, Store
 COMPACT_FROM = 100_000  # context size worth compacting
 COMPACT_WARN = 600  # seconds of warm cache left when the /compact warning appears
 MIN_SAVING = 0.005  # per message: below this, /compact isn't worth a warning
+# What compacting now must save over compacting once the cache has expired. Little, when one
+# turn built most of the conversation: /compact reads back only what came before that turn.
+MIN_EARLY = 0.01
 
 
 @dataclass
@@ -69,7 +72,8 @@ def advise(store: Store, session: Session, now: float) -> Advice | None:
         if (found := next_message(store, session, model, now)) is not None:
             advice.prices.append((model, *found))
     costs = compact(store, session, now)
-    if costs and costs.saving >= MIN_SAVING and ctx.tokens >= COMPACT_FROM and left <= min(COMPACT_WARN, ttl // 2):
+    if (costs and costs.saving >= MIN_SAVING and costs.after_break - costs.now >= MIN_EARLY
+            and ctx.tokens >= COMPACT_FROM and left <= min(COMPACT_WARN, ttl // 2)):
         advice.warning = (f"Taking a break? /compact first: ≈{money(costs.now)} now, "
                           f"≈{money(costs.after_break)} once the cache expires in {clock(left)}.")
     return advice

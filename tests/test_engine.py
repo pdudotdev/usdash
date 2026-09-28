@@ -116,16 +116,35 @@ def test_compact_restarts_the_cache_clock_from_when_it_started(store):
 
 
 def test_compact_now_or_after_a_break(store):
-    # research/CACHE-DECISIONS.md §6: 140k on Opus, a ~3k-token summary: ≈$0.09 warm, ≈$0.76 cold.
+    # research/CACHE-DECISIONS.md §6: 139k on Opus 5.5, a ~3k-token summary.
     earlier = Transcript(session="sess-2")
     earlier.record("system", T0 - 600, subtype="compact_boundary", compactMetadata={"postTokens": 3_000, "preTokens": 140_000})
     earlier.into(store)
     session = opus_session(store, prompts=(40_000, 138_000, 139_000))  # the tool list: a 40k first prompt
     costs = engine.compact(store, session, T0 + 200)
-    assert costs.now == pytest.approx((139_000 * 0.2 + 3_000 * 20) / 1e6)  # read back, and the summary written
-    assert costs.after_break == pytest.approx((139_000 * 5 + 3_000 * 20) / 1e6)  # the 5-minute cache, even on a plan
-    # Later messages read the tool list and the summary instead of the conversation.
+    # Warm: what the last turn's first request cached (all but its 2 uncached tokens) read back, the
+    # rest sent at the input price, and the summary written.
+    assert costs.now == pytest.approx((138_998 * 0.2 + 2 * 4 + 3_000 * 20) / 1e6)
+    # After a break: nothing written to the cache either; the tool list likely still read back (1-hour cache).
+    assert costs.after_break == pytest.approx((40_000 * 0.2 + 99_000 * 4 + 3_000 * 20) / 1e6)
+    # Later messages send the first prompt's part again, and the summary, instead of the conversation.
     assert costs.saving == pytest.approx((139_000 - 40_000 - 3_000) * 0.2 / 1e6)
+
+
+def test_compact_reads_back_only_up_to_the_latest_turn(store):
+    # One prompt, then tool calls that grew the conversation from 50k to 139k: /compact reads back
+    # what the turn's first request cached, and sends the rest at the input price.
+    session = opus_session(store, prompts=(40_000, 50_000))
+    t = Transcript()
+    t.tool_result(T0 + 80)
+    t.reply(T0 + 85, read=50_000, write=39_998)  # 90,000
+    t.tool_result(T0 + 100)
+    t.reply(T0 + 105, read=90_000, write=48_998)  # 139,000
+    t.into(store)
+    assert session.last_request.prompt == 139_000 and session.turn_cached == (49_998, "claude-opus-5-5")
+    costs = engine.compact(store, session, T0 + 200)
+    summary = store.summary_size(139_000)
+    assert costs.now == pytest.approx((49_998 * 0.2 + 89_002 * 4 + summary * 20) / 1e6)
 
 
 def test_the_summary_size_is_learned_and_grows_with_the_conversation(store):

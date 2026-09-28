@@ -95,12 +95,26 @@ def test_another_sessions_cached_tool_list_is_subtracted_but_not_its_conversatio
 def test_compact_warning_only_when_big_warm_and_about_to_expire(store):
     session = session_on(store, prompts=(40_000, 138_000, 139_000))
     assert live(store, session, LAST_START + 60).warning is None  # 59 min left
-    # 139k read back at $0.20 (or written at $5 on the 5-minute cache) plus a ~4.2k summary at $20.
+    # Now: 139k read back at $0.20; later: all but the 40k tool list sent at $4. Plus a ~4.2k summary at $20.
     assert (live(store, session, LAST_START + ONE_HOUR - 300).warning
-            == "Taking a break? /compact first: ≈$0.11 now, ≈$0.78 once the cache expires in 5:00.")
+            == "Taking a break? /compact first: ≈$0.11 now, ≈$0.49 once the cache expires in 5:00.")
     assert advice.advise(store, session, LAST_START + ONE_HOUR + 1) is None  # already cold
     small = session_on(store, session="sess-2")
     assert live(store, small, LAST_START + ONE_HOUR - 300).warning is None
+
+
+def test_no_compact_warning_when_one_turn_built_the_conversation(store):
+    # One prompt, then tool calls that read 98k of files: /compact reads back only what came before
+    # that prompt, now or after a break, so compacting first saves next to nothing.
+    session = session_on(store, prompts=(40_000, 41_000))
+    t = Transcript()
+    t.tool_result(T0 + 90)
+    t.reply(T0 + 95, read=41_000, write=97_998)  # 139,000
+    t.into(store)
+    now = T0 + 90 + ONE_HOUR - 300
+    tip = live(store, session, now)
+    costs = advice.compact(store, session, now)
+    assert costs.after_break - costs.now < advice.MIN_EARLY and tip.warning is None
 
 
 def test_no_compact_warning_when_compacting_saves_too_little(store):
