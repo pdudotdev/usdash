@@ -28,7 +28,6 @@ MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bri
 # The VS Code extension also runs in its forks (Cursor, Windsurf, …): "IDE" is true for all of them.
 APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
-HEADER_HEIGHT = 5  # three lines and the frame
 DEFAULT_WINDOW = 5 * 86400  # sessions active this recently are listed
 PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
@@ -131,21 +130,25 @@ def visible_sessions(store: Store, view: View) -> list[Session]:
 # --- Header ------------------------------------------------------------------------
 
 
-def header(store: Store, view: View) -> Panel:
+def top_lines(store: Store, view: View) -> list[Text]:
+    """The header's lines, each cut at the terminal's edge: today's spend, what
+    cache misses added (only when there are any), the prices, the caveat."""
     today = day_of(view.now)
     day = store.days.get(today, {})
     spent = day.get("cost", 0.0)
     hit = day.get("read", 0) / day["prompt"] if day.get("prompt") else None
     rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost >= 0.005}
-    # One line each: the header has room for exactly three.
     line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), no_wrap=True, overflow="ellipsis")
     if hit is not None:
         line.append(f"  ·  {hit:.0%} of input read from cache", style="green" if hit >= 0.9 else "yellow")
+    lines = [line]
     if rewrites:
+        # What requests paid to write the conversation again instead of reading it back (the feed's ⟳ rows):
+        # a line of its own, the biggest cause first, so a long list of causes cuts only the smallest.
         total = sum(rewrites.values())
         parts = ", ".join(f"{reason} {_money(cost)}" for reason, cost in sorted(rewrites.items(), key=lambda i: -i[1]))
-        # What requests paid to write the conversation again instead of reading it back (the feed's ⟳ rows).
-        line.append(f"  ·  ⟳ cache misses added {_money(total)} ({parts})", style="red")
+        lines.append(Text(f"⟳ cache misses added {_money(total)}: {parts}", style="red", no_wrap=True,
+                          overflow="ellipsis"))
     detail = Text(
         f"At {view.prices}; your subscription isn't billed per token" if view.subscription
         else f"Estimated at {view.prices}",
@@ -165,7 +168,11 @@ def header(store: Store, view: View) -> Panel:
     # summary); an exited session's TOTAL is Claude Code's own, which counts them.
     caveat = Text("Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…). "
                   "An exited session's TOTAL is complete.", style="dim", no_wrap=True, overflow="ellipsis")
-    return Panel(Group(line, detail, caveat), title=Text("💲 usdash · live", style="bold"), title_align="left")
+    return [*lines, detail, caveat]
+
+
+def header(lines: list[Text]) -> Panel:
+    return Panel(Group(*lines), title=Text("💲 usdash · live", style="bold"), title_align="left")
 
 
 # --- Tables ------------------------------------------------------------------------
@@ -587,11 +594,13 @@ def press(store: Store, view: View, key: str) -> None:
 
 
 def render(store: Store, view: View, height: int) -> Layout:
-    body = max(3, height - HEADER_HEIGHT)
+    lines = top_lines(store, view)
+    top = len(lines) + PANE_FRAME
+    body = max(3, height - top)
     if view.mode == "requests":
         panel = feed_panel(store, view, max(0, body - 3))  # the panel's border and the column names
     else:
         panel = sessions_view(store, view, body)  # the panes, their frames included
     layout = Layout()
-    layout.split_column(Layout(header(store, view), size=HEADER_HEIGHT), Layout(panel))
+    layout.split_column(Layout(header(lines), size=top), Layout(panel))
     return layout

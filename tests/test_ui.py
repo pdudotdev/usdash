@@ -333,7 +333,7 @@ def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
     t.into(store)
     text = screen(store, ui.View(now=T0 + 60 + 7300))
     assert "TODAY $" in text and "of input read from cache" in text
-    assert "⟳ cache misses added $" in text and "(cache expired $" in text
+    assert "⟳ cache misses added $" in text and ": cache expired $" in text
     assert "Estimated at current API list prices" in text
     assert "Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…)." in text
     assert "subscription" not in text  # an API-key account
@@ -510,17 +510,26 @@ def test_a_90_minute_window_is_labelled_as_such(store):
     assert "no Claude Code activity in the last 90m" in screen(store, ui.View(now=T0 + 10 * 3600, window=5400))
 
 
-def test_the_header_keeps_its_second_line_when_the_first_is_long(store):
+def test_cache_misses_get_a_header_line_of_their_own(store):
+    view = ui.View(now=T0 + 7400, prices=app.prices_label("2026-09-26", offline=False))
     t = Transcript()
     t.turn(T0, write=40_000)
+    t.into(store)
+    lines = screen(store, view, width=90).splitlines()
+    assert lines[1].strip("│ ").startswith("TODAY $") and lines[2].strip("│ ").startswith("Estimated at")  # no misses, no line
+    t = Transcript()
     t.turn(T0 + 60, model="claude-sonnet-5", write=41_000)  # model switch
     t.turn(T0 + 7300, model="claude-sonnet-5", write=42_000)  # cache expired
     t.record("system", T0 + 7310, subtype="compact_boundary", compactMetadata={"postTokens": 2_000})
     t.turn(T0 + 7320, model="claude-sonnet-5", read=10_000, write=30_000)  # /compact
     t.into(store)
-    text = screen(store, ui.View(now=T0 + 7400, prices=app.prices_label("2026-09-26", offline=False)), width=90)
-    assert "cache misses added" in text
-    assert "Estimated at API list prices of Sep 26 (couldn't refresh them)" in text
+    lines = [line.strip("│ ") for line in screen(store, view, width=90).splitlines()]
+    assert lines[1].startswith("TODAY $") and "⟳" not in lines[1]
+    # Every cause, the biggest first, where a narrow terminal still has room for them.
+    assert lines[2].startswith("⟳ cache misses added $") and "cache expired $" in lines[2] and "model switch $" in lines[2]
+    assert lines[2].index("cache expired") < lines[2].index("model switch")
+    assert lines[3] == "Estimated at API list prices of Sep 26 (couldn't refresh them)"
+    assert lines[4].startswith("Amounts can be lower than actual") and lines[5].startswith("╰")
 
 
 def test_warnings_come_first_on_the_headers_second_line(store):
