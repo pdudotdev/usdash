@@ -1,15 +1,16 @@
 """The screen: a header, then either the sessions (the default) or every request.
 
-Sessions from the last 5 days, newest first, in two panes. A live session
-(cache warm, not exited) opens up: what you last typed there, what to do, and
-what each option costs. An idle one gets a line with what coming back to it
-costs. Finished script runs fold into one row per folder. `r` swaps in the
+Sessions from the last 5 days, newest first, in three panes, in the order
+you'd come back to them: live (cache warm), expired (still open), exited
+(resumed with `claude --resume`). A live session shows what you last typed and
+what its next message costs on each model; the others, what coming back costs.
+Finished script runs fold into one row per folder. `r` swaps in the
 request feed (rendering copied in spirit from llm-trunk's scripts/dashboard.py:
 a NOTE column that runs to the end of the line, the same scrolling keys).
 """
 import itertools
 import zlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -210,10 +211,15 @@ SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("PROJECT", False), ("WHER
                    ("CACHE", False), ("CONTEXT", True), ("TODAY", True), ("TOTAL", True))
 
 
+# The panes, top to bottom: (title, how to come back to its sessions).
+PANES = {"live": ("live", "cache warm"), "expired": ("expired", "still open: type in its window"),
+         "exited": ("exited", "claude --resume <id>")}
+
+
 @dataclass
 class Entry:
-    """One session (or a folder's closed script runs) and the lines under it."""
-    live: bool
+    """One session (or a folder's exited script runs) and the lines under it."""
+    pane: str  # a key of PANES
     cells: list[Text]
     below: list[Text] = field(default_factory=list)  # from the SESSION column on
 
@@ -254,7 +260,7 @@ def prompt_text(session: Session, view: View) -> Text:
 def prices_text(verb: str, ctx, prices: list[tuple[str, float, bool]], own: str | None,
                 cached: bool = False, best: str | None = None) -> Text:
     """'next message re-sends 632k tokens: $12.63 on Fable 5.1, $0.13 on Opus
-    5.5 (cached) ✅, …': the same line for live and idle sessions, the
+    5.5 (cached) ✅, …': the same line in every pane, the
     session's own model in bold, ✅ on `best`."""
     line = Text(f"{verb} {resends(ctx)}")
     for i, (model, cost, exact) in enumerate(prices):
@@ -302,26 +308,28 @@ def script_runs(runs: list[Session], view: View) -> Entry:
     today = sum(s.cost_by_day.get(day_of(view.now), 0.0) for s in runs)
     name = Text(plural(len(runs), "run"), style="bold")
     age = age_text(view.now - (latest.last_activity or view.now))
-    return Entry(False, [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
+    return Entry("exited", [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
                          Text(app_name(latest), style="dim"), model_text(latest.model),
                          Text(f"exited · {age}", style="dim"), Text(""),
                          today_cell(today), Text(_money(sum(s.total for s in runs)))])
 
 
 def session_entries(store: Store, view: View) -> list[Entry]:
-    """Live sessions first, then idle ones, each newest first."""
-    live, idle, runs = [], [], defaultdict(list)
+    """Live sessions, then expired ones, then exited ones, each newest first."""
+    panes: dict[str, list[tuple[float, Entry]]] = {pane: [] for pane in PANES}
+    runs = defaultdict(list)
     for session in visible_sessions(store, view):
         advice = advise(store, session, view.now)
-        cells = session_cells(store, session, view)
+        cells, when = session_cells(store, session, view), session.last_activity or 0
         if advice is not None:
-            live.append(Entry(True, cells, tree(live_lines(session, view, advice))))
+            panes["live"].append((when, Entry("live", cells, tree(live_lines(session, view, advice)))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
-            idle.append((session.last_activity or 0, Entry(False, cells, tree(idle_lines(store, session)))))
-    idle += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
-    return live + [entry for _, entry in sorted(idle, key=lambda item: -item[0])]
+            pane = "exited" if session.ended else "expired"
+            panes[pane].append((when, Entry(pane, cells, tree(idle_lines(store, session)))))
+    panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
+    return [entry for pane in PANES for _, entry in sorted(panes[pane], key=lambda item: -item[0])]
 
 
 def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
@@ -334,21 +342,21 @@ def entry_lines(columns, widths: list[int], entry: Entry) -> list[Text]:
 
 
 def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: int,
-              head: int) -> tuple[list[tuple[bool, list[Text]]], int]:
-    """The sessions from `start` on that fit in `room` lines, split into panes
-    (live, then idle): each pane costs `head` lines (its frame and the column
-    names) plus its sessions, with a dim line between two sessions. Also how
-    many sessions that is: at least one (a live block taller than the room is
-    cut, not skipped)."""
-    panes: list[tuple[bool, list[Text]]] = []
+              head: int) -> tuple[list[tuple[str, list[Text]]], int]:
+    """The sessions from `start` on that fit in `room` lines, split into their
+    panes: each pane costs `head` lines (its frame and the column names) plus
+    its sessions, with a dim line between two sessions. Also how many sessions
+    that is: at least one (a live block taller than the room is cut, not
+    skipped)."""
+    panes: list[tuple[str, list[Text]]] = []
     used = shown = 0
     for entry, block in zip(entries[start:], blocks[start:]):
-        new = not panes or panes[-1][0] != entry.live
+        new = not panes or panes[-1][0] != entry.pane
         cost = len(block) + (head if new else 1)
         if shown and used + cost > room:
             break
         if new:
-            panes.append((entry.live, []))
+            panes.append((entry.pane, []))
         else:
             panes[-1][1].append(Text("─" * 500, style="dim", no_wrap=True, overflow="crop"))  # cut at the pane's edge
         panes[-1][1].extend(block)
@@ -357,8 +365,8 @@ def page_from(entries: list[Entry], blocks: list[list[Text]], start: int, room: 
 
 
 def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
-    """The sessions in two panes, live above idle, scrolled together by whole
-    session (a live one's lines never split); the columns line up across both."""
+    """The sessions in their panes (PANES), scrolled together by whole session
+    (a live one's lines never split); the columns line up across all of them."""
     window = duration_text(view.window)
     entries = session_entries(store, view)
     keys = Text("↑↓/wheel/j/k: scroll · r: every request · q: quit", style="dim")
@@ -377,13 +385,15 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     view.session_scroll = max(0, min(view.session_scroll, last))
     panes, shown = page_from(entries, blocks, view.session_scroll, rows, head)
     view.session_page = shown
-    live = sum(entry.live for entry in entries)
-    titles = {True: f"live · {plural(live, 'session')}",
-              False: f"idle · {plural(len(entries) - live, 'session')} · last {window}"}
+    counts = Counter(entry.pane for entry in entries)
     parts = []
-    for i, (is_live, lines) in enumerate(panes):
+    for i, (key, lines) in enumerate(panes):
         final = i == len(panes) - 1
-        title, subtitle = titles[is_live], None
+        name, back = PANES[key]
+        title, subtitle = f"{name} · {plural(counts[key], 'session')}", None
+        if final:
+            title += f" · last {window}"
+        title += f" · {back}"
         if final:
             if shown < len(entries):
                 title += f" · showing {view.session_scroll + 1}–{view.session_scroll + shown} of {len(entries)}"

@@ -22,7 +22,7 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 OUT = ROOT / "docs" / "dashboard.svg"
-WIDTH, HEIGHT = 140, 21
+WIDTH, HEIGHT = 140, 23
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
 
@@ -42,14 +42,14 @@ def sessions() -> Store:
     grow(fix, T, (41_000, 60_000, 95_000, 140_000, 182_000),
          ("why is the total off by one cent", "show me where the rounding happens", "read the pricing module",
           "fix it and add a test", "run the suite and tell me what fails"), out=1_800)
-    # Idle, open: a VS Code session moved from Opus 5.5 to Sonnet 5 (a cache miss), now cold.
+    # Expired, still open: a VS Code session moved from Opus 5.5 to Sonnet 5 (a cache miss), now cold.
     notes = Transcript(session="b21e77d4", cwd="/home/you/shop", entrypoint="claude-vscode")
     notes.record("custom-title", customTitle="Release notes")
     notes.turn(T - 2 * 3600, text="draft the release notes", write=38_000, ttl="5m", out=1_200)
     notes.turn(T - 2 * 3600 + 120, text="shorter, please", model="claude-sonnet-5", write=40_500, ttl="5m", out=900)
     notes.turn(T - 2 * 3600 + 240, text="add a note about the migration", model="claude-sonnet-5", read=40_502,
                write=1_500, ttl="5m", out=700)
-    # Idle, closed: a long session from this morning, expensive to come back to.
+    # Exited: a long session from this morning, expensive to come back to.
     billing = Transcript(session="7c40d2aa", cwd="/home/you/billing")
     billing.record("ai-title", aiTitle="Migrate billing to v2")
     grow(billing, T - 5 * 3600, (42_000, 150_000, 290_000, 420_000),

@@ -60,11 +60,16 @@ def test_sessions_are_told_apart_by_name_place_and_id(store):
 def test_sections_and_counts(store):
     two_sessions(store)
     text = screen(store, ui.View(now=NOW))
-    # Two panes, live above idle, each with its own column names, lined up with each other.
-    titles = [line for line in text.splitlines() if line.startswith("╭─ live") or line.startswith("╭─ idle")]
-    assert [title.split(" ─")[0] for title in titles] == ["╭─ live · 1 session", "╭─ idle · 1 session · last 5d"]
+    # A pane each for live and expired sessions (no one exited yet), with the column names lined up;
+    # the last one says the window.
+    titles = [line.split(" ─")[0] for line in text.splitlines() if line.startswith("╭─") and "usdash" not in line]
+    assert titles == ["╭─ live · 1 session · cache warm", "╭─ expired · 1 session · last 5d · still open: type in its window"]
     names = [line for line in text.splitlines() if "SESSION" in line and "CACHE" in line]
     assert len(names) == 2 and names[0] == names[1]
+    closing = Transcript(session="bbbb-2222")
+    closing.record("cost-state", totalCostUSD=0.08)
+    closing.into(store)
+    assert "╭─ exited · 1 session · last 5d · claude --resume <id> ─" in screen(store, ui.View(now=NOW))
 
 
 def test_a_live_session_shows_its_next_message_on_each_model(store):
@@ -141,7 +146,8 @@ def test_closed_script_runs_fold_into_one_row(store):
     assert "3 runs" in rows[1] and "jobs" in rows[1] and "exited · " in rows[1]
     assert "summarize the log" in rows[0]  # an open run shows like any session
     assert text.count("└ ") == 1  # only the open run has a line under it
-    assert "idle · 2 sessions · last 5d" in text and "╭─ live" not in text  # no live pane without a live session
+    assert "╭─ live" not in text  # no pane without a session in it
+    assert "expired · 1 session · still open" in text and "exited · 1 session · last 5d" in text  # the runs are exited
 
 
 def test_archived_and_long_idle_sessions_are_hidden(store):
@@ -397,7 +403,7 @@ def test_window_labels_are_exact(seconds, text):
 
 def test_a_90_minute_window_is_labelled_as_such(store):
     two_sessions(store)
-    assert "idle · 1 session · last 90m" in screen(store, ui.View(now=T0 + 660, window=5400))
+    assert "expired · 1 session · last 90m" in screen(store, ui.View(now=T0 + 660, window=5400))
     assert "no Claude Code activity in the last 90m" in screen(store, ui.View(now=T0 + 10 * 3600, window=5400))
 
 
@@ -454,4 +460,4 @@ def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("COLUMNS", "200")
     app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
     out = capsys.readouterr().out
-    assert "idle · 1 session · last 5d" in out and "from 4 days ago" in out and "from 6 days ago" not in out
+    assert "expired · 1 session · last 5d" in out and "from 4 days ago" in out and "from 6 days ago" not in out

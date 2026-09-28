@@ -234,7 +234,7 @@ class Session:
         """The folder it runs in, plus @branch unless it's main, master or a detached HEAD."""
         cwd = self.cwd or ""
         if "/Library/Application Support/Claude/" in cwd:
-            folder = "Desktop (no folder)"
+            folder = "no folder"  # a Desktop session started without one: it runs in a scratch folder of the app's
         else:
             folder = Path(cwd).name or "?"
         if self.branch and self.branch not in ("HEAD", "main", "master"):

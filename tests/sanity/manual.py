@@ -3,87 +3,107 @@
 
 Checks against live Claude Code sessions, for what the automated tests can't
 reach: what Claude Code really writes, and how the dashboard behaves while it
-runs. Run them after a Claude Code update, or if the header reports records of
-unknown types.
+runs. Run them after a Claude Code update, after a change to usdash's screen or
+prices, or if the header reports records of unknown types.
 
-**Setup:** in one terminal, run `usdash`. Use other windows for Claude Code.
-The checks work on a subscription or an API key unless they say otherwise.
-"Rows" of requests are in the request list: press `r` to show it, `r` again
-to go back to the sessions.
+**What they cost:** real requests. On an API key, a full run costs a few
+dollars (checks 17 and 30 cost the most); on a subscription, it uses plan
+usage. The long-turn checks (23–27) take about 10 minutes each.
+
+### How to run them (a person, or an agent with a terminal)
+
+- **The dashboard:** run it in tmux, so its screen can be read and keys sent:
+  `tmux new-session -d -s usdash -x 200 -y 60 usdash`, read it with
+  `tmux capture-pane -p -t usdash`, and send keys with
+  `tmux send-keys -t usdash r` (`r` switches to the request list and back).
+  `COLUMNS=200 LINES=60 usdash --once` prints one screen of the sessions.
+- **Claude Code sessions:** one tmux session each, started in the folder the
+  check names: `tmux new-session -d -s a -x 200 -y 50 -c <folder> claude`, then
+  type with `tmux send-keys -t a '<message>' Enter` (slash commands the same
+  way). Tell sessions apart on the dashboard by the ID column (the first 4
+  characters of the session id, as in `/status`). The Claude Code session running
+  these checks shows up on the dashboard too: ignore it.
+- **Labels:** `[GUI]` needs the VS Code extension or the Desktop app;
+  `[remote]` needs a second machine; `[record]` settles an open question: report
+  what you see, there's no fail. Skip what you can't do, and say why.
+- **Transcripts,** where a check asks for one: one file per session,
+  `~/.claude/projects/<its folder's path, with / and spaces as ->/<session id>.jsonl`
+  (`ls -t ~/.claude/projects/*/*.jsonl | head` lists the newest), one JSON record
+  per line; a reply's token counts are in `message.usage`.
+- **Report** each check as pass, fail (what you saw instead) or skipped (why).
+
+**Prices to check amounts against** (per million tokens): Opus 5.5 reads its
+cache at $0.20 and writes it at $5 (5-minute cache) or $8 (1-hour); Sonnet 5
+writes at $2.50 / $4; Haiku 4.5 at $1.25 / $2, and counts the same text as about
+0.77× the tokens; Fable 5.1 at $12.50 / $20. A subscription's main conversation
+uses the 1-hour cache, an API key the 5-minute one.
 
 ### Sessions and names
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 1 | Open two Claude Code windows in the same repo (say `shop`), and a third in a worktree of it on another branch (`git worktree add ../shop-fix -b fix`). Send a different message in each | Three live sessions. You can tell which is which from SESSION (your first words, until Claude Code titles the session), PROJECT (`shop`, `shop-fix@fix`) and the `└` line (what you last typed there), without looking at the ID | Rows must map to your windows, not to session ids |
-| 2 | In one window, `/rename parser work` | Its SESSION becomes `parser work` within a second or two | A rename beats the automatic title |
-| 3 | One session each in the terminal, the VS Code extension and the Desktop app's Code tab | All three appear within about 5 seconds of their first message. WHERE says `CLI`, `IDE` and `Desktop`, and the Desktop one shows the sidebar's title | All local surfaces write to the same transcripts folder |
-| 4 | In one folder, run `claude -p "say hi"` twice | One row in the idle pane: `2 runs`, WHERE `script`, `exited · …`, with their summed cost | A loop of script runs mustn't bury the real sessions |
-| 5 | Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal | That session appears; your laptop's sessions don't | usdash shows the sessions of the machine it runs on |
-| 6 | In the Desktop app, archive a session that usdash lists | It leaves the list within about 10 seconds; its requests stay in the request list | Archived sessions are done with |
-| 7 | Restart with `usdash --window 30m` while one session has been idle for more than 30 minutes | The pane title says `last 30m`, and the idle session isn't listed | `--window` decides which sessions are listed |
+| 1 | In a git repo (say `shop`, on `main`), start two sessions, and a third in a worktree of it on another branch (`git worktree add ../shop-fix -b fix`). Send a different message in each | Three sessions in the live pane. PROJECT says `shop`, `shop`, `shop-fix@fix`, and the `├` line under each shows the message you sent there, so you can tell them apart without the ID | Rows must map to your windows, not to session ids |
+| 2 | In one of them, `/rename parser work` | Within about 2 seconds its SESSION becomes `parser work` | A rename beats Claude Code's automatic title |
+| 3 | `[GUI]` Start one session each in a terminal, the VS Code extension and the Desktop app's Code tab (the Desktop one without choosing a folder), and send a message in each | All three appear within about 5 seconds. WHERE says `CLI`, `IDE` and `Desktop`; the Desktop one's PROJECT says `no folder`, and within about 10 seconds its SESSION shows its title in the app's sidebar | Every local surface writes to the same transcripts folder |
+| 4 | In one folder, run `claude -p "say hi"` twice | One row for both in the exited pane: `2 runs`, WHERE `script`, CACHE `exited · …`, TOTAL the two runs' costs added | A loop of script runs mustn't bury the real sessions |
+| 5 | `[remote]` Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal | That session appears; your laptop's sessions don't | usdash shows the sessions of the machine it runs on |
+| 6 | `[GUI]` In the Desktop app, archive a session that usdash lists | Within about 10 seconds it leaves the sessions; its requests stay in the request list | An archived session is done with |
+| 7 | Run `usdash --once`, then `usdash --window 30m --once` | First: the last pane's title says `last 5d`, and no session's CACHE age is over 5 days. Then: only sessions used in the last 30 minutes, and the last pane's title says `last 30m` (with no session at all: `no Claude Code activity in the last 30m`) | The default window is 5 days; `--window` changes it |
 
-### Cache clock and costs
-
-| # | Do this | Pass criteria (dashboard) | Why |
-|---|---|---|---|
-| 8 | Send a message, then watch the session | It's in the live pane. CACHE shows `● 59:xx` on a subscription, `● 4:xx` on an API key, counting down, and back near the top after each message. Its `└ next message re-sends …k tokens` line has the same token count as CONTEXT, and its own model is bold, marked `(cached) ✅` | The lifetime comes from the session's own usage, counted from the request's start |
-| 9 | Leave a session idle past its cache lifetime | It moves to the idle pane with `○ expired · …`, and its line reads `└ continuing re-sends …k tokens: $… on <its model>, …` | A break re-writes the conversation whatever you do, so a cheaper model re-writes for less |
-| 10 | Quit a session (`/exit`) | `exited · 1m`, TOTAL switches to Claude Code's own figure (usually a little higher), a `└ resuming re-sends …` line, and no advice | Claude Code writes its own total, which counts the requests transcripts miss, when a session exits |
-| 11 | `claude --resume` the session from test 10 and send a message | The same ID comes back in the live pane, with a countdown | Resuming appends to the same transcript |
-| 12 | Look at the header | `TODAY $…` and the share of input read from cache. On a subscription account, the second line says `At current API list prices; your subscription isn't billed per token`; on an API-key account, `Estimated at current API list prices`. The third line says `Amounts can be lower than actual: Claude Code doesn't log some requests …` | A subscription isn't billed per token: its dollars are for comparison |
-
-### Re-writes and advice
+### Cache clock and prices
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 13 | In a warm Opus 5.5 session, read its lines | `├` what you last typed, then `└ next message re-sends …k tokens: $… on Fable 5.1, $… on Opus 5.5 (cached) ✅, $… on Sonnet 5, $… on Haiku 4.5`: Opus 5.5 a small fraction of the others | Your own model reads the conversation back; any other writes all of it into its own cache |
-| 14 | Note the next-message line's amount on Sonnet 5, then `/model sonnet` and send a message | The request list shows `⟳ re-wrote …: model switch from Opus 5.5 (+$…)` in red, and the header's `cache misses added` total goes up. That row's COST is about the noted amount, plus your message and the reply | Each model has its own cache; the next-message amounts are exact |
-| 15 | In an Opus 5.5 session, `/effort low` and send a message. Then do the same in a Sonnet 5 session | Opus 5.5: its next row has no `⟳` note, and CACHED stays high. Sonnet 5: `⟳ re-wrote …: effort change` | Only Opus 5.5 and Fable 5.1 keep the cache when effort changes |
-| 16 | In a session over 100k tokens, wait until less than 10 minutes of cache remain (2.5 minutes on a 5-minute cache) | `⚡ Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in m:ss.` | /compact reads the cache while it's warm, and re-writes everything once it has expired |
-| 17 | `/compact` | Before you send anything: CONTEXT shows `≈` (the tool list plus the summary), and the next-message amounts drop, with `≈`. After the next message: CONTEXT shows its new size without `≈`, and that request's row reads most of its prompt from cache | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
-| 18 | In a clean folder, start sessions A and B, with no file edits in between. Build up some context in B on Opus 5.5. In A, `/model haiku` and send a message. Right away, `/compact` in B | B's ✅ moves to Haiku 4.5: its next message is cheaper there. Then `/model haiku` in B and send a message: B's new row has CACHED well above 0% and no `⟳` note | Sessions in the same folder share the cached tool list and system prompt on each model |
+| 8 | Send a message in a session, then watch it | It's in the live pane. CACHE counts down from about `● 59:5x` on a subscription (`● 4:5x` on an API key) and starts over after each message. Its `└ next message re-sends …k tokens` line has the same token count as CONTEXT, and its own model is marked `(cached) ✅` | The lifetime comes from the session's own usage, counted from each request's start |
+| 9 | In a warm Opus 5.5 session, read its `└ next message` line | Models in this order: Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5. Opus 5.5's amount ≈ CONTEXT × $0.20 per million; Sonnet 5's ≈ CONTEXT × $4 per million on a 1-hour cache ($2.50 on a 5-minute one) | Its own model reads the conversation back; any other writes all of it into its own cache |
+| 10 | Leave a session idle past its cache lifetime. Note the amount on its own model in its line, then send a message | While idle: the expired pane, CACHE `○ expired · …`, and `└ continuing re-sends …k tokens: $… on Fable 5.1, …` with every model. After the message: the request list shows `⟳ re-wrote …: cache expired (idle … min)`, that row's COST is about the noted amount plus your message and the reply, and the session is back in the live pane | Once the cache has expired, the next message writes the whole conversation again, on any model |
+| 11 | `/exit` a session | It moves to the exited pane with CACHE `exited · …` and a `└ resuming re-sends …` line. TOTAL becomes Claude Code's own figure, usually a little higher than before | Claude Code writes its own total when a session exits, and it counts the requests its transcripts miss |
+| 12 | `claude --resume` the session from check 11 and send a message | The same ID comes back in the live pane with a countdown, and TOTAL doesn't drop: Claude Code's figure plus the new requests | Resuming appends to the same transcript, and Claude Code's total carries across resumes |
+| 13 | `[record]` `/exit` a session with some context, `claude --resume` it within a minute, and send a message | Report the CACHED share of its first row. If most of the prompt was read back, a quick resume costs less than its line said (it shows the full re-write, the worst case) | Settles whether a session that exited less than a cache lifetime ago can still read its cache |
+| 14 | Read the header | Line 1: `TODAY $…` and the share of input read from cache. Line 2: `At current API list prices; your subscription isn't billed per token` on a subscription, `Estimated at current API list prices` on an API key, and nothing in yellow. Line 3: `Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…). An exited session's TOTAL is complete.` | The dollars are list prices; on a subscription they're for comparison |
+
+### Re-writes, and the /compact warning
+
+| # | Do this | Pass criteria (dashboard) | Why |
+|---|---|---|---|
+| 15 | In a warm Opus 5.5 session, note the amount on Sonnet 5 in its `└ next message` line, then `/model sonnet` and send a message | The request list shows a red `⟳ re-wrote …: model switch from Opus 5.5 (+$…)`, and the header's `cache misses added` goes up. That row's COST is about the noted amount plus your message and the reply | Each model has its own cache; the next-message amounts are exact |
+| 16 | In a warm Opus 5.5 session, `/effort low` and send a message. Then do the same in a warm Sonnet 5 session | Opus 5.5: its new row has no `⟳` note and CACHED stays near 100%. Sonnet 5: `⟳ re-wrote …: effort change` | Claude Code keeps the cache across an effort change only on Opus 5.5 and Fable 5.1 |
+| 17 | Start `CLAUDE_CODE_PROMPT_CACHE_TTL=5m claude` on Opus 5.5 and grow it past 100k tokens of CONTEXT (e.g. ask it to read a few large files). Then wait until CACHE shows under 2:30 | Between the `├` prompt line and the `└ next message` line: `├ ⚡ Taking a break? /compact first: ≈$… now, ≈$… once the cache expires in m:ss.` It isn't there while more than half the lifetime is left | Compacting while the cache is warm reads the conversation back; after it expires, it has to write it all first |
+| 18 | Then `/compact` | Before you send anything: CONTEXT shows `≈` (the tool list plus the summary), the ⚡ line is gone, and the next-message amounts drop, with `≈`. After your next message: CONTEXT shows the new size without `≈`, and that request's row reads most of its prompt from cache | Compaction replaces the history with a summary; the tool list and system prompt stay cached |
+| 19 | In a folder with no other sessions, start A and B, with no file edits in between. Build up some context in B on Opus 5.5. In A, `/model haiku` and send a message. Right away, `/compact` in B | B's ✅ moves to Haiku 4.5, with `≈` on the amounts. Then `/model haiku` in B and send a message: its new row's CACHED is well above 0% | Sessions in the same folder share the cached tool list and system prompt on each model |
 
 ### Request list
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 19 | Press `r`. While another session works, scroll with the wheel or j/k, then press g | The title says `paused · rows …`, the rows in view stay put as new ones arrive, new rows are counted as `new above`, and g returns to live | Reading back must not jump while requests arrive |
-| 20 | Ask for two subagents in parallel: one runs `sleep 30`, the other `sleep 60`, and each then replies "done" | `🤖 subagent` rows from both, and TIME never goes up as you read down the list | Rows are in the order their requests started, including those from subagent transcripts found a few seconds late |
+| 20 | Press `r`. While another session works, scroll down a few rows (`j`), then press `g` | While scrolled: the title says `paused · rows …`, the rows in view stay put as new ones arrive, and the new ones are counted as `… new above`. After `g`: the newest row is on top again | Reading back must not jump while requests arrive |
+| 21 | Ask a session for two subagents in parallel: one runs `sleep 30`, the other `sleep 60`, and each then replies "done" | `🤖 subagent` rows from both, and TIME never goes up as you read down the list | Rows are in the order their requests started, including those from a subagent's transcript found a few seconds late |
+| 22 | Scroll the sessions down a session or two (`j`), press `r`, scroll the request list, then press `r` twice | Each view comes back where you left it | Each view keeps its own place |
 
-### Long skills and long subagents
+### Long turns and long subagents
 
-These check how usdash counts the cache clock when one turn runs longer than the cache lifetime. On a subscription the main conversation has a 1-hour cache, so start Claude Code with **`CLAUDE_CODE_PROMPT_CACHE_TTL=5m claude`** to test the 5-minute cases (an API key uses 5 minutes anyway). Subagents always use 5 minutes.
+These check the cache clock when one turn runs longer than the cache lifetime. On a subscription, start Claude Code with `CLAUDE_CODE_PROMPT_CACHE_TTL=5m claude` for the 5-minute cases (an API key uses 5 minutes anyway); subagents always use 5 minutes.
 
-**Setup:** in a scratch folder, `mkdir -p .claude/skills && cp -r <usdash>/tests/sanity/skills/* .claude/skills/`, then start a fresh session there for each test.
-
-| # | Do this | Pass criteria (dashboard) | Why |
-|---|---|---|---|
-| 21 | 5-minute cache: `/slow-steps` (six `sleep 100` calls, about 10 minutes in all) | A row per step. No `⟳ re-wrote` notes, CACHED stays near 100%, and CACHE jumps back to about `● 4:5x` after every step | A turn is many API requests; each step reads the cache and restarts its clock, so a long turn stays warm while each step starts in time |
-| 22 | 5-minute cache: `/slow-tool` (one `sleep 330`) | During the sleep, the session moves to the idle pane, `○ expired · working`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded) and the header's `cache misses added` total goes up | The clock counts from the start of the step that ran the tool. Nothing refreshes it while the tool runs |
-| 23 | 1-hour cache (plain `claude` on a subscription): `/slow-tool` | CACHE counts down from about `● 59:xx` and stays warm; no `⟳ re-wrote` note | 5½ minutes is well inside a 1-hour cache |
-| 24 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them re-writes. The parent goes `○ expired · working` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
-| 25 | 1-hour cache: repeat test 24 | The parent stays warm, and its next row has no `⟳ re-wrote` note | The parent's 1-hour cache outlasts a 10-minute subagent |
-
-### Coming back, and the window
+**Setup:** in a scratch folder, `mkdir -p .claude/skills && cp -r <usdash>/tests/sanity/skills/* .claude/skills/`, then start a fresh session there for each check.
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 26 | `/exit` a session with some context, then `claude --resume` it within a minute and send a message | Record what its first row read from cache. If most of the prompt was read back, a quick resume costs less than the idle line said (it shows the full re-send, the worst case) | Settles whether a session closed less than a cache lifetime ago can still read its cache |
-| 27 | Resume a large idle session (100k+) after its cache has expired | Its first row's COST is about the idle line's amount for its model, plus your message and the reply | The idle line is exact: resuming re-sends the whole conversation |
-| 28 | Scroll the sessions a few rows, press `r`, scroll the request list, then press `r` twice | Each view comes back where you left it | The two views keep their own place |
-| 29 | Run `usdash` with no options while a session from 4 days ago and one from 6 days ago exist | The idle pane's title says `last 5d`; the 4-day-old session is listed, the 6-day-old one isn't | The default window is 5 days |
+| 23 | 5-minute cache: `/slow-steps` (six `sleep 100` calls, about 10 minutes in all) | A row per step, none with a `⟳ re-wrote` note, CACHED near 100%, and CACHE back to about `● 4:5x` after every step | A turn is many requests; each step reads the cache and restarts its clock |
+| 24 | 5-minute cache: `/slow-tool` (one `sleep 330`) | About 5 minutes into the sleep, the session moves to the expired pane with CACHE `○ expired · working`. The step after it shows `⟳ re-wrote …: cache expired (idle 6 min)` (5½–6 minutes, rounded), and the header's `cache misses added` goes up | The clock counts from the start of the step that ran the tool; nothing refreshes it while the tool runs |
+| 25 | 1-hour cache (plain `claude` on a subscription): `/slow-tool` | CACHE counts down from about `● 59:xx` and stays warm; no `⟳ re-wrote` note | 5½ minutes is well inside a 1-hour cache |
+| 26 | 5-minute cache: "Use a subagent to run `sleep 100` six times, as six separate Bash calls, then report done" | `🤖 subagent` rows every ~100 s, none of them a re-write. The parent goes to `○ expired · working` while it waits. When the subagent returns, the parent's next row shows `⟳ re-wrote …: cache expired (idle ~10 min)` | A subagent refreshes its own cache, not the parent's; a parent that only waits sends no requests |
+| 27 | 1-hour cache: repeat check 26 | The parent stays warm, and its next row has no `⟳ re-wrote` note | The parent's 1-hour cache outlasts a 10-minute subagent |
 
 ### Prices, fast mode and web search
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 30 | Start usdash with the network off, then again with `--offline` | The header says `API list prices of <date> (couldn't refresh them)`, then `(offline)`, with the date of the last prices read, and the amounts don't change | It falls back to the last prices it read, and says how fresh they are |
-| 31 | Start usdash with the network on, then look at `~/.cache/usdash/docs.json` | The header says `current API list prices`; the file has today's date for `pricing` and `models`, and `models` lists the models overview's comparison table, most capable first | The copy it falls back to is refreshed on every start |
-| 32 | In an Opus 5.5 session, turn `/fast` on and send a message. Then `/model`, pick Opus 5 (it has fast mode too), and send another | With fast on: MODEL says `Opus 5.5 high fast`, the request list shows `⟳ … speed change` and about twice the cost, and the next message on Opus 5.5 costs about twice as much. After `/model`: record whether the Opus 5 row says `fast` | Fast mode is priced from each reply's `usage.speed`. The next message on Opus 5 or Opus 4.8 is priced as if fast mode stays on; this settles whether it does |
-| 33 | Ask Claude Code to search the web for something, then `/exit` | The request list shows `🔍 N web searches (+$…)` on that reply, and its COST is the tokens plus $0.01 a search. After `/exit`, TOTAL (Claude Code's own) is at least the transcripts' figure | Server-side web search costs $10 per 1,000 searches on top of tokens |
+| 28 | Start `usdash --once` with the network off, then `usdash --once --offline` with it on | The header's second line says `API list prices of <date> (couldn't refresh them)`, then `(offline)`: the date of the last prices read. Every amount is the same as with the network on | It falls back to the last prices it read, and says how fresh they are |
+| 29 | Start `usdash --once` with the network on, then read `~/.cache/usdash/docs.json` | The header says `current API list prices`. The file has today's date under `pricing` and `models`, and `models` lists the models overview's comparison table, most capable first | The copy it falls back to is refreshed on every start |
+| 30 | `[record]` In an Opus 5.5 session, turn `/fast` on and send a message. Then `/model`, pick Opus 5 (it has fast mode too), and send another | With fast on: MODEL says `Opus 5.5 … fast`, the request list shows `⟳ … speed change` and about twice the usual cost, and the next message on Opus 5.5 costs about twice as much. After `/model`: report whether the Opus 5 row says `fast` | Fast mode is priced from each reply's `usage.speed`. The next message on Opus 5 or Opus 4.8 is priced as if fast mode stays on; this settles whether it does |
+| 31 | `[record]` Ask Claude Code to search the web for something, then `/exit` | The request list shows `🔍 N web searches (+$…)` on that reply, and its COST is its tokens plus $0.01 a search. If there's no 🔍, report that reply's `message.usage` from the transcript | Server-side web search costs $10 per 1,000 searches on top of tokens; this settles whether Claude Code's search is logged that way |
 
-**Overall pass:** after `/exit`, a session's TOTAL is Claude Code's own figure. On an API key, a session's TOTAL is also close to `/cost` in that session (a little lower while it's open: background requests aren't in the transcripts; the README's Limitations has the measured gap). Nothing in the header says `records of unknown types`.
+**Overall pass:** after `/exit`, each session's TOTAL is Claude Code's own figure. On an API key, an open session's TOTAL is a little below `/cost` in that session (Claude Code doesn't log some requests; the README's Limitations has the measured gap). Nothing in the header is yellow.
 """
 
 if __name__ == "__main__":

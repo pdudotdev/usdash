@@ -257,7 +257,7 @@ def test_command_text():
         ("/home/user/app", "main", "app"),
         ("/home/user/app", "HEAD", "app"),
         ("/home/user/app", "fix-login", "app@fix-login"),
-        ("/Users/me/Library/Application Support/Claude/scratch-workspaces/abc/2026-09-20", None, "Desktop (no folder)"),
+        ("/Users/me/Library/Application Support/Claude/scratch-workspaces/abc/2026-09-20", None, "no folder"),
     ],
 )
 def test_where(store, cwd, branch, where):

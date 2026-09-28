@@ -289,11 +289,12 @@ Per session in the last 24 hours (`usdash/engine.py`, `usdash/advice.py`). It sh
 lifetime = from the session's latest main-conversation write: 1 hour or 5 minutes
 alive    = now − start_of_last_request < lifetime
 C        = the last request's prompt (exact); right after /compact, tool list + summary (≈)
-live     = alive and not exited; idle = everything else
+live     = alive and not exited; expired = not alive, still open; exited = closed (three panes)
 models   = the current lineup, most capable first (its own model first if it isn't one of them)
 
-idle session: "resuming re-sends Ck tokens: $a on M1, $b on M2, …"   (C written again, on every model,
-              no S subtracted; "continuing" if not exited; exited script runs fold into one row per folder)
+expired or exited session: "resuming re-sends Ck tokens: $a on M1, $b on M2, …"
+              (C written again, on every model, no S subtracted; "continuing" if not exited; exited script runs
+              fold into one row per folder)
 
 live session: "next message re-sends Ck tokens: $a on M1, $b on E (cached) ✅, …"
               on E, its own model: C read back; on any other L: C on L written, less S (≈ if S > 0);
