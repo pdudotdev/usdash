@@ -99,14 +99,3 @@ def prompt_cost(price: dict, tokens: float, cached: float, ttl: int = FIVE_MINUT
     the rest written to it (Claude Code marks its prompts for caching)."""
     cached = min(max(cached, 0), tokens)
     return (cached * price["cache_read"] + (tokens - cached) * write_price(price, ttl)) / 1_000_000
-
-
-def sent_cost(price: dict, tokens: float, cached: float) -> float:
-    """The input side of a request that doesn't cache what it sends, like
-    /compact's: `cached` tokens read back, the rest at the input price."""
-    cached = min(max(cached, 0), tokens)
-    return (cached * price["cache_read"] + (tokens - cached) * price["input"]) / 1_000_000
-
-
-def output_cost(price: dict, tokens: float) -> float:
-    return tokens * price["output"] / 1_000_000

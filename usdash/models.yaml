@@ -1,5 +1,5 @@
 # What usdash knows about Claude models besides their prices (usdash/facts.py).
-verified: 2026-09-29
+# Last checked: 2026-09-29.
 
 # Where Claude Code keeps the cache across an effort change (it sends the change
 # inside the conversation instead of re-writing it). Checked in transcripts:

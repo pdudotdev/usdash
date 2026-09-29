@@ -163,6 +163,24 @@ def test_a_request_counts_in_the_period_it_ended_in(store):
     assert s.requests == 1 and s.spend == pytest.approx(cost(OPUS, read=10_002, w1h=100))
 
 
+def test_the_folded_earlier_row_does_not_set_the_scale(store):
+    t = Transcript()
+    for day in range(1, 30):  # the same request every day, Sep 1..29
+        t.turn(at(day, 10), text=f"day {day}", write=40_000)
+    t.into(store)
+    lines = render(store, ui.View(now=NOW, window=30 * 86400, mode="stats"), 120).splitlines()
+    earlier = next(line for line in lines if "earlier" in line)
+    assert "█" not in earlier  # 16 days' sum: no bar to compare with a day's
+    days = [line for line in lines if " Sep " in line and "$" in line]
+    assert len(days) == 13 and all("█" * 16 in line for line in days)  # every day, the full bar
+
+
+def test_an_earlier_row_with_nothing_in_it_is_left_out(store):
+    build(store)  # everything in the last 3 days
+    days = st.compute(store, NOW, 3650 * 86400).days
+    assert len(days) == 13 and days[0].day == "2026-09-17" and all(d.day != st.EARLIER for d in days)
+
+
 def test_today_has_a_row_even_with_nothing_spent_yet(store):
     t = Transcript()
     t.turn(at(28, 12), write=10_000)
@@ -243,6 +261,45 @@ def test_kinds_with_no_tokens_are_left_out(store):
     assert [k.name for k in st.compute(store, NOW, WINDOW).kinds] == ["cache writes (5m)", "uncached input", "output"]
 
 
+def test_folders_with_the_same_name_are_different_projects(store):
+    for session, cwd in (("w", "/home/user/work/api"), ("p", "/home/user/personal/api"),
+                         ("d1", "/Users/me/Library/Application Support/Claude/local-agent/one"),
+                         ("d2", "/Users/me/Library/Application Support/Claude/local-agent/two")):
+        t = Transcript(session=session, cwd=cwd)
+        t.turn(at(29, 10), write=10_000)
+        t.into(store)
+    projects = {p.name: p.sessions for p in st.compute(store, NOW, WINDOW).projects}
+    # Desktop sessions without a folder each get a scratch folder of their own: one row for all of them.
+    assert projects == {"work/api": 1, "personal/api": 1, "no folder": 2}
+
+
+def test_folder_names_take_as_much_of_the_path_as_they_need():
+    assert st.folder_names(["/home/a/api", "/home/b/api", "/srv/web"]) == {
+        "/home/a/api": "a/api", "/home/b/api": "b/api", "/srv/web": "web"}
+    assert st.folder_names(["/a/x/api", "/b/x/api"]) == {"/a/x/api": "a/x/api", "/b/x/api": "b/x/api"}
+    assert st.folder_names(["/api", "/x/api"]) == {"/api": "api", "/x/api": "x/api"}
+    assert st.folder_names(["no folder", "?"]) == {"no folder": "no folder", "?": "?"}
+
+
+def test_prompts_are_what_the_periods_requests_answer(store):
+    t = Transcript()
+    t.turn(at(26, 14, 59), text="started before the period", write=10_000, took=5)  # its answer: before
+    t.tool_result(at(26, 15, 1))
+    t.reply(at(26, 15, 1, 5), read=10_002, write=100)  # a step of it: in the period
+    t.user("<command-name>/model</command-name>", at(27, 9))  # a built-in: sends nothing
+    t.user("<command-name>/review</command-name>", at(27, 10))  # a skill: sends requests
+    t.reply(at(27, 10, 0, 20), read=10_102, write=500)
+    t.into(store)
+    other = Transcript(session="mmmm-2222")  # a model with no known price: nothing of it counts
+    for i in range(3):
+        other.turn(at(28, 10, i), text=f"unpriced {i}", model="claude-mystery-9", write=10_000)
+    other.into(store)
+    s = st.compute(store, NOW, WINDOW)
+    assert (s.requests, s.prompts, s.sessions) == (2, 2, 1)
+    assert sorted((turn.text, turn.requests) for turn in s.turns) == [
+        ("/review", 1), ("started before the period", 1)]  # only its step in the period
+
+
 def test_more_than_5_projects_end_with_others(store):
     for i in range(7):
         t = Transcript(session=f"p{i}", cwd=f"/home/user/proj{i}")
@@ -253,15 +310,31 @@ def test_more_than_5_projects_end_with_others(store):
     assert projects[-1].sessions == 2
 
 
-def test_the_figures_are_kept_until_something_changes_or_a_minute_passes(store):
+def test_the_figures_are_kept_while_nothing_changes_and_refreshed_every_few_seconds_while_it_does(store):
     build(store)
     first = st.compute(store, NOW, WINDOW)
-    assert st.compute(store, NOW + 30, WINDOW) is first
-    assert st.compute(store, NOW + 60, WINDOW) is not first
+    assert st.compute(store, NOW + 30, WINDOW) is first  # nothing new
     t = Transcript(session="dddd-4444")
     t.turn(NOW - 10, write=1_000)
     t.into(store)
-    assert st.compute(store, NOW + 60, WINDOW).requests == 9
+    # A busy session brings records every second: walking every request each time would be wasted.
+    assert st.compute(store, NOW + st.REFRESH - 1, WINDOW) is first
+    assert st.compute(store, NOW + st.REFRESH, WINDOW).requests == 9
+    later = st.compute(store, NOW + 60, WINDOW)  # a new minute: the period moved on
+    assert later is not first and later.requests == 9
+
+
+def test_what_is_typed_counts_as_a_change(store):
+    t = Transcript()
+    t.turn(at(29, 12), text="one", write=1_000)
+    t.into(store)
+    before = store.revision
+    t.user("/model sonnet", at(29, 12, 1))  # no request, but it starts a new turn
+    records = list(t.records)
+    t.into(store)
+    assert store.revision == before + 1
+    store.add_all(records)  # the same record read again changes nothing
+    assert store.revision == before + 1
 
 
 def test_day_labels():
@@ -302,6 +375,23 @@ def test_the_summary_reads_as_figures(store):
     assert f"SPEND ${SPEND:,.2f} · ${SPEND / 3:,.2f} a day · last 5 hours ${C1 + C2:,.2f}" in text
     assert "8 requests from 5 prompts (1.6 each) in 3 sessions · subagents <1% of spend" in text
     assert f"cache misses · ${A1_MISS + A3_MISS:,.2f}" in text and "no cache misses" not in text
+
+
+def test_a_miss_under_half_a_cent_is_still_a_miss_in_the_summary():
+    prices = dict(PRICES, **{"claude-3-haiku": {"input": 0.25, "output": 1.25, "cache_read": 0.03,
+                                                "cache_write": 0.30, "cache_write_1h": 0.50}})
+    store = Store(prices)
+    t = Transcript()
+    t.turn(at(29, 10), model="claude-3-haiku-20240307", write=12_000, ttl="5m")
+    t.turn(at(29, 11), model="claude-3-haiku-20240307", write=12_000, ttl="5m")  # the cache expired
+    t.into(store)
+    s = st.compute(store, NOW, WINDOW)
+    assert 0 < s.misses < 0.005 and len(s.causes) == 1
+    summary = " ".join(line.plain for line in ui.summary_lines(s, 200))
+    assert "cache misses <$0.01" in summary and "no cache misses" not in summary  # as the panel below says
+    today = next(line for line in render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 120).splitlines()
+                 if "Tue 29 Sep" in line)
+    assert today.rstrip(" │").endswith("<$0.01")  # and in its day's MISSES
 
 
 def test_no_misses_is_said_in_green(store):

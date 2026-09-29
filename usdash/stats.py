@@ -5,12 +5,12 @@ falls in the period (the window, up to now): the same requests and amounts
 as the sessions view, grouped other ways. Nothing is estimated. Pure data:
 ui.py draws it.
 """
-from bisect import bisect_left
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import PurePath
 
-from .models import model_key
-from .sessions import Request, Session, Store, day_of, reason_group
+from .sessions import Session, Store, reason_group
 
 # Context-size bands, by the prompt a request sent: (upper bound, label).
 BANDS = ((50_000, "under 50k"), (100_000, "50–100k"), (200_000, "100–200k"), (500_000, "200–500k"),
@@ -18,11 +18,13 @@ BANDS = ((50_000, "under 50k"), (100_000, "50–100k"), (200_000, "100–200k"),
 MAX_DAYS = 14  # rows in "by day": older days fold into one "earlier" row
 TOP = 5  # rows in "top sessions", "by project" (before "others") and "costliest prompts"
 RECENT = 5 * 3600  # "last 5 hours"
+REFRESH = 5  # seconds: while sessions are at work, the stats are worked out again at most this often
 # What each kind of token costs, as (usage part, price field).
 KINDS = (("cache reads", "read", "cache_read"), ("cache writes (1h)", "write_1h", "cache_write_1h"),
          ("cache writes (5m)", "write_5m", "cache_write"), ("uncached input", "fresh", "input"),
          ("output", "output", "output"))
 EARLIER = "earlier"
+NO_FOLDER = "no folder"
 
 
 @dataclass
@@ -80,14 +82,14 @@ class SessionRow:
 
 @dataclass
 class Project:
-    name: str  # Session.folder, or 'others'
+    name: str  # the folder's name, with as much of its path as tells it apart; or 'others'
     sessions: int = 0
     spend: float = 0.0
 
 
 @dataclass
 class Turn:
-    """A prompt or slash command typed, and the requests it set off."""
+    """Something typed (a prompt or a slash command) and the requests it set off in the period."""
     session: Session
     when: float
     text: str
@@ -102,7 +104,7 @@ class Stats:
     window: int
     spend: float = 0.0
     requests: int = 0
-    prompts: int = 0  # typed, not slash commands
+    prompts: int = 0  # the prompts and commands the period's requests answer (Turn)
     sessions: int = 0
     subagents: float = 0.0  # their spend
     recent: float | None = None  # spend in the last RECENT seconds; None when the window is shorter
@@ -118,7 +120,7 @@ class Stats:
     bands: list[Band] = field(default_factory=list)
     top: list[SessionRow] = field(default_factory=list)
     projects: list[Project] = field(default_factory=list)
-    turns: list[Turn] = field(default_factory=list)
+    turns: list[Turn] = field(default_factory=list)  # the costliest TOP
 
     @property
     def per_day(self) -> float | None:
@@ -138,13 +140,16 @@ class Stats:
 
     @property
     def top_share(self) -> float:
+        """The top sessions' share of SPEND, together."""
         return sum(row.spend for row in self.top) / self.spend if self.spend else 0.0
 
 
-def priced(store: Store, start: float) -> list[Request]:
-    """Every request with a known price whose end falls in the period."""
-    return [r for s in store.sessions.values() for r in s.requests.values()
-            if r.cost is not None and r.paid is not None and r.end >= start]
+@dataclass
+class _Cached:
+    key: tuple  # (minute, window)
+    revision: int  # store.revision when worked out
+    at: float  # when
+    stats: Stats
 
 
 def local_days(start: float, now: float) -> list[str]:
@@ -158,88 +163,126 @@ def local_days(start: float, now: float) -> list[str]:
 
 
 def compute(store: Store, now: float, window: int) -> Stats:
-    """The stats for the period `window` back from `now`, kept while nothing
-    changes within the same minute."""
-    key = (store.revision, int(now // 60), window)
+    """The stats for the period `window` back from `now`. Kept for the rest of
+    the minute while nothing changes, and for REFRESH seconds while something
+    does: a busy session brings new records every second, and working the
+    stats out walks every request loaded."""
+    key = (int(now // 60), window)
     cached = getattr(store, "_stats", None)
-    if cached is not None and cached[0] == key:
-        return cached[1]
+    if cached is not None and cached.key == key and (cached.revision == store.revision or now - cached.at < REFRESH):
+        return cached.stats
     stats = _compute(store, now, window)
-    store._stats = (key, stats)
+    store._stats = _Cached(key, store.revision, now, stats)
     return stats
 
 
 def _compute(store: Store, now: float, window: int) -> Stats:
     start = now - window
     stats = Stats(start, now, window)
-    requests = priced(store, start)
-    stats.recent = 0.0 if window > RECENT else None
+    recent_from = now - RECENT if window > RECENT else None
+    stats.recent = 0.0 if recent_from is not None else None
     days = {day: Day(day) for day in local_days(start, now)}
-    kinds = {name: Kind(name, 0, 0.0) for name, _, _ in KINDS}
+    kinds = [[0, 0.0] for _ in KINDS]  # tokens, spend
     models: dict[tuple[str | None, bool], ModelRow] = {}
     causes: dict[str, Cause] = {}
     bands = [Band(label) for _, label in BANDS]
-    by_session: dict[str, SessionRow] = {}
-    for r in requests:
-        cost, u = r.cost, r.usage
-        stats.spend += cost
-        stats.requests += 1
-        stats.read += u.get("read", 0)
-        stats.prompt += r.prompt
-        stats.misses += r.rewrite_cost
-        if r.subagent:
-            stats.subagents += cost
-        if stats.recent is not None and r.end >= now - RECENT:
-            stats.recent += cost
-        day = days.setdefault(day_of(r.end), Day(day_of(r.end)))  # a clock set back: its own row
-        day.spend += cost
-        day.requests += 1
-        day.read += u.get("read", 0)
-        day.prompt += r.prompt
-        day.misses += r.rewrite_cost
-        for name, part, price in KINDS:
-            kinds[name].tokens += u.get(part, 0)
-            kinds[name].spend += u.get(part, 0) * r.paid[price] / 1e6
-        stats.searches += u.get("searches", 0)
-        stats.search_spend += u.get("searches", 0) * store.web_search
-        fast = r.speed == "fast"
-        row = models.setdefault((model_key(r.model), fast), ModelRow(r.model, fast, r.effort))
-        row.requests += 1
-        row.spend += cost
-        if r.end >= row.latest:
-            row.model, row.effort, row.latest = r.model, r.effort, r.end
-        if r.reason:
-            group = reason_group(r.reason)
-            cause = causes.setdefault(group, Cause(group))
-            cause.misses += 1
-            cause.rewritten += r.rewritten
-            cause.extra += r.rewrite_cost
-        band = next(i for i, (upper, _) in enumerate(BANDS) if upper is None or r.prompt < upper)
-        bands[band].requests += 1
-        bands[band].spend += cost
-        session = store.sessions[r.session]
-        top = by_session.setdefault(r.session, SessionRow(session))
-        top.spend += cost
-        if not r.subagent:
-            top.peak = max(top.peak, r.prompt)
+    rows: list[SessionRow] = []
+    turns: list[Turn] = []
+    for session in store.sessions.values():
+        typed = sorted(session.prompts.values())
+        times = [when for when, _, _ in typed]
+        answers: dict[int, Turn] = {}  # index in `typed` -> its turn
+        row, counted = SessionRow(session), 0
+        for r in session.requests.values():
+            cost, paid = r.cost, r.paid
+            if cost is None or paid is None or r.end < start:
+                continue
+            counted += 1
+            u, prompt = r.usage, r.prompt
+            read = u.get("read", 0)
+            stats.spend += cost
+            stats.requests += 1
+            stats.read += read
+            stats.prompt += prompt
+            stats.misses += r.rewrite_cost
+            if r.subagent:
+                stats.subagents += cost
+            elif prompt > row.peak:
+                row.peak = prompt
+            if recent_from is not None and r.end >= recent_from:
+                stats.recent += cost
+            day = days.get(r.day)
+            if day is None:  # a clock set back: its own row
+                day = days[r.day] = Day(r.day)
+            day.spend += cost
+            day.requests += 1
+            day.read += read
+            day.prompt += prompt
+            day.misses += r.rewrite_cost
+            for kind, (_, part, price) in zip(kinds, KINDS):
+                tokens = u.get(part, 0)
+                if tokens:
+                    kind[0] += tokens
+                    kind[1] += tokens * paid[price] / 1e6
+            if searches := u.get("searches", 0):
+                stats.searches += searches
+                stats.search_spend += searches * store.web_search
+            fast = r.speed == "fast"
+            model = models.get((r.family, fast))
+            if model is None:
+                model = models[(r.family, fast)] = ModelRow(r.model, fast, r.effort)
+            model.requests += 1
+            model.spend += cost
+            if r.end >= model.latest:
+                model.model, model.effort, model.latest = r.model, r.effort, r.end
+            if r.reason:
+                group = reason_group(r.reason)
+                cause = causes.get(group)
+                if cause is None:
+                    cause = causes[group] = Cause(group)
+                cause.misses += 1
+                cause.rewritten += r.rewritten
+                cause.extra += r.rewrite_cost
+            band = bands[band_of(prompt)]
+            band.requests += 1
+            band.spend += cost
+            row.spend += cost
+            # The turn it belongs to: the latest thing typed in its session at or before it started.
+            if (i := bisect_right(times, r.start) - 1) >= 0:
+                turn = answers.get(i)
+                if turn is None:
+                    turn = answers[i] = Turn(session, typed[i][0], typed[i][1])
+                turn.requests += 1
+                turn.spend += cost
+        if counted:
+            rows.append(row)
+        turns.extend(answers.values())
 
-    stats.sessions = len(by_session)
+    stats.sessions = len(rows)
     stats.days = fold_days(sorted(days.values(), key=lambda d: d.day))
-    stats.kinds = [kind for kind in kinds.values() if kind.tokens]
+    stats.kinds = [Kind(name, tokens, spend) for (name, _, _), (tokens, spend) in zip(KINDS, kinds) if tokens]
     stats.models = sorted(models.values(), key=lambda m: -m.spend)
     stats.causes = sorted(causes.values(), key=lambda c: -c.extra)
     stats.bands = [b for b in bands if b.requests]
-    ranked = sorted(by_session.values(), key=lambda row: -row.spend)
+    ranked = sorted(rows, key=lambda row: -row.spend)
     stats.top = ranked[:TOP]
     stats.projects = projects(ranked)
-    stats.prompts = sum(1 for s in store.sessions.values() for when, _, command in s.prompts.values()
-                        if not command and when >= start)
-    stats.turns = costliest_turns(store, start)
+    stats.prompts = len(turns)
+    stats.turns = sorted(turns, key=lambda t: (-t.spend, -t.when))[:TOP]
     return stats
 
 
+def band_of(prompt: int) -> int:
+    """Which of BANDS a request of this size falls in."""
+    for i, (upper, _) in enumerate(BANDS):
+        if upper is None or prompt < upper:
+            return i
+    raise AssertionError("the last band has no upper bound")
+
+
 def fold_days(days: list[Day]) -> list[Day]:
-    """At most MAX_DAYS rows: the oldest days fold into one EARLIER row."""
+    """At most MAX_DAYS rows: the oldest days fold into one EARLIER row, left
+    out if nothing was spent on them."""
     if len(days) <= MAX_DAYS:
         return days
     older, kept = days[: len(days) - MAX_DAYS + 1], days[len(days) - MAX_DAYS + 1:]
@@ -250,16 +293,43 @@ def fold_days(days: list[Day]) -> list[Day]:
         earlier.read += day.read
         earlier.prompt += day.prompt
         earlier.misses += day.misses
-    return [earlier, *kept]
+    return [earlier, *kept] if earlier.requests else kept
+
+
+def folder_key(session: Session) -> str:
+    """What sessions are grouped by in "by project": the folder's whole path (two
+    folders can share a name), or NO_FOLDER for Desktop sessions without one,
+    each of which runs in a scratch folder of its own."""
+    return NO_FOLDER if session.folder == NO_FOLDER else session.cwd or "?"
+
+
+def folder_names(keys: list[str]) -> dict[str, str]:
+    """Each folder's name, with as much of the path before it as it takes to
+    tell it apart from the others: 'api', or 'work/api' and 'personal/api'."""
+    parts = {key: PurePath(key).parts if key.startswith("/") else (key,) for key in keys}
+    depth = dict.fromkeys(keys, 1)
+    while True:
+        names = {key: "/".join(parts[key][-depth[key]:]) for key in keys}
+        seen: dict[str, list[str]] = {}
+        for key, name in names.items():
+            seen.setdefault(name, []).append(key)
+        clashes = [key for same in seen.values() if len(same) > 1 for key in same
+                   if depth[key] < len(parts[key]) - (parts[key][0] == "/")]
+        if not clashes:
+            return names
+        for key in clashes:
+            depth[key] += 1
 
 
 def projects(ranked: list[SessionRow]) -> list[Project]:
     """Spend by folder, the biggest TOP, then the rest as 'others'."""
     found: dict[str, Project] = {}
     for row in ranked:
-        project = found.setdefault(row.session.folder, Project(row.session.folder))
+        project = found.setdefault(folder_key(row.session), Project(""))
         project.sessions += 1
         project.spend += row.spend
+    for key, name in folder_names(list(found)).items():
+        found[key].name = name
     ordered = sorted(found.values(), key=lambda p: (-p.spend, p.name))
     if len(ordered) <= TOP:
         return ordered
@@ -268,30 +338,6 @@ def projects(ranked: list[SessionRow]) -> list[Project]:
         others.sessions += project.sessions
         others.spend += project.spend
     return [*ordered[:TOP], others]
-
-
-def costliest_turns(store: Store, start: float) -> list[Turn]:
-    """The TOP turns with the highest spend among those typed in the period. A
-    turn's requests are its session's (main and subagent) that started at or
-    after it and before the session's next prompt or command. A subagent still
-    at work after the next prompt counts toward that one."""
-    turns = []
-    for session in store.sessions.values():
-        typed = sorted(session.prompts.values())
-        if not typed or typed[-1][0] < start:
-            continue
-        spent = sorted((r.start, r.cost) for r in session.requests.values()
-                       if r.cost is not None and r.paid is not None)
-        starts = [when for when, _ in spent]
-        for i, (when, text, _) in enumerate(typed):
-            if when < start:
-                continue
-            until = typed[i + 1][0] if i + 1 < len(typed) else float("inf")
-            lo, hi = bisect_left(starts, when), bisect_left(starts, until)
-            if hi > lo:
-                turns.append(Turn(session, when, text, hi - lo, sum(cost for _, cost in spent[lo:hi])))
-    turns.sort(key=lambda t: (-t.spend, -t.when))
-    return turns[:TOP]
 
 
 def day_label(day: str, today: str) -> str:

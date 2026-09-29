@@ -37,9 +37,8 @@ def day_of(when: float) -> str:
 
 
 def memo(owner, key, compute):
-    """`compute()`, kept until `owner.revision` changes (a Session or the Store:
-    both bump it whenever a request is added or replaced, and the Store also
-    when a session's folder or entrypoint changes)."""
+    """`compute()`, kept until `owner.revision` changes (a Session bumps it
+    whenever one of its requests is added or replaced)."""
     revision, values = owner._memo
     if revision != owner.revision:
         values = {}
@@ -84,6 +83,8 @@ class Request:
     speed: str | None = None  # usage.speed: "fast" or "standard"
     geo: str | None = None  # usage.inference_geo
     paid: dict | None = None  # the per-token prices it paid (as_paid: fast mode, US-only); None if unknown
+    family: str | None = None  # model_key(model)
+    day: str = ""  # the local day it ended on (day_of), as last counted in the totals
 
     @property
     def prompt(self) -> int:
@@ -355,8 +356,8 @@ class Store:
         # day -> reason -> $ paid to write again what could have been read back
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # requests with no known price, by model ("Opus 5.5 fast": its fast prices)
-        self.revision = 0  # bumped on every change to any request
-        self._memo: tuple = (-1, None)  # see memo()
+        self.revision = 0  # bumped on every change to any request, prompt or session folder: the stats' cache
+        self._paid: dict[tuple, dict | None] = {}  # (family, speed, geo) -> as_paid(): one dict each, shared
 
     def session(self, session_id: str) -> Session:
         if session_id not in self.sessions:
@@ -385,7 +386,7 @@ class Store:
                 if value and value != getattr(session, attr):
                     setattr(session, attr, value)
                     if attr in ("cwd", "entrypoint"):
-                        self.revision += 1  # memo()s group sessions by these
+                        self.revision += 1  # the stats group sessions by folder
         if record.when is not None:
             session.heard = max(session.heard or 0, record.when)
             if record.subagent:
@@ -403,8 +404,10 @@ class Store:
             if found:
                 text, command = found
                 session.ended = False
-                if record.when is not None:
-                    session.prompts[uuid or f"@{record.when}"] = (record.when, text, command)
+                prompt_key = uuid or f"@{record.when}"
+                if record.when is not None and prompt_key not in session.prompts:
+                    session.prompts[prompt_key] = (record.when, text, command)
+                    self.revision += 1  # the stats' prompt count and turns
                 if command:
                     session.pending_command = text
                 else:
@@ -500,7 +503,7 @@ class Store:
             if start is None:
                 return None
             request = Request(key, session.id, record.subagent, model, data.get("effort"), start, end or start,
-                              version=data.get("version"))
+                              version=data.get("version"), family=model_key(model))
             request.prev = ChainState(**vars(chain))
             session.requests[key] = request
         else:
@@ -509,8 +512,8 @@ class Store:
             request.end = end or request.end
         request.usage = usage_parts(usage)
         request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
-        base = self.prices.get(model_key(model))
-        price = as_paid(base, model_key(model), request.speed, request.geo) if base else None  # fast mode, US-only
+        base = self.prices.get(request.family)
+        price = self.paid_price(request.family, request.speed, request.geo)  # fast mode, US-only
         if price is None and old is None:
             self.unpriced[pretty_model(model) + (" fast" if base else "")] += 1
         request.paid = price
@@ -582,16 +585,18 @@ class Store:
         """Add a request to (or take it out of) the running totals."""
         session.revision += 1
         self.revision += 1
-        day = self.days[day_of(request.end)]
+        if sign > 0:
+            request.day = day_of(request.end)  # taken out again on the day it was added on
+        day = self.days[request.day]
         cost = request.cost or 0.0
         day["cost"] += sign * cost
         day["read"] += sign * request.usage.get("read", 0)
         day["prompt"] += sign * request.prompt
         day["requests"] += sign
         session.cost_total += sign * cost
-        session.cost_by_day[day_of(request.end)] += sign * cost
+        session.cost_by_day[request.day] += sign * cost
         if request.reason:
-            self.rewrites[day_of(request.end)][reason_group(request.reason)] += sign * request.rewrite_cost
+            self.rewrites[request.day][reason_group(request.reason)] += sign * request.rewrite_cost
 
     # --- Across sessions --------------------------------------------------------
 
@@ -605,7 +610,16 @@ class Store:
             return price
         own = model_key(model) == model_key(session.model)
         speed = session.main.speed if own or price.get("fast") else None
-        return as_paid(price, model_key(model), speed, session.main.geo)
+        return self.paid_price(model_key(model), speed, session.main.geo)
+
+    def paid_price(self, family: str | None, speed: str | None, geo: str | None) -> dict | None:
+        """as_paid() for a model family, speed and region: worked out once and
+        shared (by every request that paid it, too). None with no known price."""
+        key = (family, speed, geo)
+        if key not in self._paid:
+            base = self.prices.get(family)
+            self._paid[key] = as_paid(base, family, speed, geo) if base else None
+        return self._paid[key]
 
     def tool_list(self, session: Session, model: str | None) -> float:
         """Claude Code's tool list as `session` measured it (Session.tool_list),

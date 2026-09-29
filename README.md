@@ -96,21 +96,21 @@ The gap between the two amounts is, at most, what letting the cache expire costs
 
 ## 📊 Stats
 
-Press `s` for where the money went over the sessions window (`--window`, 5 days by default), and `s` again to go back. It counts every logged request with a known price that ended in that window, main conversation and subagents alike.
+Press `s` for where the money went over the sessions window (`--window`, 5 days by default), and `s` again to go back. It counts every logged request with a known price that ended in that window, main conversation and subagents alike. While sessions are at work, it's worked out again every few seconds.
 
 ![usdash's stats: a summary, then spend by day, by model, by kind of token, cache misses by cause, spend by context size, the top sessions, spend by project and the costliest prompts](docs/stats.svg)
 
 | Panel | What it shows |
 |---|---|
-| **Summary** | SPEND, and per day over a window longer than a day; the last 5 hours (for a window longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, typed prompts and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
-| **By day** | Each local day: SPEND with a bar, requests, the share read from cache (green from 80%, yellow from 30%, red below) and what cache misses added. Past 14 days, the oldest fold into one `earlier` row |
+| **Summary** | SPEND, and per day over a window longer than a day; the last 5 hours (for a window longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
+| **By day** | Each local day: SPEND with a bar, requests, the share read from cache (green from 80%, yellow from 30%, red below) and what cache misses added. Past 14 days, the oldest fold into one `earlier` row, with no bar (it sums many days), and none at all if nothing was spent then |
 | **By model** | Each model, and fast mode as a row of its own: its share of requests against its share of SPEND. A model with 20% of the requests and 70% of the spend is the first place to look for savings |
 | **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens, all kinds together. A web searches row appears if any logged request made server-side searches |
 | **Cache misses** | By cause (`cache expired`, `model switch`, `resumed`, `effort change`, `speed change` for fast mode turned on or off, `Claude Code upgraded`, `cause unknown`): how many, the tokens written again, and what that cost beyond reading them back. `no cache misses` in green when there were none |
 | **By context size** | Requests grouped by how big their conversation was: under 50k, 50–100k, 100–200k, 200–500k, 500k and more. Late turns in a long conversation cost more each; this shows how much of SPEND they are |
 | **Top sessions** | The 5 that cost the most in the window, their share of SPEND together and each, and PEAK, the largest conversation each sent |
-| **By project** | SPEND by project folder (branches together), the top 5, then the rest as `others` |
-| **Costliest prompts** | The 5 things you typed that cost the most: everything a prompt or slash command set off (its tool calls, its subagents) until you typed the next one |
+| **By project** | SPEND by project folder (branches together), the top 5, then the rest as `others`. Two folders with the same name show with as much of their path as tells them apart: `work/api`, `personal/api` |
+| **Costliest prompts** | The 5 things you typed that cost the most in the window: everything a prompt or slash command set off (its tool calls, its subagents) until you typed the next one |
 
 Every panel that splits SPEND (by day, by model, by kind, by context size, by project) adds up to it exactly, and the cache-miss panel to the summary's total; the tests hold them to that. With more rows than fit, the panels scroll a row at a time with the same keys as the sessions. From 160 columns wide, they sit two side by side.
 
@@ -289,7 +289,7 @@ The other model has to write the whole conversation into its own cache, while st
 | [`usdash/stats.py`](usdash/stats.py) | The Stats view's figures: sums over the window's requests, no rendering |
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
 | [`usdash/models.yaml`](usdash/models.yaml) | What usdash knows about the models besides their prices: where an effort change keeps the cache, and the tokenizers |
-| [`install.sh`](install.sh) | The one-line installer: uv if it's missing, then usdash |
+| [`install.sh`](install.sh) | The one-line installer: uv if it's missing, then usdash ([`tests/test_install.py`](tests/test_install.py) runs it against stand-ins for curl and uv) |
 | [`research/AI-TOKENOMICS-GUIDE.md`](research/AI-TOKENOMICS-GUIDE.md) | The principles behind every number, with worked examples, checked against Anthropic's docs and real sessions |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's pictures of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg) and [`docs/stats.svg`](docs/stats.svg), from made-up sessions |
