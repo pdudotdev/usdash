@@ -1,6 +1,7 @@
 """The screen, rendered to text, and the CLI."""
 import argparse
 import json
+import os
 import time
 from datetime import datetime
 
@@ -436,6 +437,13 @@ def test_history_reaches_back_to_the_window_after_midnight(now, since, window, s
     assert app.history_start(now, since, window) == start
 
 
+def test_history_reaches_back_to_the_stats_period():
+    now = datetime(2026, 9, 28, 15, 0).timestamp()
+    assert app.history_start(now, None, 5 * 86400, 30 * 86400) == now - 30 * 86400
+    assert app.history_start(now, 40 * 86400, 5 * 86400, 30 * 86400) == now - 40 * 86400  # --since further back
+    assert app.history_start(now, 86400, 5 * 86400, 30 * 86400) == now - 30 * 86400  # but never short of it
+
+
 def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
     folder = tmp_path / "projects" / "-home-user-proj"
     folder.mkdir(parents=True)
@@ -468,9 +476,32 @@ def test_cached_is_coloured_by_how_much_was_read_back():
 def test_stats_prints_the_stats_view(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("COLUMNS", "160")
-    app.main(["--projects", str(PROJECTS), "--window", "3650d", "--once", "--offline", "--stats"])
+    app.main(["--projects", str(PROJECTS), "--period", "3650d", "--once", "--offline", "--stats"])
     out = capsys.readouterr().out
-    assert "usdash · stats" in out and "summary · last 3650d" in out and "╭─ by day" in out
+    assert "usdash · stats" in out and "summary · last 3650d" in out and "╭─ by day · last 5 days" in out
+
+
+def test_the_stats_cover_30_days_by_default_and_the_sessions_5(capsys, monkeypatch, tmp_path):
+    folder = tmp_path / "projects" / "-home-user-proj"
+    folder.mkdir(parents=True)
+    now = time.time()
+    for session, days, text in (("week", 7, "from a week ago"), ("month", 29, "from 29 days ago"),
+                                ("older", 31, "from 31 days ago")):
+        t = Transcript(session=session)
+        t.turn(now - days * 86400, text=text, write=40_000)
+        path = folder / f"{session}.jsonl"
+        path.write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
+        os.utime(path, (now - days * 86400 + 60,) * 2)  # last written then: loaded only if history reaches back
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("LINES", "60")  # room for every row of panels
+    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline", "--stats"])
+    out = capsys.readouterr().out
+    assert "summary · last 30d" in out and "2 requests from 2 prompts" in out
+    assert "from a week ago" in out and "from 29 days ago" in out and "from 31 days ago" not in out
+    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
+    out = capsys.readouterr().out  # the sessions: 5 days, as before
+    assert "no Claude Code activity in the last 5d" in out and "from a week ago" not in out
 
 
 def test_version(capsys):

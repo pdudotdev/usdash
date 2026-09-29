@@ -4,7 +4,7 @@ import os
 
 from conftest import PROJECTS
 
-from usdash.transcripts import Tailer, file_owner, parse_time
+from usdash.transcripts import Tailer, file_owner, parse_time, read_record
 
 
 def write(path, *records, end="\n"):
@@ -110,3 +110,37 @@ def test_new_files_are_found_at_the_next_scan_and_followed_files_every_poll(tmp_
     assert [r.session for r in tailer.poll()] == ["s1"]  # between scans: only the followed file
     now[0] = 6.0
     assert [r.session for r in tailer.poll()] == ["s2"]  # the scan finds the new one
+
+
+def test_records_keep_only_what_usdash_reads():
+    user = read_record(json.dumps({
+        "type": "user", "uuid": "u1", "cwd": "/w", "toolUseResult": {"stdout": "x" * 10_000},
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 10_000},
+            {"type": "text", "text": "[Request interrupted by user]"}]}}), "s1")
+    assert user.data == {"type": "user", "uuid": "u1", "cwd": "/w", "message": {"role": "user", "content": [
+        {"type": "tool_result"}, {"type": "text", "text": "[Request interrupted by user]"}]}}
+    reply = read_record(json.dumps({
+        "type": "assistant", "wireToolInputs": ["x"], "rendered": "x",
+        "message": {"id": "m1", "model": "claude-opus-5-5", "stop_reason": "tool_use", "usage": {"input_tokens": 2},
+                    "content": [{"type": "thinking", "thinking": "x" * 10_000}, {"type": "text", "text": "a reply"},
+                                {"type": "tool_use", "name": "Read", "input": {"file_path": "/w/a"}}]}}), "s1")
+    assert reply.data == {"type": "assistant", "message": {
+        "id": "m1", "model": "claude-opus-5-5", "stop_reason": "tool_use", "usage": {"input_tokens": 2},
+        "content": [{"type": "thinking"}, {"type": "text"}, {"type": "tool_use"}]}}  # a reply's text is never read
+    attachment = read_record(json.dumps({"type": "attachment", "attachment": {"content": "x" * 10_000}}), "s1")
+    typed = read_record(json.dumps({"type": "user", "message": {"role": "user", "content": "fix the totals"}}), "s1")
+    assert attachment.data == {"type": "attachment"} and typed.data["message"]["content"] == "fix the totals"
+
+
+def test_history_is_handed_over_a_session_at_a_time(tmp_path):
+    s1, s2 = tmp_path / "p" / "s1.jsonl", tmp_path / "q" / "s2.jsonl"
+    sub = tmp_path / "p" / "s1" / "subagents" / "agent-a.jsonl"
+    write(s1, {"type": "user", "timestamp": "2026-09-27T10:00:00Z"}, {"type": "user", "timestamp": "2026-09-27T10:00:10Z"})
+    write(s2, {"type": "user", "timestamp": "2026-09-27T10:00:02Z"})
+    write(sub, {"type": "assistant", "timestamp": "2026-09-27T10:00:05Z"})
+    batches = [[(r.session, r.subagent, r.type) for r in batch] for batch in Tailer(tmp_path).batches()]
+    assert batches == [[("s1", None, "user"), ("s1", "a", "assistant"), ("s1", None, "user")], [("s2", None, "user")]]
+    # poll(): the same records, all in the order they happened.
+    assert [(r.session, r.subagent) for r in Tailer(tmp_path).poll()] == [
+        ("s1", None), ("s2", None), ("s1", "a"), ("s1", None)]

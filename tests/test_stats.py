@@ -168,17 +168,19 @@ def test_the_folded_earlier_row_does_not_set_the_scale(store):
     for day in range(1, 30):  # the same request every day, Sep 1..29
         t.turn(at(day, 10), text=f"day {day}", write=40_000)
     t.into(store)
-    lines = render(store, ui.View(now=NOW, window=30 * 86400, mode="stats"), 120).splitlines()
+    lines = render(store, ui.View(now=NOW, mode="stats"), 120).splitlines()  # the default period: 30 days
+    assert any("summary · last 30d" in line for line in lines)
     earlier = next(line for line in lines if "earlier" in line)
-    assert "█" not in earlier  # 16 days' sum: no bar to compare with a day's
+    assert "█" not in earlier and "$" in earlier  # 24 days' sum: no bar to compare with a day's
     days = [line for line in lines if " Sep " in line and "$" in line]
-    assert len(days) == 13 and all("█" * 16 in line for line in days)  # every day, the full bar
+    assert len(days) == 5 and all("█" * 16 in line for line in days)  # the last 5 days, each the full bar
+    assert "by day · last 5 days" in "\n".join(lines)
 
 
 def test_an_earlier_row_with_nothing_in_it_is_left_out(store):
     build(store)  # everything in the last 3 days
     days = st.compute(store, NOW, 3650 * 86400).days
-    assert len(days) == 13 and days[0].day == "2026-09-17" and all(d.day != st.EARLIER for d in days)
+    assert len(days) == 5 and days[0].day == "2026-09-25" and all(d.day != st.EARLIER for d in days)
 
 
 def test_last_5_hours_are_by_when_requests_ended(store):
@@ -226,15 +228,15 @@ def test_a_request_ending_just_before_midnight_counts_on_that_day(store):
     assert (days["2026-09-27"], days["2026-09-28"]) == (1, 1)
 
 
-def test_more_than_14_days_fold_the_oldest_into_one_row(store):
+def test_a_period_longer_than_5_days_folds_the_rest_into_one_row(store):
     t = Transcript()
-    for day in (1, 5, 10, 20, 29):
+    for day in (1, 5, 10, 20, 24, 25, 29):
         t.turn(at(day, 12), write=10_000)
     t.into(store)
     s = st.compute(store, NOW, 30 * 86400)
-    assert len(s.days) == 14 and s.days[0].day == st.EARLIER and s.days[1].day == "2026-09-17"  # and 12 more
-    assert s.days[0].requests == 3 and s.days[0].spend == pytest.approx(3 * cost(OPUS, w1h=10_000))
-    assert sum(d.spend for d in s.days) == pytest.approx(s.spend)
+    assert [d.day for d in s.days] == [st.EARLIER, "2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29"]
+    assert s.days[0].requests == 5 and s.days[0].spend == pytest.approx(5 * cost(OPUS, w1h=10_000))  # 1st to 24th
+    assert s.days[1].requests == 1 and sum(d.spend for d in s.days) == pytest.approx(s.spend)
 
 
 def test_web_searches_logged_in_a_request_are_their_own_row(store):
@@ -270,7 +272,7 @@ def test_a_short_window_has_no_last_5_hours(store):
 def test_a_window_of_a_day_or_less_has_no_per_day_figure(store):
     build(store)
     assert st.compute(store, NOW, 86400).per_day is None
-    assert "a day" not in render(store, ui.View(now=NOW, window=86400, mode="stats"), 160)
+    assert "a day" not in render(store, ui.View(now=NOW, period=86400, mode="stats"), 160)
 
 
 def test_kinds_with_no_tokens_are_left_out(store):
@@ -373,10 +375,10 @@ def render(store, view, width, height=200):
     return console.export_text()
 
 
-@pytest.mark.parametrize("width", [80, 120, 160])
+@pytest.mark.parametrize("width", [80, 120, 143, 144, 160])
 def test_every_panel_fits_without_wrapping(store, width):
     build(store)
-    text = render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), width)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), width)
     lines = text.splitlines()
     assert all(len(line) <= width for line in lines)
     for title in ("by day", "by model", "where the money goes", "cache misses", "by context size", "top sessions",
@@ -385,13 +387,30 @@ def test_every_panel_fits_without_wrapping(store, width):
     # Every row on one line: a day with its spend and hit rate, a prompt with its spend.
     assert any("Mon 28 Sep" in line and "$0.33" in line and "0%" in line for line in lines)
     assert any("add tests" in line and "$0.33" in line for line in lines)
-    side_by_side = any("╭─ by day" in line and "╭─ by model" in line for line in lines)
-    assert side_by_side == (width >= 160)
+    assert "╭─ by day ─" in text  # a 3-day period: every day has a row, nothing folded
+    side_by_side = any("╭─ by day" in line and "╭─ where the money goes" in line for line in lines)
+    assert side_by_side == (width >= 144)
+
+
+def panel_rows(text: str) -> list[tuple[str, ...]]:
+    """The titles of the panels after the summary, row by row."""
+    rows = [tuple(title.split(" ─")[0].split(" · ")[0] for title in line.split("╭─ ")[1:])
+            for line in text.splitlines() if "╭─ " in line]
+    return rows[2:]  # after the header and the summary
+
+
+def test_the_panels_go_in_pairs_that_tell_the_story(store):
+    build(store)
+    pairs = panel_rows(render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 144))
+    assert pairs == [("by day", "where the money goes"), ("by model", "by context size"),
+                     ("by project", "top sessions"), ("cache misses", "costliest prompts")]
+    narrow = panel_rows(render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 143))
+    assert narrow == [(title,) for pair in pairs for title in pair]  # one a row, in the same order
 
 
 def test_the_summary_reads_as_figures(store):
     build(store)
-    text = render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 160)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 160)
     assert f"SPEND ${SPEND:,.2f} · ${SPEND / 3:,.2f} a day · last 5 hours ${C1 + C2:,.2f}" in text
     assert "8 requests from 5 prompts (1.6 each) in 3 sessions · subagents <1% of spend" in text
     assert f"cache misses · ${A1_MISS + A3_MISS:,.2f}" in text and "no cache misses" not in text
@@ -409,7 +428,7 @@ def test_a_miss_under_half_a_cent_is_still_a_miss_in_the_summary():
     assert 0 < s.misses < 0.005 and len(s.causes) == 1
     summary = " ".join(line.plain for line in ui.summary_lines(s, 200))
     assert "cache misses <$0.01" in summary and "no cache misses" not in summary  # as the panel below says
-    today = next(line for line in render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 120).splitlines()
+    today = next(line for line in render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 120).splitlines()
                  if "Tue 29 Sep" in line)
     assert today.rstrip(" │").endswith("<$0.01")  # and in its day's MISSES
 
@@ -427,18 +446,18 @@ def test_the_top_sessions_title_gives_their_share_once_there_are_more(store):
         t = Transcript(session=f"s{i}")
         t.turn(at(29, 10, i), write=10_000 * (i + 1), fresh=0, out=0)
         t.into(store)
-    text = render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 160)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 160)
     assert "top sessions · top 5 = 95% of spend" in text
 
 
 def test_the_stats_scroll_one_row_at_a_time(store):
     build(store)
-    view = ui.View(now=NOW, window=WINDOW, mode="stats")
+    view = ui.View(now=NOW, period=WINDOW, mode="stats")
     text = render(store, view, 160, height=30)
     assert "· rows 1–" in text and view.stats_page < 4
     ui.press(store, view, "down")
     text = render(store, view, 160, height=30)
-    assert "╭─ by day" not in text and "╭─ where the money goes" in text and "g: back to the top" in text
+    assert "╭─ by day" not in text and "╭─ by model" in text and "g: back to the top" in text
     ui.press(store, view, "end")
     assert "╭─ costliest prompts" in render(store, view, 160, height=30)
     ui.press(store, view, "home")
@@ -446,5 +465,21 @@ def test_the_stats_scroll_one_row_at_a_time(store):
 
 
 def test_an_empty_period_says_so(store):
-    text = render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 120)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 120)
     assert "no priced requests in the last 3d" in text
+
+
+@pytest.mark.parametrize("width", [80, 120, 144, 160])
+def test_long_names_give_way_before_any_number(store, width):
+    t = Transcript(session="dddd-4444", cwd="/home/user/a-project-folder-with-a-very-long-name")
+    t.record("ai-title", aiTitle="A session title long enough to crowd every column of the panel")
+    t.turn(at(29, 10), text="a prompt long enough to crowd every column of the costliest prompts panel",
+           write=512_000)
+    t.into(store)
+    lines = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), width).splitlines()
+    assert all(len(line) <= width for line in lines)
+    top = next(i for i, line in enumerate(lines) if "╭─ top sessions" in line)
+    row = next(line for line in lines[top:] if "dddd" in line)
+    assert "PEAK" in lines[top + 1] and "$4.10" in row and "100%" in row and "512k" in row and "…" in row
+    prompt = next(line for line in lines if "dddd" in line and "a prompt" in line)
+    assert prompt.rstrip(" │").endswith("1  $4.10")

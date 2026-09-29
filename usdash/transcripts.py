@@ -12,6 +12,7 @@ import json
 import os
 import time
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +70,29 @@ class Record:
         return self.data.get(key, default)
 
 
+# Fields usdash never reads, and most of a transcript's bytes: tool results and file
+# contents, attachments, tool inputs. Dropped as each line is read, so loading weeks of
+# history holds only what the dashboard needs.
+UNUSED = ("toolUseResult", "attachment", "rendered", "wireToolInputs", "serverClassifierContext")
+
+
+def slim(data: dict) -> dict:
+    """A record without what usdash never reads: the fields in UNUSED, and a message's
+    content blocks down to their type, and a user message's text."""
+    for key in UNUSED:
+        data.pop(key, None)
+    message = data.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        keep_text = data.get("type") == "user"  # what was typed; a reply's text is never read
+        message["content"] = [
+            {"type": block.get("type"), **({"text": block["text"]} if keep_text and "text" in block else {})}
+            if isinstance(block, dict) else block
+            for block in content
+        ]
+    return data
+
+
 def read_record(line: bytes | str, session: str, subagent: str | None = None) -> Record | None:
     try:
         data = json.loads(line)
@@ -76,7 +100,7 @@ def read_record(line: bytes | str, session: str, subagent: str | None = None) ->
         return None
     if not isinstance(data, dict):
         return None
-    return Record(data, session, subagent, parse_time(data.get("timestamp")))
+    return Record(slim(data), session, subagent, parse_time(data.get("timestamp")))
 
 
 def file_owner(path: Path) -> tuple[str, str | None]:
@@ -121,31 +145,42 @@ class Tailer:
     def poll(self) -> list[Record]:
         """Everything written since the last poll, oldest first. A file found
         at a scan can hold lines older than ones an earlier poll returned."""
+        return sorted((record for batch in self.batches() for record in batch), key=lambda record: record.at)
+
+    def batches(self) -> Iterator[list[Record]]:
+        """What poll() returns, a session at a time: each session's new lines,
+        its subagents' among them, oldest first. Sessions don't depend on each
+        other, and weeks of history, read whole, would all be held at once."""
         now = self.clock()
         if self.last_scan is None or now - self.last_scan >= self.scan_every:
             paths, self.last_scan = self.transcripts(), now
         else:
             paths = list(self.files)  # between scans: only the files already being followed
-        records = []
-        for path in paths:
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            state = self.files.get(path)
-            if state is None:
-                if stat.st_mtime < self.since and not self._session_followed(path):
+        sessions: dict[str, list[Path]] = {}
+        for path in paths:  # main transcripts first, so each session's comes before its subagents'
+            sessions.setdefault(file_owner(path)[0], []).append(path)
+        for files in sessions.values():
+            records = []
+            for path in files:
+                try:
+                    stat = path.stat()
+                except OSError:
                     continue
-                state = self.files[path] = _Followed()
-            if stat.st_size < state.offset:
-                state.offset, state.partial = 0, b""  # rewritten from scratch
-            if stat.st_size == state.offset:
-                continue
-            records.extend(self._read(path, state))
-        # Main transcripts sort before their subagents', but a batch spanning
-        # several files should still arrive in the order it happened.
-        records.sort(key=lambda record: record.at)
-        return records
+                state = self.files.get(path)
+                if state is None:
+                    if stat.st_mtime < self.since and not self._session_followed(path):
+                        continue
+                    state = self.files[path] = _Followed()
+                if stat.st_size < state.offset:
+                    state.offset, state.partial = 0, b""  # rewritten from scratch
+                if stat.st_size == state.offset:
+                    continue
+                records.extend(self._read(path, state))
+            if records:
+                # Main transcripts are read before their subagents', but the session's lines
+                # should still arrive in the order they happened.
+                records.sort(key=lambda record: record.at)
+                yield records
 
     def _session_followed(self, path: Path) -> bool:
         """Whether this is a subagent's transcript of a session being followed:
