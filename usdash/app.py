@@ -3,16 +3,18 @@
     usdash                  # the last 5 days of sessions, then live
     usdash --since 2d       # load more history first
     usdash --window 8h      # show sessions active this recently (default 5d)
+    usdash --stats          # start in the Stats view
     usdash --once           # print one screen and exit (no live view)
-    usdash --offline        # don't read Anthropic's docs; use the last ones read
+    usdash --offline        # don't read Anthropic's docs; use the last prices read
 
 Read-only: it reads Claude Code's transcripts on this machine, and nothing
-about them leaves it. At start it reads two pages of Anthropic's docs (the
-prices and the current models), sending nothing about you, unless --offline. Scroll the request feed with the arrow keys, the mouse wheel or
-j/k, a page with space/b, jump to the newest with g and the oldest with G;
-q quits.
+about them leaves it. At start it reads Anthropic's pricing page, sending
+nothing about you, unless --offline. `s` swaps the sessions and the stats.
+Scroll with the arrow keys, the mouse wheel or j/k, a page with space/b, and
+jump to the top with g and the bottom with G; q quits.
 """
 import argparse
+import importlib.metadata
 import os
 import queue
 import re
@@ -32,7 +34,7 @@ from .facts import Facts, load_facts
 from .prices import load_pricing
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
-from .ui import DEFAULT_WINDOW, View, press, render, track_feed
+from .ui import DEFAULT_WINDOW, View, press, render
 
 POLL_SECONDS = 1.0
 DESKTOP_SECONDS = 10.0  # how often to re-read the Desktop app's session titles
@@ -49,7 +51,7 @@ KEYS = {
     "\x1b[6~": "pgdn", " ": "pgdn",
     "\x1b[H": "home", "\x1bOH": "home", "\x1b[1~": "home", "g": "home",
     "\x1b[F": "end", "\x1bOF": "end", "\x1b[4~": "end", "G": "end",
-    "r": "view",
+    "s": "stats",
     "q": "quit",
 }
 
@@ -114,12 +116,11 @@ def knowledge(offline: bool | None = None) -> Known:
     known = Known(pricing.models, pricing.web_search, facts, prices_label(pricing.verified, offline=True), [])
     if offline is None:
         return known
-    pages = read_docs(None if offline else fetch_text, shipped={"pricing": pricing.verified, "models": facts.verified})
+    pages = read_docs(None if offline else fetch_text, shipped={"pricing": pricing.verified})
     page = pages["pricing"]
     if page.data:
         known.prices.update(page.data["models"])
         known.web_search = page.data["web_search"]
-    known.facts = facts.with_lineup(pages["models"].data)
     fresh = page.data is not None and page.as_of is None
     known.label = prices_label(None if fresh else page.as_of or pricing.verified, offline)
     known.changed = [name for name, found in pages.items() if found.changed]
@@ -158,12 +159,18 @@ class App:
             self.store.apply_desktop(desktop_sessions())
             self.desktop_read = now
         self.view.unknown_types = sum(self.tailer.unknown_types.values())
-        track_feed(self.store, self.view)
         return changed
 
-    def frame(self, height: int):
+    def frame(self, height: int, width: int = 160):
         self.view.now = self.clock()
-        return render(self.store, self.view, height)
+        return render(self.store, self.view, height, width)
+
+
+def version() -> str:
+    try:
+        return importlib.metadata.version("usdash")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -174,21 +181,25 @@ def main(argv: list[str] | None = None) -> None:
                         help="show sessions active this recently, e.g. 3h or 2d (default: 5d)")
     parser.add_argument("--projects", type=Path, default=None,
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
+    parser.add_argument("--stats", action="store_true", help="start in the Stats view (s swaps views)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")
     parser.add_argument("--offline", action="store_true",
-                        help="don't read Anthropic's docs at start; use the last prices and model facts read")
+                        help="don't read Anthropic's pricing page at start; use the last prices read")
+    parser.add_argument("--version", action="version", version=f"usdash {version()}")
     args = parser.parse_args(argv)
 
     now = time.time()
     since = history_start(now, args.since, args.window)
     projects = (args.projects or default_projects_dir()).expanduser()
     app = App(projects, since, args.window, known=knowledge(args.offline))
+    if args.stats:
+        app.view.mode = "stats"
     if not projects.is_dir():
         print(f"usdash: no Claude Code transcripts at {projects} (use --projects)", file=sys.stderr)
     app.poll()
     console = Console()
     if args.once:
-        console.print(app.frame(console.size.height))
+        console.print(app.frame(console.size.height, console.size.width))
         return
 
     keys: queue.Queue = queue.Queue()
@@ -204,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
         tty.setcbreak(fd)
         threading.Thread(target=read_keys, args=(fd, keys, stop), daemon=True).start()
     try:
-        with Live(app.frame(console.size.height), screen=True, auto_refresh=False, console=console) as live:
+        with Live(app.frame(console.size.height, console.size.width), screen=True, auto_refresh=False, console=console) as live:
             # Ask the terminal to send the mouse wheel as arrow keys (most do by default).
             console.file.write("\x1b[?1007h")
             last_poll = last_frame = 0.0
@@ -230,7 +241,7 @@ def main(argv: list[str] | None = None) -> None:
                 # Countdowns tick once a second; otherwise redraw only on change.
                 second = int(clock_now)
                 if (pending or second != shown_second) and clock_now - last_frame >= FRAME_SECONDS:
-                    live.update(app.frame(console.size.height), refresh=True)
+                    live.update(app.frame(console.size.height, console.size.width), refresh=True)
                     last_frame, shown_second, pending = clock_now, second, False
     except KeyboardInterrupt:
         pass

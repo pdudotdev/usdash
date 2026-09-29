@@ -18,6 +18,8 @@ PRICES = prices.load_pricing().models
         ("claude-opus-4-6[1m]", "claude-opus-4-6"),
         ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5"),
         ("global.anthropic.claude-sonnet-5", "claude-sonnet-5"),
+        ("claude-sonnet-5-5", "claude-sonnet-5-5"),
+        ("us.anthropic.claude-sonnet-5-5-v1:0", "claude-sonnet-5-5"),
         ("claude-haiku-4-5@20251001", "claude-haiku-4-5"),
         (None, None),
     ],
@@ -29,8 +31,18 @@ def test_model_key(spelling, key):
 def test_pretty_model():
     assert pretty_model("claude-haiku-4-5-20251001") == "Haiku 4.5"
     assert pretty_model("claude-opus-5-5") == "Opus 5.5"
+    assert pretty_model("claude-sonnet-5-5") == "Sonnet 5.5"
     assert pretty_model("claude-opus-4-20250514") == "Opus 4"
     assert pretty_model(None) == "?"
+
+
+def test_sonnet_5_5_at_its_launch_prices():
+    # The pricing page on 2026-09-29: $2 input, $2.50 / $4 cache writes, $0.20 read, $10 output.
+    assert PRICES["claude-sonnet-5-5"] == {
+        "input": 2, "output": 10, "cache_read": 0.20, "cache_write": 2.50, "cache_write_1h": 4.00}
+    usage = {"input_tokens": 1_000, "cache_read_input_tokens": 100_000, "output_tokens": 2_000,
+             "cache_creation": {"ephemeral_5m_input_tokens": 10_000, "ephemeral_1h_input_tokens": 0}}
+    assert prices.request_cost(usage, PRICES["claude-sonnet-5-5"]) == pytest.approx(0.002 + 0.02 + 0.025 + 0.02)
 
 
 def test_cloud_provider_ids():

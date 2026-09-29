@@ -1,4 +1,4 @@
-"""Model facts: models.yaml, with the lineup from Anthropic's models overview."""
+"""Model facts: models.yaml."""
 import pytest
 
 from usdash.facts import load_facts
@@ -8,7 +8,7 @@ FACTS = load_facts()
 
 def test_where_an_effort_change_keeps_the_cache():
     assert FACTS.effort_keeps_cache("claude-opus-5-5") and FACTS.effort_keeps_cache("claude-fable-5-1")
-    assert not FACTS.effort_keeps_cache("claude-sonnet-5")
+    assert not FACTS.effort_keeps_cache("claude-sonnet-5") and not FACTS.effort_keeps_cache("claude-sonnet-5-5")
     assert not FACTS.effort_keeps_cache("claude-opus-5")  # the API docs say it could; Claude Code re-wrote
     assert not FACTS.effort_keeps_cache("us.anthropic.claude-opus-5-5-v1:0")  # a cloud provider
 
@@ -22,8 +22,3 @@ def test_tokenizers():
     assert FACTS.convert(50_000, "claude-opus-4-6", "claude-haiku-4-5-20251001") == 50_000
     assert FACTS.convert(50_000, "claude-opus-4-7", "claude-opus-4-8") == 50_000
     assert FACTS.convert(50_000, "claude-opus-6", "claude-opus-5-5") == 50_000  # a new model: the current one
-
-
-def test_the_lineup_from_the_docs_replaces_the_shipped_one():
-    assert FACTS.with_lineup(["claude-opus-6", "claude-sonnet-5"]).lineup == ["claude-opus-6", "claude-sonnet-5"]
-    assert FACTS.with_lineup(None) is FACTS

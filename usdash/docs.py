@@ -1,10 +1,10 @@
-"""Anthropic's docs, read once at start: the prices, and the current models.
+"""Anthropic's docs, read once at start: the pricing page.
 
 Each page is fetched as Markdown (plain HTTP, no model involved) and parsed
 strictly: a page that doesn't read as expected is refused, not half-used.
 What was read is saved; a page that can't be fetched or read falls back to
 its saved copy, if that's no older than what ships with usdash, else to the
-shipped files (pricing.yaml, models.yaml).
+shipped pricing.yaml.
 """
 import http.client
 import json
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import certifi
 
-from .models import model_key, name_key
+from .models import name_key
 from .prices import FIELDS
 
 DOCS = "https://platform.claude.com/docs/en"
@@ -97,26 +97,8 @@ def parse_pricing_page(text: str) -> dict:
     return {"models": models, "web_search": float(search.group(1)) / 1000}
 
 
-def parse_lineup(text: str) -> list[str]:
-    """The models overview -> the current models, most capable first: the
-    columns of its "Compare models" table, by their API alias. Raises
-    ValueError unless each column's name and alias agree."""
-    rows = {cells[0]: cells[1:] for cells in reversed(_table(text, "## Compare models"))}  # the first of each name
-    names, aliases = rows.get("Feature"), rows.get("Claude API alias")
-    if not names or not aliases or len(names) != len(aliases) or len(names) < 2:
-        raise ValueError("the comparison table changed")
-    lineup = []
-    for name, alias in zip(names, aliases):
-        match = re.fullmatch(r"`([a-z0-9-]+)`", alias)
-        if not match or model_key(match.group(1)) != name_key(name):
-            raise ValueError(f"{name!r} and its alias {alias!r} don't agree")
-        lineup.append(model_key(match.group(1)))
-    return lineup
-
-
 PAGES = {  # name -> (Markdown URL, parser)
     "pricing": (f"{DOCS}/about-claude/pricing.md", parse_pricing_page),
-    "models": (f"{DOCS}/about-claude/models/overview.md", parse_lineup),
 }
 
 
