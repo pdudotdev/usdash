@@ -2,7 +2,7 @@
 
 How the cost of using a large language model is built, why it moves, and how to reason about any new case from first principles. Written around Claude and Claude Code, where every number here was checked. The principles carry over to any provider that bills by the token and caches prompts.
 
-**Checked on 2026-09-28** (Sonnet 5.5 added on 2026-09-29, the day it launched) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
+**Checked on 2026-09-28** (Sonnet 5.5 added, and Claude Code's caching doc re-read, on 2026-09-29) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
 
 ---
 
@@ -39,7 +39,7 @@ These are the whole subject in one page. Everything later is one of them applied
 
 A **token** is the unit a model reads and writes: roughly 4 characters or ¾ of a word of English text. Code, other languages and unusual formatting take more tokens per character.
 
-**The tokenizer belongs to the model.** Claude Opus 4.7 and later models (including Opus 5.5, Sonnet 5 and Fable 5.1) use a newer tokenizer that produces about 30% more tokens for the same text than earlier models (Haiku 4.5, Sonnet 4.6, Opus 4.6 and before). So the same conversation is about 0.74–0.77× the tokens on an older model. That means:
+**The tokenizer belongs to the model.** Claude Opus 4.7 and later models (including Opus 5.5, Sonnet 5.5, Sonnet 5 and Fable 5.1) use a newer tokenizer that produces about 30% more tokens for the same text than earlier models (Haiku 4.5, Sonnet 4.6, Opus 4.6 and before). So the same conversation is about 0.74–0.77× the tokens on an older model. That means:
 - **A price per token isn't comparable across tokenizers.** Compare the cost of the same text.
 - **Token counts don't transfer.** A count measured on one model is wrong on the other; recount with the target model.
 
@@ -131,7 +131,7 @@ reads to break even = (write multiplier − 1) ÷ (1 − r)
 | Most models (r = 0.1) | 0.28: **the first read** | 1.11: **the second read** |
 | Opus 5.5 (r = 0.05) | 0.26 | 1.05 |
 
-**Example (statelessness plus caching).** A 20-turn Sonnet 5 conversation starts with a 20k-token prefix (tools and instructions) and grows by 2k tokens a turn:
+**Example (statelessness plus caching).** A 20-turn Sonnet 5.5 conversation starts with a 20k-token prefix (tools and instructions) and grows by 2k tokens a turn:
 - **Without caching:** 820,000 input tokens are sent over the 20 requests, **$1.64**.
 - **With caching**, each request reads the previous one back (760,000 tokens) and writes only what's new (60,000 tokens): **$0.30**, 82% less.
 - **The trap:** a 21st request after the cache has expired re-writes all 62k tokens, **$0.16**, more than half of what the whole cached conversation cost.
@@ -152,7 +152,7 @@ tokens re-written after 5–60 min pauses  >  0.75 ÷ (1.25 − r)  ×  all toke
 
 The rule of thumb: **one 5–60 minute pause once the context is near its full size is enough for the 1-hour cache to win.** For example, a day on Opus 5.5 with a steady 80k context, 6 bursts of 10 messages and 15-minute breaks between them costs **$3.48 with the 5-minute cache and $1.92 with the 1-hour one**. The five breaks each re-write 82k tokens on the 5-minute cache.
 
-**Who gets which, in Claude Code:** on a subscription within plan usage, the main conversation uses 1 hour. On an API key, usage credits or a cloud provider it uses 5 minutes, unless you set `promptCacheTtl` or `CLAUDE_CODE_PROMPT_CACHE_TTL`. Subagents, compaction and titles use 5 minutes by default.
+**Who gets which, in Claude Code:** on a subscription within plan usage, the main conversation uses 1 hour. On an API key, usage credits or a cloud provider it uses 5 minutes, unless you set `promptCacheTtl` or `CLAUDE_CODE_PROMPT_CACHE_TTL`. Subagents, compaction and titles use 5 minutes by default; `subagentPromptCacheTtl` (or `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) sets theirs.
 
 ## 8. What breaks the cache
 
@@ -170,7 +170,7 @@ The principle: **anything that changes bytes early in the request re-processes e
 What doesn't break it: appending messages, tool calls and results. Mid-conversation additions that are sent as new messages (a system message, a skill's instructions) leave the cached prefix intact.
 
 **Where the API and a client differ, check the client.** Examples from Claude Code:
-- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5 and Fable 5.1 (with an API key or subscription). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
+- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5, Sonnet 5.5 and Fable 5.1 (with an API key or subscription; not on Bedrock or Google Cloud). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
 - **Fast mode:** the API table says switching speed invalidates system and messages. Claude Code sends the fast-mode header once per conversation, so only turning it on the first time costs a re-write. Turning it off and on again later keeps the cache.
 - **Resuming:** Claude Code keeps the system prompt a conversation started with, so a resumed session reads back whatever is still within the lifetime (6 of 6 real resumes did; Appendix B).
 - **MCP servers:** connecting or removing one changes the tool list only if its tools aren't deferred; by default they are.
@@ -191,7 +191,7 @@ Two more details:
 ## 10. Model choice and tokenizers
 
 Price per token is half the story. The other half is tokens per task, which depends on:
-- **The tokenizer.** The same text is ~30% more tokens on Opus 4.7 and later. 77,000 tokens on Haiku 4.5 are 100,000–104,000 on Opus 5.5 or Sonnet 5.
+- **The tokenizer.** The same text is ~30% more tokens on Opus 4.7 and later. 77,000 tokens on Haiku 4.5 are 100,000–104,000 on Opus 5.5 or Sonnet 5.5.
 - **How much the model writes and thinks** for this task at this effort.
 - **How many attempts it takes.** A cheaper model that needs a second pass costs two passes.
 
@@ -256,7 +256,7 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 - **m = P ÷ s** is how many requests until it has paid for itself.
 
 **Example: switching model mid-conversation.** The conversation is 100k tokens on Opus 5.5, warm, 1-hour cache. Each later message adds 3k new tokens and 1.5k output.
-- **Now:** Sonnet 5 must write all 100k into its own cache, $0.40, where Opus would read them for $0.02. P = **$0.38**.
+- **Now:** Sonnet 5.5 must write all 100k into its own cache, $0.40, where Opus would read them for $0.02. P = **$0.38**.
 - **Later:** both models read the 100k at the same $0.20, so the saving is only on the new tokens and output: $0.074 vs $0.047 a message. s = **$0.027**.
 - **Pay-back:** 14 messages.
 - **After a break**, the cache has expired and both models must write everything (less the tool list, if something keeps it cached). The same switch costs $0.40 on Sonnet against $0.80 to stay on Opus: switching down is then cheaper from the first message.
@@ -292,7 +292,7 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 - **Resuming** a session (`claude --resume`) re-sends the whole conversation. Within the lifetime it reads back what's still cached. After it, it re-writes it.
 - **A subagent** is a separate conversation with its own prompt and its own cache (5 minutes by default). It doesn't read the parent's cache, and the parent's cache doesn't refresh while it waits. A long subagent can leave the parent to re-write when it returns.
 - **A fork** (a subagent that inherits the parent's system prompt, tools and conversation exactly) reads the parent's cache on its first request. Check that a feature really is a fork: a skill run in a forked subagent in this project's review read nothing back and wrote its 44k-token start again.
-- **Parallel requests sharing a prefix:** an entry exists only once the first response has begun. Ten requests sharing a 30k prefix on Sonnet 5, sent at once, write it ten times: **$0.75**. Sending one first and the other nine once it has started: **$0.13**.
+- **Parallel requests sharing a prefix:** an entry exists only once the first response has begun. Ten requests sharing a 30k prefix on Sonnet 5.5, sent at once, write it ten times: **$0.75**. Sending one first and the other nine once it has started: **$0.13**.
 
 ## 18. Costs you don't see
 
@@ -325,7 +325,7 @@ Then run the equation, and **check it against a small pilot's real usage before 
 
 **Reference points:**
 - **Claude Code across enterprise deployments** (Anthropic's figures): about $13 per developer per active day, $150–250 per developer a month, under $30 a day for 90% of users.
-- **A RAG service:** a 50k-token document and 1,000 questions an hour on Sonnet 5 (200 tokens in, 400 out) costs **$104 an hour without caching and $15 with it**. Each question then counts only 200 tokens toward the input rate limit.
+- **A RAG service:** a 50k-token document and 1,000 questions an hour on Sonnet 5.5 (200 tokens in, 400 out) costs **$104 an hour without caching and $15 with it**. Each question then counts only 200 tokens toward the input rate limit.
 - **Offline processing:** 10,000 documents of 3k tokens in and 500 out on Haiku 4.5 cost **$55, or $27.50 through the Batch API**.
 
 ## 20. Metrics to watch
@@ -338,6 +338,8 @@ Then run the equation, and **check it against a small pilot's real usage before 
 | **Effective input price** | input-side cost ÷ total input tokens | How close you are to the cache-read price |
 | **Cost per unit** | total ÷ units delivered | The only number the business sees |
 | **Unlogged share** | 1 − logged cost ÷ billed cost | How much your own logs miss |
+
+For your own Claude Code use, usdash's Stats view shows the first four: the share read from cache, cache misses by cause, spend by kind of token, and what input costs on average.
 
 ## 21. Governance levers
 
@@ -385,7 +387,7 @@ Answers follow each one; work them out first.
 **6. You fan out 20 subagents that share a 40k-token briefing. How do you cut the input cost?**
 *Send one first, and the other 19 once its response has begun,* so they read the briefing instead of each writing it (§5, §17). Or pre-warm the cache with `max_tokens: 0`.
 
-**7. Is moving a warm 200k Opus 5.5 conversation to Sonnet 5 worth it to save money?**
+**7. Is moving a warm 200k Opus 5.5 conversation to Sonnet 5.5 worth it to save money?**
 *Rarely, while it's warm.* Sonnet must write 200k tokens (~$0.80 at the 1-hour price), and both models read at the same $0.20/M afterwards. Only the new tokens and output get cheaper. After a break it's a different answer: both must re-write, and Sonnet does it for half (§15).
 
 ---
@@ -460,7 +462,7 @@ What building and reviewing usdash measured in real Claude Code transcripts, com
 
 - Pricing: https://platform.claude.com/docs/en/about-claude/pricing
 - Prompt caching: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
-- Models overview: https://platform.claude.com/docs/en/about-claude/models/overview
+- Models overview: https://platform.claude.com/docs/en/models/overview
 - Context windows: https://platform.claude.com/docs/en/build-with-claude/context-windows
 - Token counting: https://platform.claude.com/docs/en/build-with-claude/token-counting
 - Thinking pricing: https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost

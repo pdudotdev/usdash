@@ -6,7 +6,7 @@
 
 A live terminal dashboard for **your own Claude Code costs**. It reads the transcripts Claude Code already writes on your machine and shows, for each session, whether its prompt cache is still warm, what the session has cost, and what your next message will cost. Press `s` for where the money went: by day, model, kind of token, cache miss, context size, session, project and prompt.
 
-Every number is measured: the tokens each request logged, at Anthropic's list prices. The one exception is labelled `up to`, and it's an upper bound.
+Every amount is measured: the tokens each request logged, at Anthropic's list prices, or, once a session exits, Claude Code's own total for it. The one exception is labelled `up to`, and it's an upper bound.
 
 It reads Claude Code's files, plus Anthropic's public pricing page once at start (`--offline` skips even that). The only file it writes is its copy of that page. Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
 
@@ -45,7 +45,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | Line | What it says |
 |---|---|
 | **TODAY** | Today's spend at list prices, and the share of all input read back from the cache |
-| **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again, instead of reading it back, cost beyond reading it. By cause, the biggest first; [Stats](#-stats) has them over the whole window |
+| **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again, instead of reading it back, cost beyond reading it. By cause, the biggest first; a cause that added under half a cent is left out here. [Stats](#-stats) has them all, over the whole window |
 | **Prices** | Which prices the dollars are: Anthropic's current API list prices, or, if the pricing page can't be read at start, the last ones read, with their date. On a subscription it adds that your plan isn't billed per token. Warnings follow in yellow: requests with no known price (left out of the totals), a pricing page that no longer reads as expected, and record types usdash doesn't know |
 | **Caveat** | Amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)) |
 
@@ -83,7 +83,7 @@ The gap between the two amounts is, at most, what letting the cache expire costs
 
 ▫️ **Measured or `up to`:**
 - **now** is the conversation read back from the cache: its size as the last request sent it, at the cache-read price. It's exact: every next message within the cache lifetime read the whole previous prompt back, to 100 tokens (in the [real-session tests](tests/test_real_checks.py) too). Resuming an exited session reads it back the same way while the cache lasts
-- **up to** is the conversation written to the cache again, at the write price. It's an upper bound: the first 22–25k tokens of every request, Claude Code's tool list, often stay cached anyway (another session, or Claude Code's own unlogged requests, keeps them warm). On Opus 5.5 with a 1-hour cache, that's about $0.18 less
+- **up to** is the conversation written to the cache again, at the write price. It's an upper bound: Claude Code's tool list at the start of every request (22–25k tokens in the CLI) often stays cached anyway, kept warm by another session in the same folder or by Claude Code's own unlogged requests. On Opus 5.5 with a 1-hour cache, that's about $0.18 less
 - What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of both
 
 ▫️ **Key characteristics:**
@@ -105,8 +105,8 @@ Press `s` for where the money went over the sessions window (`--window`, 5 days 
 | **Summary** | SPEND, and per day over a window longer than a day; the last 5 hours (for a window longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
 | **By day** | Each local day: SPEND with a bar, requests, the share read from cache (green from 80%, yellow from 30%, red below) and what cache misses added. Past 14 days, the oldest fold into one `earlier` row, with no bar (it sums many days), and none at all if nothing was spent then |
 | **By model** | Each model, and fast mode as a row of its own: its share of requests against its share of SPEND. A model with 20% of the requests and 70% of the spend is the first place to look for savings |
-| **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens, all kinds together. A web searches row appears if any logged request made server-side searches |
-| **Cache misses** | By cause (`cache expired`, `model switch`, `resumed`, `effort change`, `speed change` for fast mode turned on or off, `Claude Code upgraded`, `cause unknown`): how many, the tokens written again, and what that cost beyond reading them back. `no cache misses` in green when there were none |
+| **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens: reads, writes and uncached input together. A web searches row appears if any logged request made server-side searches |
+| **Cache misses** | By cause (`cache expired`, `model switch`, `resumed`, `effort change`, `speed change` for fast mode turned on, `Claude Code upgraded`, `cause unknown`): how many, the tokens written again, and what that cost beyond reading them back. `no cache misses` in green when there were none |
 | **By context size** | Requests grouped by how big their conversation was: under 50k, 50–100k, 100–200k, 200–500k, 500k and more. Late turns in a long conversation cost more each; this shows how much of SPEND they are |
 | **Top sessions** | The 5 that cost the most in the window, their share of SPEND together and each, and PEAK, the largest conversation each sent |
 | **By project** | SPEND by project folder (branches together), the top 5, then the rest as `others`. Two folders with the same name show with as much of their path as tells them apart: `work/api`, `personal/api` |
@@ -125,7 +125,7 @@ Every panel that splits SPEND (by day, by model, by kind, by context size, by pr
 1. Several records of one streamed reply are merged into one request, keyed by `message.id` (not `requestId`, which some sessions don't record)
 2. The request's start is the time of the record it answers: your prompt or a tool result, or what Claude Code attached to them just before sending. The cache clock counts from there
 3. Its cost is its tokens at Anthropic's list prices, from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (see below). Fast mode (2× on Opus 5.5) and US-only inference (1.1× on Claude 4.6 and later) are priced as the page says, from each reply's usage, and each web search adds the page's per-search price ($10 per 1,000). Web fetches cost only their tokens
-4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have, not counting the tool list the session measured (and 5,000 tokens or more, counted in its own model's tokens after a switch), it's a **cache miss**, with the likely cause: model switch, cache expired, resumed, fast mode turned on or off, Claude Code upgrade, or effort change. Right after `/compact`, only the tool list could be read back: the summary is new, so writing it isn't a miss
+4. It's compared with the conversation's previous request. If it failed to read back at least 30% of what it could have, not counting the tool list the session measured (and 5,000 tokens or more, counted in its own model's tokens after a switch), it's a **cache miss**, with the likely cause: a model switch, the cache expired, a Claude Code upgrade (it applies when Claude Code starts, so it comes with a resume), a resume, fast mode turned on, or an effort change; else `cause unknown`. Right after `/compact`, only the tool list could be read back: the summary is new, so writing it isn't a miss
 5. The session's cache clock, what re-sending it costs, and the stats are updated
 
 ▫️ **What it knows about the models, and where from:**
@@ -133,10 +133,10 @@ Every panel that splits SPEND (by day, by model, by kind, by context size, by pr
 | Fact | Where from |
 |---|---|
 | **Prices**: tokens, fast mode, web search | Read at start from the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing); else its last copy; else [`usdash/pricing.yaml`](usdash/pricing.yaml), shipped with usdash |
-| **Where an effort change keeps the cache**: Opus 5.5 and Fable 5.1 | [`usdash/models.yaml`](usdash/models.yaml): what Claude Code does, checked in transcripts (the API docs list Opus 5 too, where Claude Code re-wrote). It only names a miss's cause |
+| **Where an effort change keeps the cache**: Opus 5.5, Sonnet 5.5 and Fable 5.1 | [`usdash/models.yaml`](usdash/models.yaml): what Claude Code does, from [its docs](https://code.claude.com/docs/en/prompt-caching), and checked in transcripts on Opus 5.5. The API docs list Opus 5 too, where Claude Code re-wrote. It only names a miss's cause |
 | **Tokenizers**: every model before Claude Opus 4.7 counts the same text as about 0.77× the tokens | `usdash/models.yaml`. It only compares two requests across a model switch, to tell a miss |
 
-The page is fetched as plain Markdown, within 4 seconds, and read strictly: a page that doesn't read as expected (other columns, prices out of line with each other) is refused, the header says in yellow that it changed, and its last copy is used. A page that isn't Anthropic's at all (a Wi-Fi sign-in page) counts as not reached. The last copy is kept in `~/.cache/usdash/docs.json`, and a copy older than what ships with usdash is ignored. A brand-new model is priced from the page with no usdash release. A request with no known price (a model the prices don't list, or fast mode on a model whose fast prices aren't listed) is left out of the totals, and the header says so in yellow, rather than priced wrong.
+The page is fetched as plain Markdown, within 4 seconds, and read strictly: a page that doesn't read as expected (other columns, prices out of line with each other) is refused, the header says in yellow that it changed, and its last copy is used. A page that isn't Anthropic's at all (a Wi-Fi sign-in page) counts as not reached. The last copy is kept in `~/.cache/usdash/docs.json` (under `$XDG_CACHE_HOME` if that's set), and a copy older than what ships with usdash is ignored. A brand-new model is priced from the page with no usdash release. A request with no known price (a model the prices don't list, or fast mode on a model whose fast prices aren't listed) is left out of the totals, and the header says so in yellow, rather than priced wrong.
 
 > ⚠️ **NOTE:** The transcript format is internal to Claude Code and can change with any release. usdash reads it leniently (missing fields are "unknown", not a crash) and counts record types it doesn't know. If the header reports unknown records after a Claude Code update, check usdash with the [manual sanity suite](tests/sanity/manual.py).
 
@@ -151,7 +151,7 @@ The page is fetched as plain Markdown, within 4 seconds, and read strictly: a pa
 | 5 | `/model sonnet`, then send a message | The header's `⟳ cache misses added $…: model switch $…` appears; Stats (`s`) counts it under **cache misses** |
 | 6 | Step away until the countdown turns yellow | The last 10 minutes of the cache (2½ of a 5-minute one): the `up to` amount turns yellow too |
 | 7 | Stay away until it runs out | The session moves to the expired pane, `○ expired · 1h`, with `continuing re-sends …k tokens: up to $…` |
-| 8 | `/compact` | CONTEXT says `compacted`, until the next message measures the new size |
+| 8 | `/compact`, then send a message | CONTEXT says `compacted` until that message measures the new size |
 | 9 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
 | 10 | Press `s` | The session in **top sessions**, your prompts in **costliest prompts**, the day's bar in **by day** |
 
@@ -237,10 +237,10 @@ Sessions appear, their cache lifetime and costs are read the same way, and Bedro
 A 5-minute cache was still there 6¾ minutes later on some requests, and gone after 5⅔ on others. usdash counts a cache as expired once its lifetime is up, so a session may still read its cache back a little after the countdown ends. That's why coming back is priced `up to`.
 
 ▫️ **A resumed session can miss the cache:**
-Resuming within the cache lifetime read it all back in 6 of 6 real resumes (one a minute after `/exit` with a file written in between, one on a 5-minute cache). A resumed session sends a fresh system prompt, though, and one that changed (a new day, an edited `CLAUDE.md`) re-writes all but the tool list: the `now` amount assumes it didn't change.
+Resuming within the cache lifetime read it all back in 6 of 6 real resumes (one a minute after `/exit` with a file written in between, one on a 5-minute cache): a resumed conversation keeps the system prompt it started with. It can still miss when something else at the start of the request changed with the restart: tools an MCP server or plugin loads up front, the system prompt flags given to the resume, or a Claude Code upgrade (shown as `Claude Code upgraded`). The `now` amount assumes nothing did.
 
 ▫️ **Some causes are invisible:**
-A gateway or proxy that changes the model behind Claude Code's back shows up as `cause unknown`.
+Some changes that break the cache leave no trace in the transcripts, so a miss they cause shows up as `cause unknown`: tools that change mid-session (an MCP server or plugin that loads its tools up front, a deny rule for a whole tool when tool search is off), the oldest images that Claude Code drops once a request passes the image limit, and a gateway or proxy that strips the cache markers or changes the model behind Claude Code's back.
 
 ▫️ **Cost isn't the only goal:** a stronger model can finish in fewer messages. The dollars are there to decide with.
 
@@ -258,7 +258,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 
 - **Price:** a cache read costs 0.1× the input price (0.05× on Opus 5.5, 0.025× on Fable 5.1). A cache write costs 1.25× (5-minute cache) or 2× (1-hour cache)
 - **Per model:** each model has its own cache, so a model switch writes the whole conversation again. Opus 5.5 and Sonnet 5.5 even read the cache at the same price, so moving a cached conversation from Opus to Sonnet saves almost nothing on its cached part
-- **Reset by:** a model switch; an effort change (except on Opus 5.5 and Fable 5.1 with an API key or subscription); turning fast mode on (in Claude Code, only the first time in a conversation); `/compact`; a Claude Code upgrade. The tool list at the start often survives
+- **Reset by:** a model switch; an effort change (except on Opus 5.5, Sonnet 5.5 and Fable 5.1 with an API key or subscription); turning fast mode on (in Claude Code, only the first time in a conversation); `/compact`; a Claude Code upgrade. The tool list at the start often survives
 
 ▫️ **Cache lifetime**
 

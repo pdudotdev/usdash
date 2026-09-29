@@ -109,12 +109,19 @@ def rewrite_reason(request: Request, prev: ChainState, facts: Facts) -> str:
     ttl = prev.ttl or FIVE_MINUTES
     if prev.touched is not None and request.start - prev.touched >= ttl:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
-    if prev.resumed:
-        return "resumed"  # a fresh system prompt: only the tool list before it can be read back
-    if request.speed and prev.speed and request.speed != prev.speed:
-        return "speed change"  # fast mode on or off: only the tool list stays cached
+    # An upgrade applies only when Claude Code starts, so it comes with a resume: check it first.
+    # It usually changes the tool definitions at the start of every request.
     if request.version and prev.version and request.version != prev.version:
         return "Claude Code upgraded"
+    if prev.resumed:
+        # A resumed conversation keeps the system prompt it started with, so something else
+        # changed at the restart: tools loaded up front (an MCP server, a plugin), or the
+        # system prompt flags given to the resume.
+        return "resumed"
+    if request.speed == "fast" and prev.speed and prev.speed != "fast":
+        # Turning fast mode on adds a header that's part of the cache key. Claude Code keeps
+        # sending it for the rest of the conversation, so turning it off (or on again) keeps the cache.
+        return "speed change"
     if request.effort != prev.effort and prev.effort and not facts.effort_keeps_cache(request.model):
         return "effort change"
     return "cause unknown"

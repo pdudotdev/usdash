@@ -7,8 +7,9 @@ FACTS = load_facts()
 
 
 def test_where_an_effort_change_keeps_the_cache():
-    assert FACTS.effort_keeps_cache("claude-opus-5-5") and FACTS.effort_keeps_cache("claude-fable-5-1")
-    assert not FACTS.effort_keeps_cache("claude-sonnet-5") and not FACTS.effort_keeps_cache("claude-sonnet-5-5")
+    # Claude Code's docs: Opus 5.5, Sonnet 5.5 and Fable 5.1, with an API key or a subscription.
+    assert all(FACTS.effort_keeps_cache(m) for m in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"))
+    assert not FACTS.effort_keeps_cache("claude-sonnet-5")
     assert not FACTS.effort_keeps_cache("claude-opus-5")  # the API docs say it could; Claude Code re-wrote
     assert not FACTS.effort_keeps_cache("us.anthropic.claude-opus-5-5-v1:0")  # a cloud provider
 

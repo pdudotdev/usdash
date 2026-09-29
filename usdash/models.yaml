@@ -2,10 +2,11 @@
 # Last checked: 2026-09-29.
 
 # Where Claude Code keeps the cache across an effort change (it sends the change
-# inside the conversation instead of re-writing it). Checked in transcripts:
-# Opus 5.5 read the whole conversation back after 6 of 6 changes; Opus 5, which
-# the API docs say could, re-wrote it.
-effort_keeps_cache: [claude-opus-5-5, claude-fable-5-1]
+# inside the conversation instead of re-writing it), with an API key or a
+# subscription: Claude Code's docs ("How Claude Code uses prompt caching") name
+# these three. Checked in transcripts: Opus 5.5 read the whole conversation back
+# after 7 of 7 changes; Opus 5, which the API docs say could, re-wrote it.
+effort_keeps_cache: [claude-opus-5-5, claude-sonnet-5-5, claude-fable-5-1]
 
 # The tokenizer changed with Claude Opus 4.7: models before it count the same text
 # as about this share of the tokens (0.758 measured in a real switch; the models
