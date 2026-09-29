@@ -125,7 +125,8 @@ class Stats:
     turns: list[Turn] = field(default_factory=list)  # the costliest TOP
     history_from: float | None = None  # how far back the transcripts go (Store.history_from)
     # The share of Claude Code's own totals that the transcripts held, in the period's sessions
-    # that exited (Claude Code counts requests its transcripts never log); None without any.
+    # that exited (Claude Code counts requests its transcripts never log; a total short of the
+    # transcripts, an incomplete record, is left out); None without any.
     logged: float | None = None
 
     @property
@@ -276,9 +277,9 @@ def _compute(store: Store, now: float, period: int) -> Stats:
                 turn.spend += cost
         if counted:
             rows.append(row)
-            if session.cost_state is not None:  # it exited: Claude Code wrote its own total, all requests counted
+            if session.claude_total is not None:  # it exited: Claude Code wrote its own total, all requests counted
                 logged += session.cost_at_state
-                counted_by_claude += session.cost_state
+                counted_by_claude += session.claude_total
         turns.extend(answers.values())
 
     stats.logged = logged / counted_by_claude if counted_by_claude > 0 else None

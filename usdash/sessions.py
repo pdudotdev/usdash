@@ -345,10 +345,22 @@ class Session:
         at its last exit, which counts requests the transcripts never log
         (titles, prompt suggestions, /compact's summary, ...), plus what the
         transcripts show since. It carries across resumes. Only the
-        transcripts, if it never exited."""
-        if self.cost_state is None:
+        transcripts, if it never exited or Claude Code's total falls short."""
+        own = self.claude_total
+        if own is None:
             return self.cost_total
-        return self.cost_state + self.cost_total - self.cost_at_state
+        return own + self.cost_total - self.cost_at_state
+
+    @property
+    def claude_total(self) -> float | None:
+        """Claude Code's own total at the session's last exit. None if it never
+        exited, or if that total is below what the transcripts showed then: it
+        counts everything they log, so it's an incomplete record (a Desktop
+        session reopened days later, sending nothing, wrote $0.00 for $0.90 of
+        earlier requests)."""
+        if self.cost_state is None or self.cost_state < self.cost_at_state - 1e-6:
+            return None
+        return self.cost_state
 
 
 class Store:

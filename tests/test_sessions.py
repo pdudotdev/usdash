@@ -405,6 +405,22 @@ def test_closing_and_resuming(store):
     assert session.total == pytest.approx(total) and not session.ended
 
 
+def test_a_total_from_claude_code_below_the_transcripts_is_not_used(store):
+    # A Desktop session reopened days later, sending nothing, wrote $0.00 at its exit for $0.90 of
+    # earlier requests. Claude Code's total counts everything the transcripts log: that's incomplete.
+    t = Transcript()
+    t.turn(T0, write=40_000)
+    t.record("cost-state", totalCostUSD=0.0)
+    t.into(store)
+    session = store.sessions["sess-1"]
+    assert session.claude_total is None and session.total == pytest.approx(session.cost_total)
+    assert session.total > 0.3
+    # A total that covers the transcripts is Claude Code's own again.
+    t.record("cost-state", totalCostUSD=0.5)
+    t.into(store)
+    assert session.claude_total == 0.5 and session.total == pytest.approx(0.5)
+
+
 def test_fast_mode_changes_the_price_and_turning_it_on_re_writes(store):
     t = Transcript()
     t.turn(T0, write=40_000, out=0, speed="standard")

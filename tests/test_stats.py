@@ -312,7 +312,10 @@ def test_the_transcripts_share_of_what_claude_code_counted(store):
     b.turn(at(29, 11), write=10_000)
     b.record("cost-state", totalCostUSD=0.10)
     c.turn(at(29, 12), write=10_000)  # still open: no total of Claude Code's to compare with
-    for t in (a, b, c):
+    d = Transcript(session="dddd")
+    d.turn(at(29, 13), write=10_000)
+    d.record("cost-state", totalCostUSD=0.0)  # short of its own transcripts: an incomplete record, left out
+    for t in (a, b, c, d):
         t.into(store)
     logged = cost(OPUS, w1h=40_000) + cost(OPUS, w1h=10_000)
     s = st.compute(store, NOW, WINDOW)
