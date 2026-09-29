@@ -144,6 +144,18 @@ def test_claude_code_upgrade(store):
     assert request.reason == "Claude Code upgraded"
 
 
+def test_an_upgrade_is_the_cause_even_though_it_comes_with_a_resume(store):
+    # Claude Code applies an upgrade when it next starts: after an exit, so every upgrade is a resume
+    # too. A resume alone keeps the system prompt; the upgrade changes the tool definitions.
+    t = Transcript()
+    t.turn(T0, write=40_000)
+    t.record("cost-state", totalCostUSD=0.30)
+    t.turn(T0 + 120, write=40_100, version="2.1.290")
+    t.into(store)
+    latest = max(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
+    assert latest.reason == "Claude Code upgraded"
+
+
 def test_effort_change_rewrites_on_most_models_but_not_opus_5_5(store):
     assert conversation(store, write=43_000, effort="low").reason == "cause unknown"
     sonnet = Transcript(session="sess-2")
@@ -152,6 +164,13 @@ def test_effort_change_rewrites_on_most_models_but_not_opus_5_5(store):
     sonnet.into(store)
     latest = max(store.sessions["sess-2"].requests.values(), key=lambda r: r.start)
     assert latest.reason == "effort change"
+    # Sonnet 5.5 keeps the cache across an effort change: a miss then has another cause.
+    newer = Transcript(session="sess-3")
+    newer.turn(T0, model="claude-sonnet-5-5", write=40_000)
+    newer.turn(T0 + 60, model="claude-sonnet-5-5", effort="low", write=41_000)
+    newer.into(store)
+    latest = max(store.sessions["sess-3"].requests.values(), key=lambda r: r.start)
+    assert latest.reason == "cause unknown"
 
 
 def test_compaction(fixture_store, store):
@@ -394,6 +413,10 @@ def test_fast_mode_changes_the_price_and_turning_it_on_re_writes(store):
     last = store.sessions["sess-1"].last_request
     assert last.reason == "speed change" and last.speed == "fast"
     assert last.cost == pytest.approx((41_000 * 16 + 2 * 8) / 1e6)  # the 1-hour write and input at twice the price
+    # Turning it off keeps the cache (Claude Code keeps sending the header): a miss then isn't down to it.
+    t.turn(T0 + 120, write=42_000, out=0, speed="standard")
+    t.into(store)
+    assert store.sessions["sess-1"].last_request.reason == "cause unknown"
 
 
 def test_web_searches_are_charged_on_top_of_tokens(store):
@@ -443,8 +466,9 @@ def test_a_miss_counts_against_the_conversation_after_the_tool_list(store):
 
 def test_a_resume_that_misses_the_cache_says_so(store):
     # Exited, and resumed 3½ minutes later on a 5-minute cache, reading back only the tool list:
-    # the resumed session's fresh system prompt had changed. (Usually it hasn't, and a resume within
-    # the cache lifetime reads it all back: tests/test_real_checks.py.)
+    # something changed at the restart, such as tools an MCP server loads up front. (Usually nothing
+    # has: a resumed conversation keeps its system prompt, and a resume within the cache lifetime
+    # reads it all back: tests/test_real_checks.py.)
     t = Transcript()
     t.turn(T0, read=24_981, write=9_907, ttl="5m")
     t.record("cost-state", totalCostUSD=0.05)

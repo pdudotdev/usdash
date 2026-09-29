@@ -89,28 +89,29 @@ def history() -> list[Transcript]:
     sdk.reply(T - 4 * DAY + 90, subagent="a1", model="claude-haiku-4-5", effort=None, write=30_000, ttl="5m", out=800)
     sdk.reply(T - 4 * DAY + 120, read=172_002, write=6_000, out=1_200)
     sdk.record("cost-state", totalCostUSD=4.1)
-    # Friday: effort turned down on Sonnet 5.5, which re-writes the conversation.
+    # Friday: effort turned down on Opus 5, which re-writes the conversation (Claude Code keeps the
+    # cache across an effort change only on Opus 5.5, Sonnet 5.5 and Fable 5.1).
     login = Transcript(session="c4d2e8a1", cwd="/home/you/shop")
     login.record("ai-title", aiTitle="Flaky login test")
-    login.turn(T - 3 * DAY, text="why does the login test flake", model="claude-sonnet-5-5", read=23_300,
+    login.turn(T - 3 * DAY, text="why does the login test flake", model="claude-opus-5", read=23_300,
                write=40_000, out=1_500)
-    login.turn(T - 3 * DAY + 120, text="run it 50 times", model="claude-sonnet-5-5", read=63_302, write=8_000,
+    login.turn(T - 3 * DAY + 120, text="run it 50 times", model="claude-opus-5", read=63_302, write=8_000,
                out=900)
-    login.turn(T - 3 * DAY + 300, text="just rerun the last command", model="claude-sonnet-5-5", effort="low",
+    login.turn(T - 3 * DAY + 300, text="just rerun the last command", model="claude-opus-5", effort="low",
                read=23_300, write=49_000, out=300)
     login.record("cost-state", totalCostUSD=0.9)
-    # Saturday: resumed, and the fresh system prompt missed the cache.
+    # Saturday: resumed, and missed the cache (something changed at the restart).
     docs = Transcript(session="0a9e5f13", cwd="/home/you/billing")
     docs.record("ai-title", aiTitle="Docs pass")
     docs.turn(T - 2 * DAY, text="tidy the API docs", read=23_300, write=45_000, out=2_200)
     docs.record("cost-state", totalCostUSD=0.5)
     docs.turn(T - 2 * DAY + 600, text="and the changelog", read=23_300, write=47_000, out=1_000)
     docs.record("cost-state", totalCostUSD=0.95)
-    # Sunday: fast mode turned off mid-session.
+    # Sunday: fast mode turned on mid-session, which re-writes the conversation at fast mode's prices.
     infra = Transcript(session="e6c1a7b0", cwd="/home/you/infra")
     infra.record("ai-title", aiTitle="Review the Terraform plan")
-    infra.turn(T - DAY, text="review this plan", read=23_300, write=60_000, out=3_000, speed="fast")
-    infra.turn(T - DAY + 120, text="now the staging one", read=23_300, write=64_000, out=2_000, speed="standard")
+    infra.turn(T - DAY, text="review this plan", read=23_300, write=60_000, out=3_000, speed="standard")
+    infra.turn(T - DAY + 120, text="now the staging one", read=23_300, write=64_000, out=2_000, speed="fast")
     infra.record("cost-state", totalCostUSD=2.3)
     return [sdk, login, docs, infra]
 
