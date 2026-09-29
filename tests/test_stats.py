@@ -172,7 +172,7 @@ def test_the_folded_earlier_row_does_not_set_the_scale(store):
     assert any("summary · last 30d" in line for line in lines)
     earlier = next(line for line in lines if "earlier" in line)
     assert "█" not in earlier and "$" in earlier  # 24 days' sum: no bar to compare with a day's
-    days = [line for line in lines if " Sep " in line and "$" in line]
+    days = [line for line in lines if " Sep " in line and "$" in line and "SPEND" not in line]  # not the summary
     assert len(days) == 5 and all("█" * 16 in line for line in days)  # the last 5 days, each the full bar
     assert "by day · last 5 days" in "\n".join(lines)
 
@@ -279,6 +279,59 @@ def test_a_window_of_a_day_or_less_has_no_per_day_figure(store):
     build(store)
     assert st.compute(store, NOW, 86400).per_day is None
     assert "a day" not in render(store, ui.View(now=NOW, period=86400, mode="stats"), 160)
+
+
+def test_the_average_a_day_covers_only_the_days_the_transcripts_do(store):
+    # Transcripts that begin after the period does (a new install, or older ones deleted): averaged over
+    # 30 days, 10 days of them would read 3 times too low. Over the days they cover, from the first one's start.
+    t = Transcript()
+    t.turn(at(19, 16), write=40_000)  # the first record: Sat 19 Sep, 16:00
+    t.turn(at(29, 10), read=40_002, write=1_000)
+    t.into(store)
+    s = st.compute(store, NOW, 30 * 86400)
+    days = (NOW - datetime(2026, 9, 19).timestamp()) / 86400
+    assert s.since == "2026-09-19" and s.per_day == pytest.approx(s.spend / days)
+    assert f"${s.spend / days:,.2f} a day since Sat 19 Sep" in render(store, ui.View(now=NOW, mode="stats"), 160)
+    # History that reaches back past the period (an older record, or an older transcript on disk): all of it.
+    store.history_from = datetime(2026, 8, 20).timestamp()
+    s = st._compute(store, NOW, 30 * 86400)
+    assert s.since is None and s.per_day == pytest.approx(s.spend / 30)
+    # A day or less of data has no average a day: it would be an extrapolation.
+    only_today = Store(PRICES)
+    today = Transcript()
+    today.turn(at(29, 9), write=40_000)
+    today.into(only_today)
+    assert st.compute(only_today, NOW, 30 * 86400).per_day is None
+
+
+def test_the_transcripts_share_of_what_claude_code_counted(store):
+    # For the sessions that exited, Claude Code's own total counts the requests the transcripts never log.
+    a, b, c = Transcript(session="aaaa"), Transcript(session="bbbb"), Transcript(session="cccc")
+    a.turn(at(29, 10), write=40_000)
+    a.record("cost-state", totalCostUSD=0.40)
+    b.turn(at(29, 11), write=10_000)
+    b.record("cost-state", totalCostUSD=0.10)
+    c.turn(at(29, 12), write=10_000)  # still open: no total of Claude Code's to compare with
+    for t in (a, b, c):
+        t.into(store)
+    logged = cost(OPUS, w1h=40_000) + cost(OPUS, w1h=10_000)
+    s = st.compute(store, NOW, WINDOW)
+    assert s.logged == pytest.approx(logged / 0.50)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 160)
+    assert f"transcripts hold {logged / 0.50:.0%} of what Claude Code counted" in text
+    none_exited = Store(PRICES)
+    c.turn(at(29, 13), write=10_000)
+    c.into(none_exited)
+    assert st.compute(none_exited, NOW, WINDOW).logged is None
+
+
+def test_every_share_column_says_what_it_is_a_share_of(store):
+    build(store)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 160)
+    kinds = next(line for line in text.splitlines() if "KIND" in line)
+    assert "% TOKENS" in kinds and "% SPEND" in kinds  # the tokens' share and the spend's, not two SHAREs
+    assert text.count("% REQS") == 2  # by model and by context size: shares of the requests, not counts
+    assert "SHARE" not in text and "REQUESTS" not in text
 
 
 def test_kinds_with_no_tokens_are_left_out(store):

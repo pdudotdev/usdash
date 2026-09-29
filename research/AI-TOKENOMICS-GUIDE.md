@@ -299,7 +299,7 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 
 Clients make requests you don't type, and not all of them appear in session logs:
 - **Claude Code:** session titles, prompt suggestions (mostly cache reads), the recap it writes while you're away, `/compact`'s summarising request, WebSearch's sub-requests, background summaries for `--resume`.
-- **How much, in real sessions:** the transcripts held 41–100% of what Claude Code itself billed (a median of 89%), least in very short sessions and in ones that ran many subagents. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
+- **How much, in real sessions:** the transcripts held 41–100% of what Claude Code itself billed (a median of 89%; 84% weighted by cost), least in very short sessions and in ones that ran many subagents. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
 - **The FinOps rule:** reconcile against the provider's usage report, the client's own total (`/usage`, `cost-state`), or an OpenTelemetry export, not only against your logs.
 
 ---
@@ -340,7 +340,7 @@ Then run the equation, and **check it against a small pilot's real usage before 
 | **Cost per unit** | total ÷ units delivered | The only number the business sees |
 | **Unlogged share** | 1 − logged cost ÷ billed cost | How much your own logs miss |
 
-For your own Claude Code use, usdash's Stats view shows the first four: the share read from cache, cache misses by cause, spend by kind of token, and what input costs on average.
+For your own Claude Code use, usdash's Stats view shows the first four: the share read from cache, cache misses by cause, spend by kind of token, and what input costs on average. It also shows the logged share, as how much of Claude Code's own totals its transcripts hold.
 
 ## 21. Governance levers
 
@@ -350,7 +350,7 @@ For your own Claude Code use, usdash's Stats view shows the first four: the shar
 | **Structure** | Stable content first in the prompt; breakpoints on the last stable block; tool outputs kept small; stable tool sets |
 | **Routing** | The cheapest model that meets the quality bar, measured per task; subagents on small models for side work |
 | **Time** | The 1-hour cache for work with pauses; batch for anything that can wait a day; pre-warming with `max_tokens: 0` when first-response latency matters |
-| **Visibility** | Contracted rates in the reporting (Claude Code's `modelPricing`); OpenTelemetry per user and session; reconciliation against invoices |
+| **Visibility** | Contracted rates in the reporting (Claude Code's `modelPricing`); OpenTelemetry per user and session; reconciliation against invoices; local logs kept long enough for the baseline (Claude Code deletes transcripts after 30 days by default: `cleanupPeriodDays`) |
 | **Subscription vs API** | A subscription bills plan usage, not tokens; list-price estimates are for comparison. Going past the plan onto usage credits also drops Claude Code's main conversation to the 5-minute cache |
 
 ---
@@ -439,7 +439,7 @@ What building and reviewing usdash measured in real Claude Code transcripts, com
 | And a cold one? | The tool list (13,790), the rest (37,628) at the input price |
 | How big is the summary? | Its output: 1,065–3,804 tokens. Its `postTokens`: 3.2–6k for 54–65k conversations, 13,984 at 450k, 16,088 at 972k |
 | How big is the conversation right after `/compact`? | 33,335 / 24,987 / 20,315 tokens in three sessions. Tool list + `postTokens` was 13–32% short; first prompt + `postTokens` came within 6% |
-| How much do the transcripts miss? | They held 41–100% of Claude Code's own totals in 34 exited sessions (quartiles 72%, 89%, 99%), least in very short sessions and in ones that ran many subagents; 28% in a session with four web searches |
+| How much do the transcripts miss? | They held 41–100% of Claude Code's own totals in 34 exited sessions (quartiles 72%, 89%, 99%), least in very short sessions and in ones that ran many subagents; 28% in a session with four web searches. Weighted by cost, 84% ($278.56 of $332.19): 84% on Opus 5.5, 71% on Sonnet 5, 23% on Haiku 4.5, which Claude Code uses for requests of its own. Where Claude Code counted the same tokens the transcripts show, its cost equalled usdash's to the micro-dollar (13 of 13) |
 | A real model switch? | Moving a warm 55.9k conversation from Opus 5.5 to Sonnet 5 cost $0.143, against about $0.02 to stay |
 
 # Appendix C: Glossary

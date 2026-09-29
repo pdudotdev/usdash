@@ -364,6 +364,10 @@ class Store:
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # requests with no known price, by model ("Opus 5.5 fast": its fast prices)
         self.revision = 0  # bumped on every change to any request, prompt or session folder: the stats' cache
+        # How far back the transcripts go: the earliest record taken in, or an older transcript's
+        # last write (the app adds that from the files it left alone). The stats' average a day covers
+        # only these days.
+        self.history_from: float | None = None
         self._paid: dict[tuple, dict | None] = {}  # (family, speed, geo) -> as_paid(): one dict each, shared
 
     def session(self, session_id: str) -> Session:
@@ -395,6 +399,8 @@ class Store:
                     if attr in ("cwd", "entrypoint"):
                         self.revision += 1  # the stats group sessions by folder
         if record.when is not None:
+            if self.history_from is None or record.when < self.history_from:
+                self.history_from = record.when
             session.heard = max(session.heard or 0, record.when)
             if record.subagent:
                 session.subagent_heard = max(session.subagent_heard or 0, record.when)

@@ -492,8 +492,9 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
     """The summary's figures as parts joined by ' · ', a new line where the next part wouldn't fit."""
     cached = stats.cached
     first = [Text.assemble(("SPEND ", "bold"), (money(stats.spend), "bold green"))]
-    if stats.per_day is not None:
-        first.append(Text(f"{money(stats.per_day)} a day"))
+    if stats.per_day is not None:  # over the days the transcripts cover: since when, if they begin after the period
+        since = f" since {day_label(stats.since, day_of(stats.now))}" if stats.since else ""
+        first.append(Text(f"{money(stats.per_day)} a day{since}"))
     if stats.recent is not None:
         first.append(Text(f"last 5 hours {money(stats.recent)}"))
     if cached is not None:
@@ -508,6 +509,8 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
     second = [Text(f"{work} in {plural(stats.sessions, 'session')}")]
     if stats.subagents >= 0.005:
         second.append(Text(f"subagents {share(stats.subagents, stats.spend)} of spend"))
+    if stats.logged is not None:  # exited sessions: how much of Claude Code's own total their transcripts held
+        second.append(Text(f"transcripts hold {percent(stats.logged)} of what Claude Code counted"))
     lines = []
     for parts in (first, second):
         line = Text()
@@ -541,7 +544,7 @@ def by_day(stats: Stats, today: str) -> Panel:
 
 
 def by_model(stats: Stats) -> Panel:
-    table = stats_table(("MODEL", False), ("REQUESTS", True), ("SPEND", True), ("SHARE", True))
+    table = stats_table(("MODEL", False), ("% REQS", True), ("SPEND", True), ("% SPEND", True))
     for row in stats.models:
         table.add_row(model_text(row.model, row.effort, "fast" if row.fast else None),
                       share(row.requests, stats.requests), money(row.spend), share(row.spend, stats.spend))
@@ -549,7 +552,7 @@ def by_model(stats: Stats) -> Panel:
 
 
 def money_kinds(stats: Stats) -> Panel:
-    table = stats_table(("KIND", False), ("TOKENS", True), ("SHARE", True), ("SPEND", True), ("SHARE", True))
+    table = stats_table(("KIND", False), ("TOKENS", True), ("% TOKENS", True), ("SPEND", True), ("% SPEND", True))
     tokens = sum(kind.tokens for kind in stats.kinds)
     for kind in stats.kinds:
         table.add_row(kind.name, _tokens(kind.tokens), share(kind.tokens, tokens), money(kind.spend),
@@ -573,7 +576,7 @@ def cache_misses(stats: Stats, period: str) -> Panel:
 
 
 def by_context(stats: Stats) -> Panel:
-    table = stats_table(("CONTEXT", False), ("REQUESTS", True), ("SPEND", True), ("SHARE", True))
+    table = stats_table(("CONTEXT", False), ("% REQS", True), ("SPEND", True), ("% SPEND", True))
     for band in stats.bands:
         table.add_row(band.label, share(band.requests, stats.requests), money(band.spend),
                       share(band.spend, stats.spend))
@@ -582,7 +585,7 @@ def by_context(stats: Stats) -> Panel:
 
 def top_sessions(stats: Stats) -> Panel:
     table = stats_table(("ID", False), ("SESSION", False, True), ("PROJECT", False, True), ("SPEND", True),
-                        ("SHARE", True), ("PEAK", True))
+                        ("% SPEND", True), ("PEAK", True))
     for row in stats.top:
         session = row.session
         table.add_row(session_tag(session), cut(session.name, 24, "bold"), cut(session.project, 16, "dim"),
@@ -595,7 +598,7 @@ def top_sessions(stats: Stats) -> Panel:
 
 
 def by_project(stats: Stats) -> Panel:
-    table = stats_table(("PROJECT", False, True), ("SESSIONS", True), ("SPEND", True), ("SHARE", True))
+    table = stats_table(("PROJECT", False, True), ("SESSIONS", True), ("SPEND", True), ("% SPEND", True))
     for project in stats.projects:
         name = cut(project.name, 24, "dim" if project.name == "others" else "")
         table.add_row(name, f"{project.sessions:,}", money(project.spend), share(project.spend, stats.spend))

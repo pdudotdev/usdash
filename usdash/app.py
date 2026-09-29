@@ -156,6 +156,10 @@ class App:
         changed = False
         for batch in self.tailer.batches():  # a session at a time: its records are let go before the next
             changed = bool(self.store.add_all(batch)) or changed
+        oldest, history = self.tailer.oldest, self.store.history_from
+        if oldest is not None and (history is None or oldest < history):
+            self.store.history_from = oldest  # a transcript too old to read: the history reaches back past it
+            self.store.revision += 1  # the stats' average a day changes with it
         now = self.clock()
         if now - self.desktop_read >= DESKTOP_SECONDS:
             self.store.apply_desktop(desktop_sessions())
