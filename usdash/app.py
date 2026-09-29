@@ -1,7 +1,6 @@
 """usdash: a live terminal dashboard of your own Claude Code costs and prompt caches.
 
     usdash                  # sessions of the last 5 days, stats of the last 30, then live
-    usdash --since 60d      # load more history first
     usdash --window 8h      # show sessions active this recently (default 5d)
     usdash --period 7d      # what the stats cover (default 30d)
     usdash --stats          # start in the Stats view
@@ -132,13 +131,12 @@ def start_of_today(now: float) -> float:
     return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
-def history_start(now: float, since: int | None, window: int, period: int = 0) -> float:
-    """Where to start reading: --since ago if given, else midnight, but never
-    later than the start of the window or of the stats period, so every
-    session the window lists (some maybe still warm) and every request the
-    stats count is loaded."""
-    start = now - since if since else start_of_today(now)
-    return min(start, now - window, now - period)
+def history_start(now: float, window: int, period: int = 0) -> float:
+    """Where to start reading: the start of the window or of the stats period,
+    whichever is earlier, so every session the window lists (some maybe still
+    warm) and every request the stats count is loaded; and midnight at the
+    latest, for today's spend."""
+    return min(start_of_today(now), now - window, now - period)
 
 
 class App:
@@ -179,8 +177,6 @@ def version() -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
-    parser.add_argument("--since", type=duration,
-                        help="history to load first, e.g. 60d (default: the longer of --period and --window)")
     parser.add_argument("--window", type=duration, default=DEFAULT_WINDOW,
                         help="show sessions active this recently, e.g. 3h or 2d (default: 5d)")
     parser.add_argument("--period", type=duration, default=DEFAULT_PERIOD,
@@ -195,7 +191,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     now = time.time()
-    since = history_start(now, args.since, args.window, args.period)
+    since = history_start(now, args.window, args.period)
     projects = (args.projects or default_projects_dir()).expanduser()
     app = App(projects, since, args.window, known=knowledge(args.offline), period=args.period)
     if args.stats:
