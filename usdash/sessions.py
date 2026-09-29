@@ -26,6 +26,7 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
 SNIPPET = 60
+SLASH_COMMAND = re.compile(r"/[\w:.-]+(?:\s|$)")
 # A session still at work goes this long without a new record, its subagents' included,
 # at most: longer, and it was stopped mid-tool (killed, or its window closed).
 WORKING_QUIET = 30 * 60
@@ -171,7 +172,9 @@ def typed(record: Record) -> tuple[str, bool] | None:
     if not raw:
         return None
     text = " ".join((command_text(raw) or "").split())
-    return (text, command_name(raw) is not None) if text else None
+    # Claude Code takes anything typed as `/name …` for a command (an unknown one isn't sent), and
+    # logs some as typed, next to their tagged record.
+    return (text, command_name(raw) is not None or bool(SLASH_COMMAND.match(text))) if text else None
 
 
 def at_work_after(record: Record) -> bool | None:

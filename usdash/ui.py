@@ -463,8 +463,9 @@ def stats_panel(title: str, body: RenderableType) -> Panel:
 def summary_lines(stats: Stats, width: int) -> list[Text]:
     """The summary's figures as parts joined by ' · ', a new line where the next part wouldn't fit."""
     cached = stats.cached
-    first = [Text.assemble(("SPEND ", "bold"), (money(stats.spend), "bold green")),
-             Text(f"{money(stats.per_day)} a day")]
+    first = [Text.assemble(("SPEND ", "bold"), (money(stats.spend), "bold green"))]
+    if stats.per_day is not None:
+        first.append(Text(f"{money(stats.per_day)} a day"))
     if stats.recent is not None:
         first.append(Text(f"last 5 hours {money(stats.recent)}"))
     if cached is not None:

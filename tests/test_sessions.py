@@ -590,6 +590,18 @@ def test_what_was_typed_is_kept_once_with_its_time(store):
         (T0, "fix the parser", False), (T0 + 60, "/compact", True)]
 
 
+def test_a_command_logged_as_typed_is_still_a_command(store):
+    # Claude Code 2.1.283 logs `/compact` twice: as typed, and as its tagged command record.
+    t = Transcript()
+    t.turn(T0, text="write a story")
+    t.user("/compact", T0 + 60)
+    t.user("<command-name>/compact</command-name>\n<command-message>compact</command-message>", T0 + 60.004)
+    t.user("/tmp/build is full, why?", T0 + 90)  # a path, not a command
+    t.into(store)
+    assert [(text, command) for _, text, command in sorted(store.sessions["sess-1"].prompts.values())] == [
+        ("write a story", False), ("/compact", True), ("/compact", True), ("/tmp/build is full, why?", False)]
+
+
 def test_each_request_keeps_the_prices_it_paid(store):
     t = Transcript()
     t.turn(T0, write=10_000, speed="fast")

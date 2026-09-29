@@ -230,6 +230,19 @@ def test_a_short_window_has_no_last_5_hours(store):
     assert st.compute(store, NOW, 3 * 3600).recent is None
 
 
+def test_a_window_of_a_day_or_less_has_no_per_day_figure(store):
+    build(store)
+    assert st.compute(store, NOW, 86400).per_day is None
+    assert "a day" not in render(store, ui.View(now=NOW, window=86400, mode="stats"), 160)
+
+
+def test_kinds_with_no_tokens_are_left_out(store):
+    t = Transcript()
+    t.turn(at(29, 12), write=10_000, ttl="5m")  # no 1-hour writes, no reads
+    t.into(store)
+    assert [k.name for k in st.compute(store, NOW, WINDOW).kinds] == ["cache writes (5m)", "uncached input", "output"]
+
+
 def test_more_than_5_projects_end_with_others(store):
     for i in range(7):
         t = Transcript(session=f"p{i}", cwd=f"/home/user/proj{i}")

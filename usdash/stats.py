@@ -122,8 +122,9 @@ class Stats:
     turns: list[Turn] = field(default_factory=list)
 
     @property
-    def per_day(self) -> float:
-        return self.spend / max(1.0, self.window / 86400)
+    def per_day(self) -> float | None:
+        """SPEND a day, over a window longer than a day."""
+        return self.spend / (self.window / 86400) if self.window > 86400 else None
 
     @property
     def cached(self) -> float | None:
@@ -225,7 +226,7 @@ def _compute(store: Store, now: float, window: int) -> Stats:
 
     stats.sessions = len(by_session)
     stats.days = fold_days(sorted(days.values(), key=lambda d: d.day))
-    stats.kinds = list(kinds.values())
+    stats.kinds = [kind for kind in kinds.values() if kind.tokens]
     stats.models = sorted(models.values(), key=lambda m: -m.spend)
     stats.causes = sorted(causes.values(), key=lambda c: -c.extra)
     stats.bands = [b for b in bands if b.requests]
