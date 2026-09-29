@@ -81,8 +81,8 @@ class Transcript:
     def reply(self, at: float, model: str = "claude-opus-5-5", effort: str | None = "high", read: int = 0,
               write: int = 0, fresh: int = 2, out: int = 100, ttl: str = "1h", blocks: int = 1,
               subagent: str | None = None, request_id: str | None = "auto", message_id: str | None = None,
-              version: str | None = None, speed: str | None = None, tools: dict | None = None,
-              stop: str | None = None, content: list | None = None, **extra) -> str:
+              version: str | None = None, speed: str | None = None, geo: str | None = None,
+              tools: dict | None = None, stop: str | None = None, content: list | None = None, **extra) -> str:
         """One API reply, written as `blocks` records sharing a message id,
         each a second apart (streamed content blocks)."""
         message_id = message_id or f"msg_{next(self.ids)}"
@@ -92,6 +92,8 @@ class Transcript:
                  "output_tokens": out, "cache_creation": split}
         if speed:
             usage["speed"] = speed
+        if geo:
+            usage["inference_geo"] = geo
         if tools:
             usage["server_tool_use"] = tools
         for block in range(blocks):

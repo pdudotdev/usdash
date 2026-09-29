@@ -1,9 +1,8 @@
-"""What usdash knows about Claude models besides their prices: which ones to
-compare, where an effort change keeps the cache, and how their tokenizers
-compare. From models.yaml, which ships with usdash; the current lineup comes
-from Anthropic's models overview when it can be read (docs.py).
+"""What usdash knows about Claude models besides their prices: where an effort
+change keeps the cache, and how their tokenizers compare. From models.yaml,
+which ships with usdash. Both only label why a cache missed (sessions.py).
 """
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -15,7 +14,6 @@ MODELS = Path(__file__).with_name("models.yaml")
 
 @dataclass(frozen=True)
 class Facts:
-    lineup: list[str]  # the current models, most capable first
     effort_keeps: frozenset[str]  # where Claude Code keeps the cache across an effort change
     old_tokenizer_before: tuple[int, int]  # models older than this version use the old tokenizer
     ratio: float  # the old tokenizer's tokens for one of the current tokenizer's
@@ -36,12 +34,9 @@ class Facts:
             return tokens
         return tokens * self.ratio if old_target else tokens / self.ratio
 
-    def with_lineup(self, lineup: list[str] | None) -> "Facts":
-        return replace(self, lineup=lineup) if lineup else self
-
 
 def load_facts(path: str | Path = MODELS) -> Facts:
     data = yaml.safe_load(Path(path).read_text())
     major, minor = str(data["old_tokenizer_before"]).split(".")
-    return Facts(list(data["lineup"]), frozenset(data["effort_keeps_cache"]), (int(major), int(minor)),
+    return Facts(frozenset(data["effort_keeps_cache"]), (int(major), int(minor)),
                  float(data["old_tokenizer_ratio"]), str(data.get("verified", "")))

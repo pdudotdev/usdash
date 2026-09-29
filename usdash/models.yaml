@@ -1,9 +1,5 @@
 # What usdash knows about Claude models besides their prices (usdash/facts.py).
-verified: 2026-09-27
-
-# The current models, most capable first: the ones the switch advice compares.
-# Read at start from the columns of the models overview's "Compare models" table.
-lineup: [claude-fable-5-1, claude-opus-5-5, claude-sonnet-5, claude-haiku-4-5]
+verified: 2026-09-29
 
 # Where Claude Code keeps the cache across an effort change (it sends the change
 # inside the conversation instead of re-writing it). Checked in transcripts:

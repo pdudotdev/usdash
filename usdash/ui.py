@@ -1,28 +1,28 @@
-"""The screen: a header, then either the sessions (the default) or every request.
+"""The screen: a header, then either the sessions (the default) or the stats (`s`).
 
 Sessions from the last 5 days, newest first, in three panes, in the order
 you'd come back to them: live (cache warm), expired (still open), exited
-(resumed with `claude --resume`). A live session shows what you last typed and
-what its next message costs on each model; the others, what coming back costs.
-Finished script runs fold into one row per folder. `r` swaps in the
-request feed (rendering copied in spirit from llm-trunk's scripts/dashboard.py:
-a NOTE column that runs to the end of the line, the same scrolling keys).
+(resumed with `claude --resume`). Under each, what its next message re-sends
+and what that costs: read back now, or written again once the cache expires.
+A live session also shows what you last typed. Finished script runs fold into
+one row per folder.
 """
-import itertools
+import io
 import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
 
-from rich.console import Group
+from rich.console import Console, Group, RenderableType
 from rich.layout import Layout
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
-from .advice import Advice, advise, clock, money, plural, resends, tokens_text
-from .engine import cache_clock, comeback, context
-from .models import model_key, pretty_model
-from .sessions import Request, Session, Store, day_of, snippet
+from .engine import cache_clock, context, resend_costs
+from .fmt import clock, money, plural, tokens_text
+from .models import pretty_model
+from .sessions import Session, Store, day_of, snippet
+from .stats import EARLIER, Stats, compute, day_label
 
 MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
 # The VS Code extension also runs in its forks (Cursor, Windsurf, …): "IDE" is true for all of them.
@@ -31,6 +31,7 @@ SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "
 DEFAULT_WINDOW = 5 * 86400  # sessions active this recently are listed
 PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
+EXPIRING = 600  # seconds: the countdown turns yellow for the last of these (at most half the lifetime)
 
 
 @dataclass
@@ -43,15 +44,13 @@ class View:
     prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
     docs_changed: list[str] = field(default_factory=list)  # Anthropic's pages that no longer read as expected
     unknown_types: int = 0
-    mode: str = "sessions"  # or "requests"
+    mode: str = "sessions"  # or "stats"
     session_scroll: int = 0  # sessions hidden above the view
     session_page: int = 1  # sessions shown at the last render
     session_last: int = 0  # the furthest the sessions could scroll at the last render
-    scroll: int = 0  # feed rows hidden above the view (newest first)
-    top: Request | None = None  # the request at the top of the view, while scrolled back
-    page: int = 1  # feed rows shown at the last render
-    lines: int = 1  # lines the feed had for its rows and day separators at the last render
-    unseen: int = 0
+    stats_scroll: int = 0  # rows of stats panels hidden above the view
+    stats_page: int = 1  # rows shown at the last render
+    stats_last: int = 0  # the furthest the stats could scroll at the last render
 
 
 # --- Small pieces ----------------------------------------------------------------
@@ -143,7 +142,7 @@ def top_lines(store: Store, view: View) -> list[Text]:
         line.append(f"  ·  {hit:.0%} of input read from cache", style="green" if hit >= 0.9 else "yellow")
     lines = [line]
     if rewrites:
-        # What requests paid to write the conversation again instead of reading it back (the feed's ⟳ rows):
+        # What requests paid to write the conversation again instead of reading it back (Stats has them by cause):
         # a line of its own, the biggest cause first, so a long list of causes cuts only the smallest.
         total = sum(rewrites.values())
         parts = ", ".join(f"{reason} {_money(cost)}" for reason, cost in sorted(rewrites.items(), key=lambda i: -i[1]))
@@ -171,8 +170,8 @@ def top_lines(store: Store, view: View) -> list[Text]:
     return [*lines, detail, caveat]
 
 
-def header(lines: list[Text]) -> Panel:
-    return Panel(Group(*lines), title=Text("💲 usdash · live", style="bold"), title_align="left")
+def header(lines: list[Text], mode: str = "sessions") -> Panel:
+    return Panel(Group(*lines), title=Text(f"💲 usdash · {mode}", style="bold"), title_align="left")
 
 
 # --- Tables ------------------------------------------------------------------------
@@ -238,15 +237,21 @@ class Entry:
     sessions: int = 1  # a folded row of script runs stands for several
 
 
+def expiring(left: int, ttl: int) -> bool:
+    """The countdown's last stretch: 10 minutes of a 1-hour cache, half of a 5-minute one."""
+    return left <= min(EXPIRING, ttl // 2)
+
+
 def cache_cell(session: Session, view: View) -> Text:
-    warm, left, _ = cache_clock(session, view.now)
+    warm, left, ttl = cache_clock(session, view.now)
     age = age_text(view.now - (session.last_activity or view.now))
+    style = "yellow" if expiring(left, ttl) else "green"
     if session.ended:
         if warm:  # its cache outlives it: resuming reads it back until it runs out
-            return Text.assemble(("exited · ", "dim"), (f"● {clock(left)}", "green"))
+            return Text.assemble(("exited · ", "dim"), (f"● {clock(left)}", style))
         return Text(f"exited · {age}", style="dim")
     if warm:
-        return Text(f"● {clock(left)}", style="green")
+        return Text(f"● {clock(left)}", style=style)
     if session.working(view.now):  # its next request will re-write it all
         return Text.assemble(("○ expired · ", "red"), ("working", "yellow"))
     if session.subagent_running(view.now):  # the same, once the subagent reports back
@@ -260,8 +265,8 @@ def today_cell(cost: float) -> Text:
 
 def session_cells(store: Store, session: Session, view: View) -> list[Text]:
     name = Text(snippet(session.name, 26) or "", style="bold")
-    ctx = context(store, session)
-    size = Text(("" if ctx is None or ctx.exact else "≈") + _tokens(ctx.tokens if ctx else None))
+    tokens = context(session)
+    size = Text("compacted", style="dim") if tokens is None and session.main.compacted else Text(_tokens(tokens))
     return [session_tag(session), name, Text(snippet(session.project, 18) or "", style="dim"),
             Text(app_name(session), style="dim"), model_text(session.model, session.effort, session.main.speed),
             cache_cell(session, view), size,
@@ -275,46 +280,31 @@ def prompt_text(session: Session, view: View) -> Text:
     return line
 
 
-def prices_text(verb: str, ctx, prices: list[tuple[str, float, bool]], own: str | None,
-                cached: bool = False, best: str | None = None) -> Text:
-    """'next message re-sends 632k tokens: $12.63 on Fable 5.1, $0.13 on Opus
-    5.5 (cached) ✅, …': the same line in every pane, the
-    session's own model in bold, ✅ on `best`."""
-    line = Text(f"{verb} {resends(ctx)}")
-    for i, (model, cost, exact) in enumerate(prices):
-        mine = model_key(model) == model_key(own)
-        line.append(": " if i == 0 else ", ")
-        line.append(f"{'' if exact else '≈'}{_money(cost)} on ")
-        line.append(pretty_model(model), style=" ".join(filter(None, [model_style(model), "bold" if mine else ""])))
-        if mine and cached:
-            line.append(" (cached)")
-        if model == best:
-            line.append(" ✅")
+def resend_line(store: Store, session: Session, view: View) -> Text | None:
+    """'next message re-sends 182k tokens: $0.04 now · up to $1.46 once the
+    cache expires': the same shape in every pane (engine.resend_costs)."""
+    if session.main.compacted:
+        return Text("compacted: the next message measures the new size", style="dim")
+    tokens = context(session)
+    if tokens is None:
+        return None
+    warm, left, ttl = cache_clock(session, view.now)
+    verb = "resuming" if session.ended else "next message" if warm else "continuing"
+    line = Text(f"{verb} re-sends {_tokens(tokens)} tokens")
+    costs = resend_costs(store, session, view.now)
+    if costs is None:
+        return line  # no known price
+    now, up_to = costs
+    line.append(": ")
+    if now is not None:
+        line.append(_money(now), style="green")
+        line.append(" now · up to ")
+        line.append(_money(up_to), style="yellow" if expiring(left, ttl) else "")
+        line.append(" once the cache expires")
+    else:
+        line.append("up to ")
+        line.append(_money(up_to))
     return line
-
-
-def live_lines(session: Session, view: View, advice: Advice) -> list[Text]:
-    """Under a live session: your last prompt, the ⚡ warning if it applies,
-    and what the next message costs on each model."""
-    lines = [prompt_text(session, view)]
-    if advice.warning:
-        lines.append(Text.assemble("⚡ ", (advice.warning, "bold")))
-    if advice.prices:
-        lines.append(prices_text("next message", advice.ctx, advice.prices, session.model, cached=True,
-                                 best=advice.cheapest))
-    return lines
-
-
-def comeback_lines(store: Store, session: Session, view: View) -> list[Text]:
-    """Under an expired or exited session: what coming back to it costs on each
-    model (≈: engine.comeback), its own model read back while an exited one's cache lasts."""
-    found = comeback(store, session, view.now)
-    if found is None:
-        return []
-    ctx, costs = found
-    verb = "resuming" if session.ended else "continuing"
-    cached = cache_clock(session, view.now)[0]
-    return [prices_text(verb, ctx, [(m, cost, False) for m, cost in costs], session.model, cached=cached)]
 
 
 def tree(lines: list[Text]) -> list[Text]:
@@ -340,15 +330,16 @@ def session_entries(store: Store, view: View) -> list[Entry]:
     panes: dict[str, list[tuple[float, Entry]]] = {pane: [] for pane in PANES}
     runs = defaultdict(list)
     for session in visible_sessions(store, view):
-        advice = advise(store, session, view.now)
         cells, when = session_cells(store, session, view), session.last_activity or 0
-        if advice is not None:
-            panes["live"].append((when, Entry("live", cells, tree(live_lines(session, view, advice)))))
+        resend = resend_line(store, session, view)
+        if not session.ended and cache_clock(session, view.now)[0]:
+            below = [prompt_text(session, view), *([resend] if resend else [])]
+            panes["live"].append((when, Entry("live", cells, tree(below))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
             pane = "exited" if session.ended else "expired"
-            panes[pane].append((when, Entry(pane, cells, tree(comeback_lines(store, session, view)))))
+            panes[pane].append((when, Entry(pane, cells, tree([resend] if resend else []))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     panes["exited"].sort(key=lambda item: -item[0])
     return [entry for pane in PANES for _, entry in panes[pane]]
@@ -391,7 +382,7 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     (a live one's lines never split); the columns line up across all of them."""
     window = duration_text(view.window)
     entries = session_entries(store, view)
-    keys = Text("↑↓/wheel/j/k: scroll · r: every request · q: quit", style="dim")
+    keys = Text("↑↓/wheel/j/k: scroll · s: stats · q: quit", style="dim")
     if not entries:
         return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"), subtitle=keys,
                      title=Text(f"sessions · last {window}", style="bold"), title_align="left", subtitle_align="right")
@@ -428,183 +419,257 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     return layout
 
 
-# --- Feed --------------------------------------------------------------------------
+# --- Stats -------------------------------------------------------------------------
 
-FEED_COLUMNS = (("TIME", False), ("ID", False), ("SESSION", False), ("MODEL", False), ("PROMPT", True),
-                ("CACHED", True), ("OUT", True), ("COST", True))
-
-
-def feed_row(store: Store, request: Request) -> tuple[list[Text], Text | None]:
-    """(a cell for every column, the NOTE that runs on to the end of the line)."""
-    session = store.sessions[request.session]
-    prompt = request.prompt
-    cached = request.usage.get("read", 0) / prompt if prompt else 0
-    cells = [
-        Text(datetime.fromtimestamp(request.start).strftime("%H:%M:%S"), style="dim"),  # the feed's order
-        session_tag(session),
-        Text(snippet(session.name, 24) or "", style=session_style(session.id)),
-        model_text(request.model, request.effort, request.speed),
-        Text(_tokens(prompt)),
-        Text(f"{cached:.0%}", style="green" if cached >= 0.8 else "yellow" if cached >= 0.3 else "red"),
-        Text(_tokens(request.usage.get("output", 0)), style="dim"),
-        Text(_money(request.cost)),
-    ]
-    note = Text()
-    if request.subagent:
-        note.append("🤖 subagent ", style="dim")
-    if searches := request.usage.get("searches", 0):
-        note.append(f"🔍 {plural(searches, 'web search', 'web searches')} (+{_money(searches * store.web_search)}) ",
-                    style="dim")
-    if searches := sum(request.tool_searches.values()):  # Claude Code's WebSearch tool: in requests not logged
-        note.append(f"🔍 {plural(searches, 'web search', 'web searches')} (cost not logged) ", style="dim")
-    if request.reason:
-        note.append(f"⟳ re-wrote {_tokens(request.rewritten)}: {request.reason} (+{_money(request.rewrite_cost)})",
-                    style="bold red")
-    return cells, note if note.plain else None
+TWO_COLUMNS = 160  # from this terminal width, the stats panels go two by two
+BAR = 16  # cells in a day's spend bar
+EIGHTHS = " ▏▎▍▌▋▊▉"
+_measure = Console(file=io.StringIO(), width=TWO_COLUMNS, color_system=None, legacy_windows=False)
 
 
-def feed_day(request: Request) -> str:
-    """The day a feed row's TIME is on."""
-    return day_of(request.start)
+def share(part: float, whole: float) -> str:
+    """'43%'; a share too small to round to 1% but not zero, '<1%'."""
+    if not whole:
+        return "—"
+    value = part / whole
+    return "<1%" if 0 < value < 0.005 else f"{value:.0%}"
 
 
-def day_line(day: str, today: str) -> Text:
-    """'── Sun 27 Sep ───…': above the first row of each day before today (TIME has no date)."""
-    when = datetime.strptime(day, "%Y-%m-%d")
-    label = when.strftime("%a %d %b" if day[:4] == today[:4] else "%a %d %b %Y").replace(" 0", " ")
-    return Text(f"── {label} {'─' * 400}", style="dim", no_wrap=True, overflow="crop")
+def cached_text(value: float | None) -> Text:
+    if value is None:
+        return Text("—", style="dim")
+    return Text(f"{value:.0%}", style="green" if value >= 0.8 else "yellow" if value >= 0.3 else "red")
 
 
-def feed_fits(store: Store, view: View, start: int) -> int:
-    """How many feed rows from `start` fit in view.lines, with a day line before each
-    row on another day than the one above it (the first row's: today). The one
-    place that rule is counted; feed_lines draws it."""
-    used, shown, above = 0, 0, day_of(view.now)
-    for request in itertools.islice(store.feed, start, None):
-        day = feed_day(request)
-        need = 1 + (day != above)
-        if used + need > view.lines:
-            break
-        used, shown, above = used + need, shown + 1, day
-    return shown
+def bar(value: float, top: float) -> Text:
+    """`value` as a bar BAR cells long at `top`, in eighths of a cell."""
+    eighths = round(value / top * BAR * 8) if top > 0 else 0
+    return Text("█" * (eighths // 8) + (EIGHTHS[eighths % 8] if eighths % 8 else ""), style="cyan")
 
 
-def feed_lines(rows: list[tuple[list[Text], Text | None]], days: list[str], today: str,
-               above: str | None = None) -> list[Text]:
-    """The feed's rows in columns sized to what's shown; a row's NOTE runs on to the end of the line.
-    A day line goes above each row on another day than the one above it (the first row's: `above`,
-    today unless told otherwise)."""
-    names, widths = column_widths(FEED_COLUMNS, [cells for cells, _ in rows])
-    lines = header_lines(FEED_COLUMNS, names, widths, "NOTE" if any(note for _, note in rows) else None)
-    above = above or today
-    for (cells, note), day in zip(rows, days):
-        if day != above:
-            lines.append(day_line(day, today))
-        lines.append(grid_line(FEED_COLUMNS, widths, cells, note))
-        above = day
+def stats_table(*columns: tuple[str, bool]) -> Table:
+    """A table of the stats panels' shape: no lines, dim column names,
+    numbers to the right, nothing wraps (a long text is cut with …)."""
+    table = Table(box=None, padding=(0, 1), pad_edge=False, show_edge=False, header_style="dim", expand=False)
+    for name, right in columns:
+        table.add_column(name, justify="right" if right else "left", no_wrap=True, overflow="ellipsis")
+    return table
+
+
+def stats_panel(title: str, body: RenderableType) -> Panel:
+    return Panel(body, title=Text(title, style="bold"), title_align="left", padding=(0, 1))
+
+
+def summary_lines(stats: Stats, width: int) -> list[Text]:
+    """The summary's figures as parts joined by ' · ', a new line where the next part wouldn't fit."""
+    cached = stats.cached
+    first = [Text.assemble(("SPEND ", "bold"), (money(stats.spend), "bold green"))]
+    if stats.per_day is not None:
+        first.append(Text(f"{money(stats.per_day)} a day"))
+    if stats.recent is not None:
+        first.append(Text(f"last 5 hours {money(stats.recent)}"))
+    if cached is not None:
+        first.append(Text(f"{cached:.0%} read from cache", style="green" if cached >= 0.9 else "yellow"))
+    if stats.misses >= 0.005:
+        first.append(Text(f"cache misses {money(stats.misses)} ({share(stats.misses, stats.spend)})", style="red"))
+    else:
+        first.append(Text("no cache misses", style="green"))
+    work = plural(stats.requests, "request")
+    if stats.prompts:
+        work += f" from {plural(stats.prompts, 'prompt')} ({stats.requests / stats.prompts:.1f} each)"
+    second = [Text(f"{work} in {plural(stats.sessions, 'session')}")]
+    if stats.subagents >= 0.005:
+        second.append(Text(f"subagents {share(stats.subagents, stats.spend)} of spend"))
+    lines = []
+    for parts in (first, second):
+        line = Text()
+        for part in parts:
+            if line.plain and line.cell_len + 3 + part.cell_len > width:
+                lines.append(line)
+                line = Text()
+            if line.plain:
+                line.append(" · ", style="dim")
+            line.append_text(part)
+        lines.append(line)
     return lines
 
 
-def feed_panel(store: Store, view: View, rows: int) -> Panel:
-    view.lines = max(0, rows)
-    scroll_to(store, view, view.scroll)
-    fits = feed_fits(store, view, view.scroll)
-    view.page = max(1, fits) if view.lines else 0  # what a page key moves: with no room, nothing
-    # With room for one line only, the row goes in without its day line; with none, nothing does.
-    shown = list(itertools.islice(store.feed, view.scroll, view.scroll + view.page))
-    days = [feed_day(r) for r in shown]
-    lines = feed_lines([feed_row(store, request) for request in shown], days, day_of(view.now),
-                       above=days[0] if shown and not fits else None)
-    total = len(store.feed)
-    if view.scroll:
-        title = "requests · paused"
-        if shown:
-            title += f" · rows {view.scroll + 1}–{view.scroll + len(shown)} of {total}"
-        if view.unseen:
-            title += f" · {view.unseen} new above"
-        subtitle = Text("g: back to live", style="bold yellow")
-    else:
-        title = f"requests · {total}" if total > len(shown) else "requests"
-        subtitle = Text("↑↓/wheel/j/k: scroll · space/b: page · g/G: newest/oldest · r: sessions · q: quit",
-                        style="dim")
-    return Panel(Group(*lines), title=Text(title, style="bold"), subtitle=subtitle, title_align="left",
-                 subtitle_align="right")
+def by_day(stats: Stats, today: str) -> Panel:
+    table = stats_table(("DAY", False), ("SPEND", True), ("", False), ("REQS", True), ("CACHED", True),
+                        ("MISSES", True))
+    top = max((day.spend for day in stats.days), default=0.0)
+    for day in stats.days:
+        label = Text(day_label(day.day, today), style="dim" if day.day == EARLIER else "")
+        if not day.requests:
+            table.add_row(label, Text("—", style="dim"), Text(""), Text("0", style="dim"), cached_text(None),
+                          Text("—", style="dim"))
+            continue
+        misses = Text(money(day.misses), style="red") if day.misses >= 0.005 else Text("—", style="dim")
+        table.add_row(label, money(day.spend), bar(day.spend, top), f"{day.requests:,}", cached_text(day.cached),
+                      misses)
+    return stats_panel("by day", table)
+
+
+def by_model(stats: Stats) -> Panel:
+    table = stats_table(("MODEL", False), ("REQUESTS", True), ("SPEND", True), ("SHARE", True))
+    for row in stats.models:
+        table.add_row(model_text(row.model, row.effort, "fast" if row.fast else None),
+                      share(row.requests, stats.requests), money(row.spend), share(row.spend, stats.spend))
+    return stats_panel("by model", table)
+
+
+def money_kinds(stats: Stats) -> Panel:
+    table = stats_table(("KIND", False), ("TOKENS", True), ("SHARE", True), ("SPEND", True), ("SHARE", True))
+    tokens = sum(kind.tokens for kind in stats.kinds)
+    for kind in stats.kinds:
+        table.add_row(kind.name, _tokens(kind.tokens), share(kind.tokens, tokens), money(kind.spend),
+                      share(kind.spend, stats.spend))
+    if stats.searches:
+        table.add_row("web searches", f"{stats.searches:,}", "", money(stats.search_spend),
+                      share(stats.search_spend, stats.spend))
+    body: list[RenderableType] = [table]
+    if (price := stats.input_price) is not None:
+        body.append(Text(f"input averages {money(price)} per million tokens", style="dim"))
+    return stats_panel("where the money goes", Group(*body))
+
+
+def cache_misses(stats: Stats, window: str) -> Panel:
+    if not stats.causes:
+        return stats_panel("cache misses", Text(f"no cache misses in the last {window}", style="green"))
+    table = stats_table(("CAUSE", False), ("MISSES", True), ("RE-WRITTEN", True), ("EXTRA", True))
+    for cause in stats.causes:
+        table.add_row(cause.cause, f"{cause.misses:,}", _tokens(cause.rewritten), Text(money(cause.extra), style="red"))
+    return stats_panel(f"cache misses · {money(stats.misses)}", table)
+
+
+def by_context(stats: Stats) -> Panel:
+    table = stats_table(("CONTEXT", False), ("REQUESTS", True), ("SPEND", True), ("SHARE", True))
+    for band in stats.bands:
+        table.add_row(band.label, share(band.requests, stats.requests), money(band.spend),
+                      share(band.spend, stats.spend))
+    return stats_panel("by context size", table)
+
+
+def top_sessions(stats: Stats) -> Panel:
+    table = stats_table(("ID", False), ("SESSION", False), ("PROJECT", False), ("SPEND", True), ("SHARE", True),
+                        ("PEAK", True))
+    for row in stats.top:
+        session = row.session
+        table.add_row(session_tag(session), Text(snippet(session.name, 24) or "", style="bold"),
+                      Text(snippet(session.project, 16) or "", style="dim"), money(row.spend),
+                      share(row.spend, stats.spend), _tokens(row.peak) if row.peak else Text("—", style="dim"))
+    title = "top sessions"
+    if stats.sessions > len(stats.top):
+        title += f" · top {len(stats.top)} = {share(sum(r.spend for r in stats.top), stats.spend)} of spend"
+    return stats_panel(title, table)
+
+
+def by_project(stats: Stats) -> Panel:
+    table = stats_table(("PROJECT", False), ("SESSIONS", True), ("SPEND", True), ("SHARE", True))
+    for project in stats.projects:
+        name = Text(snippet(project.name, 24) or "", style="dim" if project.name == "others" else "")
+        table.add_row(name, f"{project.sessions:,}", money(project.spend), share(project.spend, stats.spend))
+    return stats_panel("by project", table)
+
+
+def costliest_prompts(stats: Stats) -> Panel:
+    table = stats_table(("ID", False), ("PROMPT", False), ("REQS", True), ("SPEND", True))
+    for turn in stats.turns:
+        table.add_row(session_tag(turn.session), Text(snippet(turn.text, 36) or "", style="italic"),
+                      f"{turn.requests:,}", money(turn.spend))
+    return stats_panel("costliest prompts", table)
+
+
+def height(renderable: RenderableType, width: int) -> int:
+    return len(_measure.render_lines(renderable, _measure.options.update(width=width), pad=False))
+
+
+def stats_rows(stats: Stats, view: View, width: int) -> list[tuple[RenderableType, int]]:
+    """The panels after the summary, in their rows (two by two from TWO_COLUMNS
+    wide), each row with its height in lines."""
+    window, today = duration_text(view.window), day_of(view.now)
+    panels = [by_day(stats, today), by_model(stats), money_kinds(stats), cache_misses(stats, window),
+              by_context(stats), top_sessions(stats), by_project(stats), costliest_prompts(stats)]
+    if width < TWO_COLUMNS:
+        return [(panel, height(panel, width)) for panel in panels]
+    half = (width - 1) // 2
+    rows = []
+    for left, right in zip(panels[::2], panels[1::2]):
+        tall = max(height(left, half), height(right, half))
+        left.height = right.height = tall
+        grid = Table.grid(expand=True)
+        grid.add_column(ratio=1)
+        grid.add_column(width=1)
+        grid.add_column(ratio=1)
+        grid.add_row(left, "", right)
+        rows.append((grid, tall))
+    return rows
+
+
+def stats_view(store: Store, view: View, width: int, rows: int) -> RenderableType:
+    """The summary, then the panels in rows, scrolled by whole row."""
+    stats = compute(store, view.now, view.window)
+    window = duration_text(view.window)
+    keys = Text("↑↓/wheel/j/k: scroll · s: sessions · q: quit", style="dim")
+    if not stats.requests:
+        return Panel(Text(f"no priced requests in the last {window}", style="dim"), subtitle=keys,
+                     title=Text(f"stats · last {window}", style="bold"), title_align="left", subtitle_align="right")
+    lines = summary_lines(stats, width - 4)  # the panel's border and padding
+    room = rows - (len(lines) + PANE_FRAME)
+    blocks = stats_rows(stats, view, width)
+    last = len(blocks) - 1  # the furthest it can scroll: the first row from which all the rest fit
+    while last > 0 and sum(tall for _, tall in blocks[last - 1:]) <= room:
+        last -= 1
+    view.stats_last = last
+    view.stats_scroll = max(0, min(view.stats_scroll, last))
+    shown, used = [], 0
+    for block, tall in blocks[view.stats_scroll:]:
+        if shown and used + tall > room:
+            break
+        shown.append(block)
+        used += tall
+    view.stats_page = len(shown)
+    title = f"summary · last {window}"
+    if len(shown) < len(blocks):
+        title += f" · rows {view.stats_scroll + 1}–{view.stats_scroll + len(shown)} of {len(blocks)}"
+    subtitle = Text("g: back to the top", style="bold yellow") if view.stats_scroll else keys
+    summary = Panel(Group(*lines), title=Text(title, style="bold"), title_align="left", subtitle=subtitle,
+                    subtitle_align="right", padding=(0, 1))
+    return Group(summary, *shown)
 
 
 # --- Scrolling ---------------------------------------------------------------------
 
 
-def max_scroll(store: Store, view: View) -> int:
-    """The furthest the feed can scroll: the first row from which all the rest fit,
-    day lines included (at least the last row). The lines the rows from a start need
-    only grow as it moves up, so it's a binary search over feed_fits."""
-    total = len(store.feed)
-    low, high = 0, max(0, total - 1)
-    while low < high:
-        middle = (low + high) // 2
-        if feed_fits(store, view, middle) == total - middle:
-            high = middle
-        else:
-            low = middle + 1
-    return low
-
-
-def scroll_to(store: Store, view: View, row: int) -> None:
-    """Show the feed from `row` down, and remember the request there (see track_feed)."""
-    view.scroll = 0 if row <= 0 else min(row, max_scroll(store, view))
-    view.top = store.feed[view.scroll] if view.scroll else None
-    if not view.scroll:
-        view.unseen = 0
-
-
-def track_feed(store: Store, view: View) -> None:
-    """New rows arrived: while scrolled back, keep the rows in view where they
-    are. A row can land anywhere (a transcript found late brings older
-    requests), so follow the request at the top of the view, and count as new
-    only the rows that landed above it."""
-    if not view.scroll or view.top is None:
-        return
-    row = next((i for i, request in enumerate(store.feed) if request is view.top), None)
-    if row is None:  # it fell off the end of the full feed
-        row = max_scroll(store, view)
-    view.unseen += max(0, row - view.scroll)
-    scroll_to(store, view, row)
-
-
 def press(store: Store, view: View, key: str) -> None:
-    """`view` swaps sessions and requests. Otherwise scroll whichever is showing:
-    up/down one (session or row), pgup/pgdn a page, home/end to either end."""
-    if key == "view":
-        view.mode = "requests" if view.mode == "sessions" else "sessions"
-    elif view.mode == "requests":
-        steps = {"up": -1, "down": 1, "pgup": -view.page, "pgdn": view.page}
-        if key in steps:
-            scroll_to(store, view, view.scroll + steps[key])
-        elif key == "home":
-            scroll_to(store, view, 0)
-        elif key == "end":
-            scroll_to(store, view, max_scroll(store, view))
-    else:
-        steps = {"up": -1, "down": 1, "pgup": -view.session_page, "pgdn": view.session_page}
-        if key in steps:
-            view.session_scroll = max(0, min(view.session_scroll + steps[key], view.session_last))
-        elif key == "home":
-            view.session_scroll = 0
-        elif key == "end":
-            view.session_scroll = view.session_last
+    """`stats` swaps sessions and stats. Otherwise scroll whichever is showing:
+    up/down one (session or row of panels), pgup/pgdn a page, home/end to either end."""
+    if key == "stats":
+        view.mode = "stats" if view.mode == "sessions" else "sessions"
+        return
+    prefix = "stats" if view.mode == "stats" else "session"
+    at, page, last = (getattr(view, f"{prefix}_{name}") for name in ("scroll", "page", "last"))
+    steps = {"up": -1, "down": 1, "pgup": -page, "pgdn": page}
+    if key in steps:
+        at = max(0, min(at + steps[key], last))
+    elif key == "home":
+        at = 0
+    elif key == "end":
+        at = last
+    setattr(view, f"{prefix}_scroll", at)
 
 
 # --- Whole screen ------------------------------------------------------------------
 
 
-def render(store: Store, view: View, height: int) -> Layout:
+def render(store: Store, view: View, height: int, width: int = 160) -> Layout:
     lines = top_lines(store, view)
     top = len(lines) + PANE_FRAME
     body = max(3, height - top)
-    if view.mode == "requests":
-        panel = feed_panel(store, view, max(0, body - 3))  # the panel's border and the column names
+    if view.mode == "stats":
+        panel = stats_view(store, view, width, body)
     else:
         panel = sessions_view(store, view, body)  # the panes, their frames included
     layout = Layout()
-    layout.split_column(Layout(header(lines), size=top), Layout(panel))
+    layout.split_column(Layout(header(lines, view.mode), size=top), Layout(panel))
     return layout

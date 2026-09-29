@@ -1,24 +1,22 @@
 """The screen, rendered to text, and the CLI."""
 import argparse
 import json
-import random
 import time
-from collections import deque
 from datetime import datetime
 
 import pytest
-from conftest import PRICES, PROJECTS, T0, Transcript
+from conftest import PROJECTS, T0, Transcript
 from rich.console import Console
 
-from usdash import advice, app, ui
+from usdash import app, ui
 from usdash.prices import ONE_HOUR
-from usdash.sessions import Request, Store, subscription_account
+from usdash.sessions import subscription_account
 from usdash.transcripts import account_file
 
 
 def screen(store, view, width=220, height=40) -> str:
     console = Console(record=True, width=width, height=height, color_system=None)
-    console.print(ui.render(store, view, height))
+    console.print(ui.render(store, view, height, width))
     return console.export_text()
 
 
@@ -73,27 +71,42 @@ def test_sections_and_counts(store):
     assert "╭─ exited · 1 session · last 5d · claude --resume <id> ─" in screen(store, ui.View(now=NOW))
 
 
-def test_a_live_session_shows_its_next_message_on_each_model(store):
+def test_a_live_session_shows_now_and_up_to(store):
     two_sessions(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    # 42,002 tokens read back on Opus 5.5 at $0.20, or written at the others' 1-hour prices (×0.77 on Haiku):
-    # ≈, as another model may have the tool list cached.
-    assert len(a) == 3 and a[2].strip("│ ") == ("└ next message re-sends 42k tokens: ≈$0.84 on Fable 5.1, "
-                                                 "$0.01 on Opus 5.5 (cached) ✅, ≈$0.17 on Sonnet 5, ≈$0.06 on Haiku 4.5")
+    # 42,002 tokens: read back at Opus 5.5's $0.20, or written again at its 1-hour $8.
+    assert len(a) == 3 and a[2].strip("│ ") == (
+        "└ next message re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires")
 
 
-def test_an_idle_session_shows_what_coming_back_costs(store):
+def test_an_idle_session_shows_what_coming_back_costs_at_most(store):
     two_sessions(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    # 30,002 tokens written again on the 5-minute cache, on every model, the more capable ones too:
-    # ≈, as the tool list may still be cached.
-    assert b[1].strip("│ ") == ("└ continuing re-sends 30k tokens: ≈$0.38 on Fable 5.1, ≈$0.15 on Opus 5.5, "
-                                 "≈$0.08 on Sonnet 5, ≈$0.03 on Haiku 4.5")
+    # 30,002 tokens written again on Sonnet 5's 5-minute cache: $2.50 a million.
+    assert b[1].strip("│ ") == "└ continuing re-sends 30k tokens: up to $0.08"
     closing = Transcript(session="bbbb-2222")
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    assert "exited · 10m" in b[0] and b[1].strip("│ ").startswith("└ resuming re-sends 30k tokens: ")
+    assert "exited · 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
+
+
+def test_an_exited_session_still_warm_can_be_resumed_from_the_cache(store):
+    two_sessions(store)
+    closing = Transcript(session="aaaa-1111")
+    closing.record("cost-state", totalCostUSD=0.50)
+    closing.into(store)
+    a = block(screen(store, ui.View(now=NOW)), "aaaa")
+    assert "exited · ● 50:00" in a[0]
+    assert a[1].strip("│ ") == "└ resuming re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires"
+
+
+def test_a_model_with_no_known_price_shows_the_size_only(store):
+    t = Transcript(session="mmmm-1111")
+    t.turn(T0, text="try the new one", model="claude-opus-9", write=40_000)
+    t.into(store)
+    lines = block(screen(store, ui.View(now=T0 + 60)), "mmmm")
+    assert lines[2].strip("│ ") == "└ next message re-sends 40k tokens"
 
 
 def test_the_session_numbers_say_what_they_are(store):
@@ -116,13 +129,18 @@ def test_an_exited_sessions_total_is_claude_codes_own(store):
     assert open_row.split()[-2] == "$0.42" and "(CC" not in "\n".join(lines)
 
 
-def test_context_is_approximate_right_after_compact(store):
+def test_right_after_compact_the_size_waits_for_the_next_request(store):
     t = Transcript()
     t.turn(T0, text="tidy the parser", write=40_000)
     t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 3_000})
     t.into(store)
-    row = block(screen(store, ui.View(now=T0 + 60)), "tidy the parser")[0]
-    assert "≈43k" in row  # the tool list (≈ the first prompt) plus the summary
+    lines = block(screen(store, ui.View(now=T0 + 60)), "tidy the parser")
+    assert "compacted" in lines[0] and "k " not in lines[0].split("compacted")[1][:12]  # no estimate
+    assert lines[2].strip("│ ") == "└ compacted: the next message measures the new size"
+    t.turn(T0 + 90, read=36_000, write=8_000)
+    t.into(store)
+    lines = block(screen(store, ui.View(now=T0 + 120)), "tidy the parser")
+    assert "44k" in lines[0] and lines[2].strip("│ ").startswith("└ next message re-sends 44k tokens: ")
 
 
 def test_no_spend_today_shows_a_dash(store):
@@ -158,7 +176,7 @@ def test_archived_and_long_idle_sessions_are_hidden(store):
     two_sessions(store)
     store.sessions["bbbb-2222"].archived = True
     text = screen(store, ui.View(now=NOW))
-    assert "Release notes" not in text  # gone from the sessions (its requests stay in the feed)
+    assert "Release notes" not in text  # gone from the sessions (its requests still count in Stats)
     assert "Fix checkout totals" in text
     assert "no Claude Code activity in the last 5d" in screen(store, ui.View(now=T0 + 6 * 86400))
 
@@ -196,15 +214,23 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
     assert view.session_scroll == view.session_last - 1 > 0
 
 
-def test_the_compact_warning_sits_between_the_prompt_and_the_prices(store):
+@pytest.mark.parametrize(("ttl", "left", "style"), [
+    ("5m", 151, "green"), ("5m", 150, "yellow"),  # the last half of a 5-minute cache
+    ("1h", 601, "green"), ("1h", 600, "yellow"),  # the last 10 minutes of a 1-hour one
+])
+def test_the_countdown_turns_yellow_near_the_end(store, ttl, left, style):
     t = Transcript(session="eeee-1111")
-    t.turn(T0, text="read the whole codebase", write=40_000, ttl="5m")
-    t.turn(T0 + 60, text="and summarise it", read=40_000, write=100_000, ttl="5m")
+    t.turn(T0, text="read the whole codebase", write=40_000, ttl=ttl)
     t.into(store)
-    lines = [line.strip("│ ") for line in block(screen(store, ui.View(now=T0 + 60 + 180)), "eeee")]
-    assert lines[1].startswith('├ 3m ago · "and summarise it"')
-    assert lines[2].startswith("├ ⚡ Taking a break? /compact first: ≈$") and lines[2].endswith("once the cache expires in 2:00.")
-    assert lines[3].startswith("└ next message re-sends 140k tokens: ")
+    session = store.sessions["eeee-1111"]
+    lifetime = 300 if ttl == "5m" else ONE_HOUR
+    now = T0 + lifetime - left  # the clock runs from the request's start: when the prompt was sent
+    cell = ui.cache_cell(session, ui.View(now=now))
+    assert cell.plain == f"● {left // 60}:{left % 60:02d}" and str(cell.style) == style
+    line = ui.resend_line(store, session, ui.View(now=now))
+    at = line.plain.index("up to $") + len("up to ")
+    yellow = [span for span in line.spans if span.start == at and str(span.style) == "yellow"]
+    assert bool(yellow) == (style == "yellow")  # what's at stake, as the clock runs out
 
 
 def test_a_session_still_at_work_after_its_cache_expired_says_so(store):
@@ -241,42 +267,7 @@ def test_a_fast_session_says_so(store):
     t.into(store)
     lines = block(screen(store, ui.View(now=T0 + 120)), "ffff")
     assert "Opus 5.5 high fast" in lines[0]
-    assert "$0.02 on Opus 5.5 (cached) ✅" in lines[2]  # read back at fast mode's $0.40
-
-
-def test_the_request_list_shows_web_searches(store):
-    t = Transcript()
-    t.turn(T0, text="look it up", write=40_000, tools={"web_search_requests": 2})
-    t.into(store)
-    assert "🔍 2 web searches (+$0.02)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
-    # Claude Code's WebSearch tool runs each search in a request the transcripts don't log.
-    tool = Transcript(session="sess-2")
-    tool.turn(T0 + 30, write=40_000, stop="tool_use", tools={"web_search_requests": 0},
-              content=[{"type": "tool_use", "id": "toolu_1", "name": "WebSearch", "input": {"query": "x"}}])
-    tool.into(store)
-    text = screen(store, ui.View(now=T0 + 60, mode="requests"))
-    assert "🔍 1 web search (cost not logged)" in text and "🔍 0" not in text
-    # Its result says how many searches the call made.
-    tool.user([{"type": "tool_result", "tool_use_id": "toolu_1", "content": "…"}], T0 + 40,
-              toolUseResult={"query": "x", "searchCount": 3})
-    tool.into(store)
-    assert "🔍 3 web searches (cost not logged)" in screen(store, ui.View(now=T0 + 60, mode="requests"))
-    # A call that failed (denied, an error, interrupted) searched nothing.
-    denied = Transcript(session="sess-3")
-    denied.turn(T0 + 45, write=40_000, stop="tool_use",
-                content=[{"type": "tool_use", "id": "toolu_2", "name": "WebSearch", "input": {"query": "y"}}])
-    denied.user([{"type": "tool_result", "tool_use_id": "toolu_2", "content": "denied", "is_error": True}], T0 + 50,
-                toolUseResult="Error: permission denied")
-    denied.into(store)
-    assert store.feed[0].tool_searches == {"toolu_2": 0}
-    # A record carrying two calls' results can't say whose searchCount it is: neither takes it.
-    both = Transcript(session="sess-4")
-    both.turn(T0 + 52, write=40_000, stop="tool_use",
-              content=[{"type": "tool_use", "id": f"toolu_{n}", "name": "WebSearch", "input": {}} for n in (3, 4)])
-    both.user([{"type": "tool_result", "tool_use_id": f"toolu_{n}", "content": "…"} for n in (3, 4)], T0 + 55,
-              toolUseResult={"searchCount": 3})
-    both.into(store)
-    assert store.feed[0].tool_searches == {"toolu_3": 1, "toolu_4": 1}
+    assert "$0.02 now · up to $0.67" in lines[2]  # fast mode's $0.40 read and $16 1-hour write
 
 
 def test_the_last_session_can_always_be_scrolled_to(store):
@@ -300,29 +291,29 @@ def test_only_the_markers_are_dim(store):
     two_sessions(store)
     view = ui.View(now=NOW)
     live, idle = store.sessions["aaaa-1111"], store.sessions["bbbb-2222"]
-    lines = [*ui.tree(ui.live_lines(live, view, advice.advise(store, live, NOW))), *ui.tree(ui.comeback_lines(store, idle, view))]
+    lines = [*ui.tree([ui.prompt_text(live, view), ui.resend_line(store, live, view)]),
+             *ui.tree([ui.resend_line(store, idle, view)])]
     for line in lines:
         assert not line.style, line.plain  # a base style would cover the amounts too
     dim = [line.plain[span.start:span.end] for line in lines for span in line.spans if span.style == "dim"]
     assert "├ " in dim and "└ " in dim and not any("$" in text for text in dim)
 
 
-def test_r_swaps_views_and_each_keeps_its_scroll(store):
+def test_s_swaps_views_and_each_keeps_its_scroll(store):
     two_sessions(store)
-    busy = Transcript(session="cccc-3333")  # enough requests to scroll the feed
-    for i in range(60):
-        busy.turn(T0 - 3600 + 30 * i, read=40_000 + i, write=100)
+    busy = Transcript(session="cccc-3333")
+    busy.turn(T0 - 3600, read=40_000, write=100)
     busy.into(store)
     view = ui.View(now=NOW)
-    ui.press(store, view, "view")
-    assert view.mode == "requests" and "requests" in screen(store, view)
+    ui.press(store, view, "stats")
+    assert view.mode == "stats" and "usdash · stats" in screen(store, view, width=100, height=20)
     ui.press(store, view, "down")
-    ui.press(store, view, "view")
-    assert (view.mode, view.scroll, view.session_scroll) == ("sessions", 1, 0)
+    ui.press(store, view, "stats")
+    assert (view.mode, view.stats_scroll, view.session_scroll) == ("sessions", 1, 0)
     screen(store, view, height=15)  # too short for all three sessions
     ui.press(store, view, "down")
-    ui.press(store, view, "view")
-    assert (view.mode, view.scroll, view.session_scroll) == ("requests", 1, 1)
+    ui.press(store, view, "stats")
+    assert (view.mode, view.stats_scroll, view.session_scroll) == ("stats", 1, 1)
 
 
 def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
@@ -338,13 +329,6 @@ def test_header_shows_todays_spend_hit_rate_and_rewrites(store):
     assert "subscription" not in text  # an API-key account
     subscription = screen(store, ui.View(now=T0 + 60 + 7300, subscription=True))
     assert "At current API list prices; your subscription isn't billed per token" in subscription
-    feed = screen(store, ui.View(now=T0 + 60 + 7300, mode="requests"))
-    assert "⟳ re-wrote 42k: cache expired (idle 120 min)" in feed
-
-
-def test_the_requests_view_marks_subagents(fixture_store):
-    last = max(s.last_activity for s in fixture_store.sessions.values())
-    assert "🤖 subagent" in screen(fixture_store, ui.View(now=last + 60, window=10 ** 9, mode="requests"), height=80)
 
 
 def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store):
@@ -358,120 +342,9 @@ def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store)
     assert "Desktop" in next(line for line in text.splitlines() if "Three-word greeting" in line)
 
 
-def test_the_request_list_marks_each_earlier_day(store):
-    t = Transcript()
-    for day in range(3):
-        for i in range(3):
-            t.turn(T0 + 86_400 * day + 60 * i, read=40_000, write=100)
-    t.into(store)
-    now = T0 + 2 * 86_400 + 600
-    label = lambda when: datetime.fromtimestamp(when).strftime("%a %d %b").replace(" 0", " ")
-    lines = [line.strip("│ ") for line in screen(store, ui.View(now=now, mode="requests")).splitlines()]
-    rows = [line for line in lines if line[:2].isdigit() or line.startswith("── ")]
-    # None above today's rows: the header already says today.
-    assert [line.split(" ─")[0] for line in rows if line.startswith("── ")] == [f"── {label(T0 + 86_400)}", f"── {label(T0)}"]
-    assert rows[0][:2].isdigit() and rows[3].startswith("── ") and rows[7].startswith("── ")
-    # Scrolled into an earlier day, the top row still says which day it's on.
-    view = ui.View(now=now, mode="requests")
-    screen(store, view)
-    for _ in range(4):  # past today's three rows and one of yesterday's
-        ui.press(store, view, "down")
-    top = [line.strip("│ ") for line in screen(store, view).splitlines() if "TIME" in line or "── " in line]
-    assert top[1].startswith(f"── {label(T0 + 86_400)} ─")
-    # The last page shows the oldest row at every height, day lines and all.
-    oldest = datetime.fromtimestamp(T0).strftime("%H:%M:%S")
-    for height in range(3, 30):
-        view = ui.View(now=now, mode="requests")
-        screen(store, view, height=height)
-        ui.press(store, view, "end")
-        text = screen(store, view, height=height)
-        assert oldest in text or view.lines == 0, height  # below 9 lines there's no room for a row
-    # With no room, the title claims no rows and a page key moves nothing unseen.
-    view = ui.View(now=now, mode="requests")
-    screen(store, view, height=8)
-    ui.press(store, view, "down")
-    before = view.scroll
-    ui.press(store, view, "pgdn")
-    text = screen(store, view, height=8)
-    assert view.lines == 0 and view.scroll == before and "rows" not in text and "paused" in text
-
-
-def test_the_scroll_limit_matches_counting_every_start():
-    # A made-up feed over several days: the furthest scroll is the first row from which the rest fit.
-    rng = random.Random(7)
-    for _ in range(300):
-        store = Store(PRICES)
-        days = sorted((rng.randrange(4) for _ in range(rng.randrange(1, 25))))
-        for i, day in enumerate(days):  # newest first, like the feed
-            store.feed.append(Request(f"r{i}", "s", None, None, None, T0 - 86_400 * day - i, T0))
-        view = ui.View(now=T0, mode="requests", lines=rng.randrange(1, 12))
-        total = len(store.feed)
-        expected = next((start for start in range(total) if ui.feed_fits(store, view, start) == total - start), total - 1)
-        assert ui.max_scroll(store, view) == max(0, expected)
-
-
-def test_scrolling_the_feed(store):
-    t = Transcript()
-    for i in range(30):
-        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
-    t.into(store)
-    view = ui.View(now=T0 + 1800, mode="requests")
-    ui.track_feed(store, view)  # the app does this after every poll
-    screen(store, view, height=30)
-    assert view.page < 30
-    ui.press(store, view, "down")
-    assert view.scroll == 1
-    ui.press(store, view, "end")
-    assert view.scroll == 30 - view.page
-    more = Transcript()
-    more.turn(T0 + 1900, read=41_000, write=100)
-    more.into(store)
-    ui.track_feed(store, view)
-    assert view.unseen == 1  # the rows in view stay put
-    ui.press(store, view, "home")
-    assert (view.scroll, view.unseen) == (0, 0)
-
-
-def test_a_late_row_below_the_view_is_not_new_above(store):
-    t = Transcript()
-    for i in range(30):
-        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
-    t.into(store)
-    view = ui.View(now=T0 + 1800, page=5, lines=5, mode="requests")
-    ui.press(store, view, "pgdn")
-    shown = list(store.feed)[5:10]
-    late = Transcript()  # a subagent's transcript, found late: older than every row in view
-    late.user("look around", T0 + 5, subagent="a1")
-    late.reply(T0 + 8, subagent="a1", write=5_000, ttl="5m")
-    late.into(store)
-    ui.track_feed(store, view)
-    assert (view.scroll, view.unseen) == (5, 0)
-    assert list(store.feed)[5:10] == shown
-
-
-def test_a_row_the_full_feed_drops_moves_nothing(store):
-    store.feed = deque(maxlen=5)
-    t = Transcript()
-    for i in range(8):
-        t.turn(T0 + 60 * i, read=40_000 + i, write=100)
-    t.into(store)
-    view = ui.View(now=T0 + 600, mode="requests")
-    ui.press(store, view, "down")
-    late = Transcript()  # older than everything the feed still keeps
-    late.user("look around", T0 + 5, subagent="a1")
-    late.reply(T0 + 8, subagent="a1", write=5_000, ttl="5m")
-    late.into(store)
-    ui.track_feed(store, view)
-    assert (len(store.feed), view.scroll, view.unseen) == (5, 1, 0)
-    newer = Transcript()  # a new row pushes the oldest out
-    newer.turn(T0 + 600, read=41_000, write=100)
-    newer.into(store)
-    ui.track_feed(store, view)
-    assert (len(store.feed), view.scroll, view.unseen) == (5, 2, 1)
-
-
 def test_parse_keys():
-    assert app.parse_keys("\x1b[Aj q\x1b[6~xr") == ["up", "down", "pgdn", "quit", "pgdn", "view"]
+    assert app.parse_keys("\x1b[Aj q\x1b[6~xs") == ["up", "down", "pgdn", "quit", "pgdn", "stats"]
+    assert app.parse_keys("r") == []  # the request list is gone
 
 
 @pytest.mark.parametrize(("text", "seconds"), [("30m", 1800), ("2h", 7200), ("1d", 86400)])
@@ -490,7 +363,7 @@ def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("COLUMNS", "200")
     app.main(["--projects", str(PROJECTS), "--since", "3650d", "--window", "3650d", "--once", "--offline"])
     out = capsys.readouterr().out
-    assert "usdash · live" in out and "Test plan vs test case" in out and "Pong reply" in out
+    assert "usdash · sessions" in out and "Test plan vs test case" in out and "Pong reply" in out
 
 
 def test_claude_config_dir_moves_the_account_file(monkeypatch, tmp_path):
@@ -540,10 +413,10 @@ def test_warnings_come_first_on_the_headers_second_line(store):
     unknown = Transcript(session="cccc-3333")
     unknown.turn(T0, model="claude-mystery-9")
     unknown.into(store)
-    text = screen(store, ui.View(now=NOW, docs_changed=["pricing", "models"]), width=140)  # the README's width
+    text = screen(store, ui.View(now=NOW, docs_changed=["pricing"]), width=140)  # the README's width
     assert "Estimated at current API list prices  ·  1 request with no known price, left out (Mystery 9)  ·  " in text
-    assert "Anthropic's pricing and models pages changed: usdash may need an update" in screen(
-        store, ui.View(now=NOW, docs_changed=["pricing", "models"]), width=220)
+    assert "Anthropic's pricing page changed: usdash may need an update" in screen(
+        store, ui.View(now=NOW, docs_changed=["pricing"]), width=220)
 
 
 @pytest.mark.parametrize(
@@ -586,11 +459,21 @@ def test_a_miss_cause_under_half_a_cent_is_left_off_the_header(store):
     assert line.plain == "⟳ cache misses added $0.05: model switch $0.05"
 
 
-def test_cached_is_coloured_by_how_much_was_read_back(store):
+def test_cached_is_coloured_by_how_much_was_read_back():
     # The README: green from 80%, yellow from 30%, red below.
-    t = Transcript()
-    for i, read in enumerate((80_000, 30_000, 29_000)):
-        t.turn(T0 + 60 * i, read=read, write=100_000 - read - 2, message_id=f"msg_{read}")
-    t.into(store)
-    styles = {key: str(ui.feed_row(store, request)[0][5].style) for key, request in store.sessions["sess-1"].requests.items()}
-    assert styles == {"msg_80000": "green", "msg_30000": "yellow", "msg_29000": "red"}
+    assert [str(ui.cached_text(share).style) for share in (0.8, 0.3, 0.29)] == ["green", "yellow", "red"]
+    assert ui.cached_text(None).plain == "—"
+
+
+def test_stats_prints_the_stats_view(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("COLUMNS", "160")
+    app.main(["--projects", str(PROJECTS), "--window", "3650d", "--once", "--offline", "--stats"])
+    out = capsys.readouterr().out
+    assert "usdash · stats" in out and "summary · last 3650d" in out and "╭─ by day" in out
+
+
+def test_version(capsys):
+    with pytest.raises(SystemExit):
+        app.main(["--version"])
+    assert capsys.readouterr().out.startswith("usdash ")

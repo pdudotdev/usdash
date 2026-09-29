@@ -37,7 +37,6 @@ def test_streamed_blocks_are_one_request_and_the_last_record_wins(store):
     assert len(session.requests) == 1
     request = session.requests["msg_a"]
     assert request.usage["output"] == 900
-    assert len(store.feed) == 1
     # Totals were corrected, not added twice.
     assert session.cost_total == pytest.approx(request.cost)
     assert store.days[next(iter(store.days))]["requests"] == 1
@@ -157,8 +156,7 @@ def test_effort_change_rewrites_on_most_models_but_not_opus_5_5(store):
 
 def test_compaction(fixture_store, store):
     session = fixture_store.sessions[COMPACTED]
-    assert session.main.compacted
-    assert session.compact_post_tokens == 1497
+    assert session.main.compacted  # its last record: the next request would measure the new size
     t = Transcript()
     t.turn(T0, write=80_000)
     t.record("system", T0 + 30, subtype="compact_boundary", compactMetadata={"postTokens": 3_000})
@@ -575,31 +573,51 @@ def test_on_a_one_hour_cache_the_same_subagent_run_costs_nothing_extra(store):
     assert parent.reason is None
 
 
-def test_requests_from_a_file_found_late_go_in_their_place_in_the_feed(store):
-    main = Transcript()
-    main.turn(T0, write=40_000)
-    main.turn(T0 + 60, read=40_000, write=1_000)
-    main.into(store)
-    late = Transcript()  # a subagent's transcript, found at the tailer's next scan
-    late.user("look around", T0 + 20, subagent="a1")
-    late.reply(T0 + 30, subagent="a1", write=5_000, ttl="5m")
-    late.into(store)
-    assert [r.end for r in store.feed] == [T0 + 70, T0 + 30, T0 + 10]  # newest first
+# --- What the Stats view groups by ----------------------------------------------------
 
 
-def test_the_feed_is_in_order_of_when_requests_started(store):
-    main = Transcript()
-    main.user("go", T0)
-    main.reply(T0 + 100, message_id="msg_a")  # its first block
-    main.into(store)
-    sub = Transcript()
-    sub.user("look around", T0 + 50, subagent="a1")
-    sub.reply(T0 + 101, subagent="a1")
-    sub.into(store)
-    main.reply(T0 + 110, message_id="msg_a")  # its last block: the end moves on, the start doesn't
-    main.into(store)
-    late = Transcript()  # a long subagent request, found late
-    late.user("dig deeper", T0 + 20, subagent="a2")
-    late.reply(T0 + 105, subagent="a2")
-    late.into(store)
-    assert [r.start for r in store.feed] == [T0 + 50, T0 + 20, T0]
+def test_what_was_typed_is_kept_once_with_its_time(store):
+    t = Transcript()
+    t.turn(T0, text="fix the parser")
+    t.user("<command-name>/compact</command-name>", T0 + 60)
+    t.user([{"type": "tool_result", "tool_use_id": "t9", "content": "ok"}], T0 + 70)  # not typed
+    t.user("summary", T0 + 80, isCompactSummary=True)  # generated
+    t.user("look around", T0 + 90, subagent="a1")  # a subagent's prompt
+    records = list(t.records)
+    t.into(store)
+    store.add_all(records)  # the file read again from the start
+    assert sorted(store.sessions["sess-1"].prompts.values()) == [
+        (T0, "fix the parser", False), (T0 + 60, "/compact", True)]
+
+
+def test_a_command_logged_as_typed_is_still_a_command(store):
+    # Claude Code 2.1.283 logs `/compact` twice: as typed, and as its tagged command record.
+    t = Transcript()
+    t.turn(T0, text="write a story")
+    t.user("/compact", T0 + 60)
+    t.user("<command-name>/compact</command-name>\n<command-message>compact</command-message>", T0 + 60.004)
+    t.user("/tmp/build is full, why?", T0 + 90)  # a path, not a command
+    t.into(store)
+    assert [(text, command) for _, text, command in sorted(store.sessions["sess-1"].prompts.values())] == [
+        ("write a story", False), ("/compact", True), ("/compact", True), ("/tmp/build is full, why?", False)]
+
+
+def test_each_request_keeps_the_prices_it_paid(store):
+    t = Transcript()
+    t.turn(T0, write=10_000, speed="fast")
+    t.turn(T0 + 60, model="claude-opus-9", write=10_000)
+    t.into(store)
+    fast, unknown = sorted(store.sessions["sess-1"].requests.values(), key=lambda r: r.start)
+    assert fast.paid["input"] == 8 and fast.paid["cache_read"] == pytest.approx(0.40)
+    assert unknown.paid is None and unknown.cost is None
+
+
+@pytest.mark.parametrize(("cwd", "folder"), [
+    ("/home/user/shop", "shop"),
+    ("/Users/me/Library/Application Support/Claude/local-agent/abc", "no folder"),
+    (None, "?"),
+])
+def test_the_folder_is_the_project_without_its_branch(store, cwd, folder):
+    session = store.session("s")
+    session.cwd, session.branch = cwd, "feature"
+    assert session.folder == folder and session.project == f"{folder}@feature"

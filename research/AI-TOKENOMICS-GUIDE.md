@@ -2,7 +2,7 @@
 
 How the cost of using a large language model is built, why it moves, and how to reason about any new case from first principles. Written around Claude and Claude Code, where every number here was checked. The principles carry over to any provider that bills by the token and caches prompts.
 
-**Checked on 2026-09-28** against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
+**Checked on 2026-09-28** (Sonnet 5.5 added on 2026-09-29, the day it launched) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
 
 ---
 
@@ -75,11 +75,11 @@ Here `input` is the model's base input price, and `r` is its cache-read multipli
 |---|---|---|---|---|---|
 | Fable 5.1 | $0.25 | $10 | $12.50 | $20 | $50 |
 | Opus 5.5 | $0.20 | $4 | $5 | $8 | $20 |
-| Sonnet 5 | $0.20 | $2 | $2.50 | $4 | $10 |
+| Sonnet 5.5 | $0.20 | $2 | $2.50 | $4 | $10 |
 | Haiku 4.5 | $0.10 | $1 | $1.25 | $2 | $5 |
 
 Read it left to right and the whole game is visible. Reading a token from the cache is 12 to 80 times cheaper than writing it, depending on the model and the lifetime. Output is the most expensive token there is. Two things stand out:
-- **Opus 5.5 and Sonnet 5 read the cache at the same price.** Moving a large cached conversation from Opus 5.5 to Sonnet 5 saves nothing on its cached part.
+- **Opus 5.5 and Sonnet 5.5 read the cache at the same price** (so does Sonnet 5). Moving a large cached conversation from Opus 5.5 to Sonnet 5.5 saves nothing on its cached part.
 - **Fable 5.1 reads at almost Opus 5.5's price**, despite costing 2.5× more for everything else.
 
 ## 4. Reading a usage record
@@ -112,7 +112,7 @@ The rules that matter:
 | Writes happen only at breakpoints (up to 4 per request) | Put the breakpoint on the last block that stays the same, not on one that changes every time (a timestamp, the new question) |
 | A read looks back at most 20 blocks from each breakpoint for an earlier write | A turn that adds more than 20 blocks can miss the previous entry; a second breakpoint fixes it (a run of parallel tool calls counts as one block) |
 | Each model has its own cache | A model switch re-sends everything as new |
-| There's a minimum cacheable size: 512 tokens on Opus 5.5 and Fable 5.1, 1,024 on Sonnet 5, 4,096 on Haiku 4.5 | Below it, nothing is cached and no error says so; both cache counts read 0 |
+| There's a minimum cacheable size: 512 tokens on Opus 5.5, Sonnet 5.5 and Fable 5.1, 1,024 on Sonnet 5, 4,096 on Haiku 4.5 | Below it, nothing is cached and no error says so; both cache counts read 0 |
 | Caches are isolated per workspace (per organisation on Bedrock and Google Cloud) | Identical prompts in two workspaces don't share |
 | An entry exists only once the first response has begun | Parallel requests sent at the same instant all write; none reads |
 
@@ -170,7 +170,7 @@ The principle: **anything that changes bytes early in the request re-processes e
 What doesn't break it: appending messages, tool calls and results. Mid-conversation additions that are sent as new messages (a system message, a skill's instructions) leave the cached prefix intact.
 
 **Where the API and a client differ, check the client.** Examples from Claude Code:
-- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5 and Fable 5.1 (with an API key or subscription). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
+- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5 and Fable 5.1 (with an API key or subscription). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
 - **Fast mode:** the API table says switching speed invalidates system and messages. Claude Code sends the fast-mode header once per conversation, so only turning it on the first time costs a re-write. Turning it off and on again later keeps the cache.
 - **Resuming:** Claude Code keeps the system prompt a conversation started with, so a resumed session reads back whatever is still within the lifetime (6 of 6 real resumes did; Appendix B).
 - **MCP servers:** connecting or removing one changes the tool list only if its tools aren't deferred; by default they are.
@@ -392,7 +392,7 @@ Answers follow each one; work them out first.
 
 # Appendix A: Price sheet
 
-Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-09-28. **Re-check there before using these numbers for anything that matters.**
+Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-09-29. **Re-check there before using these numbers for anything that matters.**
 
 | Model | Input | 5-min write | 1-hour write | Cache read | Output | Batch in / out |
 |---|---|---|---|---|---|---|
@@ -400,7 +400,7 @@ Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/
 | Fable 5 | $10 | $12.50 | $20 | $1 | $50 | $5 / $25 |
 | Opus 5.5 | $4 | $5 | $8 | $0.20 | $20 | $2 / $10 |
 | Opus 5, 4.8, 4.7, 4.6, 4.5 | $5 | $6.25 | $10 | $0.50 | $25 | $2.50 / $12.50 |
-| Sonnet 5 | $2 | $2.50 | $4 | $0.20 | $10 | $1 / $5 |
+| Sonnet 5.5, Sonnet 5 | $2 | $2.50 | $4 | $0.20 | $10 | $1 / $5 |
 | Sonnet 4.6, 4.5 | $3 | $3.75 | $6 | $0.30 | $15 | $1.50 / $7.50 |
 | Haiku 4.5 | $1 | $1.25 | $2 | $0.10 | $5 | $0.50 / $2.50 |
 
@@ -419,7 +419,7 @@ Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/
 
 # Appendix B: Evidence from real sessions
 
-What building and reviewing usdash measured in real Claude Code transcripts, compared with Claude Code's own totals. It's evidence for one client's behaviour at one version (2.1.278–2.1.283). Re-measure after an upgrade. The regression tests in [`tests/test_real_checks.py`](../tests/test_real_checks.py) hold usdash to the 2026-09-28 sessions.
+What building and reviewing usdash measured in real Claude Code transcripts, compared with Claude Code's own totals. It's evidence for one client's behaviour at one version (2.1.278–2.1.283). Re-measure after an upgrade. The regression tests in [`tests/test_real_checks.py`](../tests/test_real_checks.py) hold usdash to the 2026-09-28 sessions in [`tests/fixtures/checks`](../tests/fixtures/checks): the next message reading the last prompt back, resuming within the lifetime, a model switch across tokenizers, and the size after `/compact` waiting for the next request.
 
 | Question | What was measured |
 |---|---|

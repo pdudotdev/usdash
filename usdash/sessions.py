@@ -8,19 +8,16 @@ record written wins. The main conversation and each subagent are separate
 """
 import json
 import re
-from bisect import bisect_left
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from statistics import median
 
 from .facts import Facts, load_facts
 from .models import model_key, pretty_model
 from .prices import FIVE_MINUTES, ONE_HOUR, as_paid, load_pricing, request_cost, usage_parts, write_price
 from .transcripts import Record, account_file
 
-FEED_HISTORY = 10_000
 # A request re-wrote the conversation when it failed to read back at least
 # this share of what it could have (the smaller of its prompt and the
 # previous one, less the tool list, which usually stays cached anyway), and
@@ -29,13 +26,10 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 # Recaps are logged a few seconds after their request started.
 RECAP_LAG = 5
 SNIPPET = 60
+SLASH_COMMAND = re.compile(r"/[\w:.-]+(?:\s|$)")
 # A session still at work goes this long without a new record, its subagents' included,
 # at most: longer, and it was stopped mid-tool (killed, or its window closed).
 WORKING_QUIET = 30 * 60
-# The summary /compact writes, when no compaction of a conversation this size
-# has been seen: a share of the conversation, within bounds. Fitted to the
-# compactions on the machine usdash was built on (research/AI-TOKENOMICS-GUIDE.md, Appendix B).
-SUMMARY_SHARE, SUMMARY_MIN, SUMMARY_MAX = 0.03, 3_800, 16_000
 
 
 def day_of(when: float) -> str:
@@ -89,10 +83,7 @@ class Request:
     reason: str | None = None  # why, when it re-wrote
     speed: str | None = None  # usage.speed: "fast" or "standard"
     geo: str | None = None  # usage.inference_geo
-    # Claude Code's WebSearch tool calls in the reply: tool_use id -> searches it made (1 until
-    # its result says: `toolUseResult.searchCount`, or 0 if it failed). They run in a request of their own that
-    # the transcripts don't log, so their cost isn't in any amount.
-    tool_searches: dict[str, int] = field(default_factory=dict)
+    paid: dict | None = None  # the per-token prices it paid (as_paid: fast mode, US-only); None if unknown
 
     @property
     def prompt(self) -> int:
@@ -181,7 +172,9 @@ def typed(record: Record) -> tuple[str, bool] | None:
     if not raw:
         return None
     text = " ".join((command_text(raw) or "").split())
-    return (text, command_name(raw) is not None) if text else None
+    # Claude Code takes anything typed as `/name …` for a command (an unknown one isn't sent), and
+    # logs some as typed, next to their tagged record.
+    return (text, command_name(raw) is not None or bool(SLASH_COMMAND.match(text))) if text else None
 
 
 def at_work_after(record: Record) -> bool | None:
@@ -225,7 +218,6 @@ class Session:
     first_prompt: str | None = None  # the first thing typed that says what the session is for
     first_command: str | None = None  # the first built-in command (/model), if nothing else says it
     pending_command: str | None = None  # a command just typed: built-in or not, the next record tells
-    search_calls: dict[str, str] = field(default_factory=dict)  # WebSearch tool_use id -> request key
     last_prompt: str | None = None
     last_prompt_at: float | None = None
     last_activity: float | None = None
@@ -236,7 +228,6 @@ class Session:
     replied: float | None = None  # the latest reply's time in the main conversation
     cost_state: float | None = None  # Claude Code's own total, written when the session exits
     cost_at_state: float = 0.0  # cost_total when Claude Code last wrote it
-    compact_post_tokens: int | None = None
     requests: dict[str, Request] = field(default_factory=dict)
     chains: dict[str, ChainState] = field(default_factory=lambda: defaultdict(ChainState))
     cost_total: float = 0.0
@@ -250,10 +241,9 @@ class Session:
     # the whole conversation back (the first, or one after /compact, a resume, an expired
     # cache or a model switch) read back all the same
     tool_list: tuple[int, str | None] | None = None
-    # (tokens, model family) the first request of the latest turn (a prompt or command typed)
-    # left cached: what /compact reads back while the cache is warm. It sends the rest uncached.
-    turn_cached: tuple[int, str | None] | None = None
-    turn_pending: bool = False  # a prompt was typed; its first request hasn't come yet
+    # Everything typed in the main conversation, prompts and slash commands: record uuid ->
+    # (when, text, whether it's a command). By uuid, so a file read again adds nothing.
+    prompts: dict[str, tuple[float, str, bool]] = field(default_factory=dict)
     revision: int = 0  # bumped on every change to its requests
     _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -272,16 +262,20 @@ class Session:
         )
 
     @property
-    def project(self) -> str:
-        """The folder it runs in, plus @branch unless it's main, master or a detached HEAD."""
+    def folder(self) -> str:
+        """The folder it runs in: 'no folder' for a Desktop session started
+        without one (it runs in a scratch folder of the app's), '?' if unknown."""
         cwd = self.cwd or ""
         if "/Library/Application Support/Claude/" in cwd:
-            folder = "no folder"  # a Desktop session started without one: it runs in a scratch folder of the app's
-        else:
-            folder = Path(cwd).name or "?"
+            return "no folder"
+        return Path(cwd).name or "?"
+
+    @property
+    def project(self) -> str:
+        """The folder, plus @branch unless it's main, master or a detached HEAD."""
         if self.branch and self.branch not in ("HEAD", "main", "master"):
-            return f"{folder}@{self.branch}"
-        return folder
+            return f"{self.folder}@{self.branch}"
+        return self.folder
 
     @property
     def label(self) -> str:
@@ -323,20 +317,6 @@ class Session:
         return memo(self, "main", lambda: sorted(
             (r for r in self.requests.values() if not r.subagent), key=lambda r: r.start))
 
-    def cached_on(self, model: str | None, now: float) -> bool:
-        """Whether the main conversation still has a cache on `model`: the model
-        it's on, or one it left less than a cache lifetime ago."""
-        family = model_key(model)
-        if family == model_key(self.model):
-            touched, ttl = self.main.touched, self.main.ttl  # recaps restart this clock too
-        else:
-            last = memo(self, ("last on", family), lambda: next(
-                (r for r in reversed(self.main_requests()) if model_key(r.model) == family), None))
-            if last is None:
-                return False
-            touched, ttl = last.start, last.ttl or self.main.ttl
-        return touched is not None and now - touched < (ttl or FIVE_MINUTES)
-
     def working(self, now: float) -> bool:
         """Whether Claude Code is still at work in this session: a tool or a
         subagent running, or an answer to their results on its way."""
@@ -364,22 +344,17 @@ class Session:
 
 
 class Store:
-    """All sessions, the live feed, and each day's totals."""
+    """All sessions, and each day's totals."""
 
     def __init__(self, prices: dict, facts: Facts | None = None, web_search: float | None = None) -> None:
         self.prices = prices
         self.web_search = load_pricing().web_search if web_search is None else web_search  # USD per search
-        self.facts = facts or load_facts()  # models.yaml, and the lineup from the docs
+        self.facts = facts or load_facts()  # models.yaml
         self.sessions: dict[str, Session] = {}
-        self.feed: deque[Request] = deque(maxlen=FEED_HISTORY)
         self.days: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))  # day -> cost, read, prompt, requests
         # day -> reason -> $ paid to write again what could have been read back
         self.rewrites: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         self.unpriced: Counter = Counter()  # requests with no known price, by model ("Opus 5.5 fast": its fast prices)
-        self.summaries: dict[str, tuple[int, int]] = {}  # record id -> (conversation, summary) tokens of each /compact
-        # (folder, entrypoint), and entrypoint alone -> (tokens, model family): the tool list
-        # as the latest session there measured it (Session.tool_list)
-        self.measured_prefix: dict[tuple | str, tuple[int, str | None]] = {}
         self.revision = 0  # bumped on every change to any request
         self._memo: tuple = (-1, None)  # see memo()
 
@@ -424,12 +399,12 @@ class Store:
         if kind == "assistant":
             return self._add_assistant(session, record)
         if kind == "user":
-            self._count_searches(session, record)
             found = typed(record)
             if found:
                 text, command = found
                 session.ended = False
-                session.turn_pending = True
+                if record.when is not None:
+                    session.prompts[uuid or f"@{record.when}"] = (record.when, text, command)
                 if command:
                     session.pending_command = text
                 else:
@@ -454,12 +429,7 @@ class Store:
             main = session.main
             if data.get("subtype") == "compact_boundary":
                 main.compacted = True
-                meta = data.get("compactMetadata") or {}
-                post, pre, took = meta.get("postTokens"), meta.get("preTokens"), meta.get("durationMs")
-                session.compact_post_tokens = post if isinstance(post, int) else None
-                if isinstance(post, int) and isinstance(pre, int) and post > 0 and pre > 0:
-                    # By the record's id: a transcript read again from the start brings it again.
-                    self.summaries[data.get("uuid") or f"{session.id}@{record.when}"] = (pre, post)
+                took = (data.get("compactMetadata") or {}).get("durationMs")
                 if record.when is not None and isinstance(took, (int, float)):
                     # The compaction's request isn't logged, but it read the cache back: like a
                     # recap, it restarts the clock, from when it started.
@@ -498,29 +468,6 @@ class Store:
         else:
             session.first_command = session.first_command or command
         session.pending_command = None
-
-    @staticmethod
-    def _count_searches(session: Session, record: Record) -> None:
-        """A WebSearch call's result says how many searches it made: the record's
-        toolUseResult.searchCount, if the record carries that one result only
-        (with more, there's no telling whose it is). One that failed (denied,
-        an error, interrupted) made none."""
-        content = (record.data.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            return
-        results = [block for block in content if isinstance(block, dict) and block.get("type") == "tool_result"]
-        found = record.data.get("toolUseResult")
-        searches = found.get("searchCount") if isinstance(found, dict) and len(results) == 1 else None
-        for block in results:
-            call = str(block.get("tool_use_id"))
-            key = session.search_calls.get(call)
-            request = session.requests.get(key) if key else None
-            if request is None:
-                continue
-            if block.get("is_error"):
-                request.tool_searches[call] = 0
-            elif isinstance(searches, int):
-                request.tool_searches[call] = searches
 
     def _start_of(self, session: Session, record: Record, message_id: str | None) -> float | None:
         """When the request behind this reply started: the time of the record
@@ -562,23 +509,14 @@ class Store:
             request.end = end or request.end
         request.usage = usage_parts(usage)
         request.speed, request.geo = usage.get("speed"), usage.get("inference_geo")
-        content = message.get("content")
-        for i, block in enumerate(content if isinstance(content, list) else []):
-            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "WebSearch":
-                call = str(block.get("id") or f"{data.get('uuid')}#{i}")
-                request.tool_searches.setdefault(call, 1)
-                session.search_calls[call] = key
         base = self.prices.get(model_key(model))
         price = as_paid(base, model_key(model), request.speed, request.geo) if base else None  # fast mode, US-only
         if price is None and old is None:
             self.unpriced[pretty_model(model) + (" fast" if base else "")] += 1
+        request.paid = price
         request.cost = request_cost(usage, price) + request.usage["searches"] * self.web_search if price else None
         if old is None and not record.subagent:
             self._measure_tool_list(session, request)
-        if session.turn_pending and not record.subagent:  # also a request seen before, in a file read again
-            u = request.usage  # the input side is final from the reply's first record
-            session.turn_cached = (u["read"] + u["write_5m"] + u["write_1h"], model_key(model))
-            session.turn_pending = False
         self._classify(session, request, price)
         self._account(session, request, +1)
         if chain.key in (None, key) or old is None:
@@ -591,30 +529,14 @@ class Store:
         if not record.subagent:
             session.ended = False
         session.last_activity = max(session.last_activity or 0, request.end)
-        if old is None:
-            self._to_feed(request)
-            return request
-        return None
-
-    def _to_feed(self, request: Request) -> None:
-        """Newest first, by when each request started (its end moves on as
-        later blocks of the reply come in). A transcript file found late (the
-        tailer looks for new files every few seconds) can bring requests older
-        than ones already in the feed; they go in their place, not on top."""
-        feed = self.feed
-        at = bisect_left(feed, -request.start, key=lambda r: -r.start)
-        if len(feed) == feed.maxlen:
-            if at == len(feed):
-                return  # older than everything the feed still keeps
-            feed.pop()
-        feed.insert(at, request)
+        return request if old is None else None
 
     def _measure_tool_list(self, session: Session, request: Request) -> None:
         """A main-conversation request that couldn't read the whole conversation
         back (the session's first, or one after /compact, a resume, an expired
         cache or a model switch) still reads back what is cached: Claude Code's tool
         list (and, when another session just sent the same, its system
-        prompt). That is the tool list's size, measured."""
+        prompt). That is the tool list's size, measured, for _classify."""
         if not session.prefix and request.prompt:
             session.prefix, session.prefix_model = request.prompt, request.model
         prev, read = request.prev, request.usage.get("read", 0)
@@ -629,8 +551,6 @@ class Store:
         first_prompt = self.facts.convert(session.prefix, session.prefix_model, request.model)
         if cold and 0 < read < could_read and read <= first_prompt:
             session.tool_list = (read, model_key(request.model))
-            self.measured_prefix[(session.cwd, session.entrypoint)] = session.tool_list
-            self.measured_prefix[session.entrypoint or ""] = session.tool_list
 
     def _classify(self, session: Session, request: Request, price: dict | None) -> None:
         """Whether a request wrote again what it could have read back, and why.
@@ -642,7 +562,7 @@ class Store:
         request.rewritten, request.rewrite_cost, request.reason = 0, 0.0, None
         if prev is None or not prev.key or not prev.prompt:
             return
-        tool_list = 0.0 if request.subagent else self.tool_list(session, request.model, measured=True)
+        tool_list = 0.0 if request.subagent else self.tool_list(session, request.model)
         # In this request's tokens: after a switch from an older tokenizer, the same conversation is ~1.3× the tokens.
         could_read = min(request.prompt, round(self.facts.convert(prev.prompt, prev.model, request.model)))
         if prev.compacted and not request.subagent:
@@ -687,74 +607,11 @@ class Store:
         speed = session.main.speed if own or price.get("fast") else None
         return as_paid(price, model_key(model), speed, session.main.geo)
 
-    def prefix_on(self, session: Session, model: str | None) -> float:
-        """A session's tool list and system prompt, counted in `model`'s tokens."""
-        return self.facts.convert(session.prefix, session.prefix_model, model)
-
-    def folder(self, cwd: str | None) -> list[Session]:
-        """The sessions in this folder that have sent a main-conversation request."""
-        return memo(self, ("folder", cwd), lambda: [s for s in self.sessions.values() if s.cwd == cwd and s.prefix])
-
-    def tool_list(self, session: Session, model: str | None, measured: bool = False) -> float:
-        """Claude Code's tool list as `session` sends it, in `model`'s tokens.
-        Measured (Session.tool_list): by this session, else by the latest
-        session from the same app in this folder, else anywhere (the tool
-        list is much the same everywhere: 22–25k tokens in the CLI). Else
-        estimated, unless `measured`: first_prompt, which is the tool list and
-        a bit more."""
+    def tool_list(self, session: Session, model: str | None) -> float:
+        """Claude Code's tool list as `session` measured it (Session.tool_list),
+        in `model`'s tokens; 0 until it has."""
         found = session.tool_list
-        if found is None and not session.scripted:
-            found = (self.measured_prefix.get((session.cwd, session.entrypoint))
-                     or self.measured_prefix.get(session.entrypoint or ""))
-        if found is not None:
-            return self.facts.convert(found[0], found[1], model)
-        return 0.0 if measured else self.first_prompt(session, model)
-
-    def first_prompt(self, session: Session, model: str | None) -> float:
-        """What every request of `session` sends before the conversation: the tool
-        list, the system prompt, and what Claude Code attaches at the start (the
-        environment, the agent, skill and tool listings), plus a first message. The
-        smallest first prompt among this session and the other interactive ones in
-        its folder from the same app, since a first message may paste a whole file;
-        a scripted run can bring a system prompt of its own, so only its own."""
-        peers = [session] if session.scripted else [
-            s for s in self.folder(session.cwd) if s.entrypoint == session.entrypoint]
-        return min((self.prefix_on(s, model) for s in peers if s.prefix), default=0.0)
-
-    def summary_size(self, conversation: int) -> int:
-        """Tokens /compact's summary will likely take for a conversation this
-        size: the median of the summaries seen for conversations within 2× of
-        it, else SUMMARY_SHARE of it, within SUMMARY_MIN and SUMMARY_MAX."""
-        near = [post for pre, post in self.summaries.values() if conversation / 2 <= pre <= conversation * 2]
-        if near:
-            return round(median(near))
-        return round(min(SUMMARY_MAX, max(SUMMARY_MIN, SUMMARY_SHARE * conversation)))
-
-    def shared_prefix(self, session: Session, model: str | None, now: float) -> int:
-        """Tokens of `session`'s next request that `model` likely has cached
-        when its conversation's own cache can't be read: its tool list
-        (research/AI-TOKENOMICS-GUIDE.md, Appendix B). What usually happens, not what's
-        certain:
-
-        - on its own model with a 1-hour cache, the tool list was read back
-          on 36 of 39 cold starts measured (after hours idle, too: something
-          usdash can't see keeps it cached);
-        - otherwise only if a session in the same folder, from the same app
-          and with the same cache lifetime (the 5-minute and 1-hour tool
-          lists differ), used that model within that lifetime. This session
-          counts too, if it left that model a moment ago.
-
-        Another session shares at most its own first prompt, so the best match
-        among those still cached is the estimate."""
-        own, shared = self.tool_list(session, model), 0.0
-        ttl = session.ttl or FIVE_MINUTES
-        if model_key(model) == model_key(session.model) and ttl >= ONE_HOUR:
-            return round(own)
-        for other in self.folder(session.cwd):
-            if (other.entrypoint == session.entrypoint and (other.ttl or FIVE_MINUTES) == ttl
-                    and other.cached_on(model, now)):
-                shared = max(shared, min(own, self.prefix_on(other, model)))
-        return round(shared)
+        return 0.0 if found is None else self.facts.convert(found[0], found[1], model)
 
     def apply_desktop(self, desktop: dict[str, dict]) -> None:
         """Titles and archive state from the Desktop app's own session files."""
