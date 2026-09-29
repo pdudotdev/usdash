@@ -447,7 +447,8 @@ class Store:
                     if main.touched is not None and started > main.touched:
                         main.touched = started
             elif data.get("subtype") == "away_summary" and record.when is not None:
-                # A recap resends the conversation: it reads the cache and restarts its clock.
+                # A recap resends the conversation: it reads the cache (or, once that has run out,
+                # writes it again) and restarts its clock.
                 started = record.when - RECAP_LAG
                 if main.touched is not None and started > main.touched:
                     main.touched = started

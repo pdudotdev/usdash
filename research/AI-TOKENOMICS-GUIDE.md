@@ -2,7 +2,7 @@
 
 How the cost of using a large language model is built, why it moves, and how to reason about any new case from first principles. Written around Claude and Claude Code, where every number here was checked. The principles carry over to any provider that bills by the token and caches prompts.
 
-**Checked on 2026-09-28** (Sonnet 5.5 added, and Claude Code's caching doc re-read, on 2026-09-29) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
+**Checked on 2026-09-28** (Sonnet 5.5 added, Claude Code's caching doc re-read and the cache lifetime re-measured, on 2026-09-29) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
 
 ---
 
@@ -141,7 +141,8 @@ reads to break even = (write multiplier − 1) ÷ (1 − r)
 - **Two lifetimes:** 5 minutes (the default) or 1 hour. The 1-hour cache costs 2× input to write instead of 1.25×; reads cost the same.
 - **The clock starts at the start of the request** that wrote or read the entry, not when the reply ends. Generation time eats into it: after a 4-minute reply on a 5-minute cache, the next request has about a minute.
 - **Every read restarts the clock.** A long agent run stays warm as long as each step starts within the lifetime of the previous step's start.
-- **The lifetime is a minimum.** Entries are deleted "promptly, though not immediately" after it. In real sessions a 5-minute entry was still there 6¾ minutes later on some requests and gone after 5⅔ on others (Appendix B). Plan on the minimum; treat anything longer as luck.
+- **The lifetime is a minimum.** Entries are deleted "promptly, though not immediately" after it. In real sessions one 5-minute entry was read back half a minute past its lifetime, and two others were gone at 5¾ and 10½ minutes (Appendix B). Plan on the minimum; treat anything longer as luck.
+- **Requests you don't see use it too.** Claude Code's recap, usually written within 4 minutes of its last reply, re-sends the conversation: it restarts the clock, and one written after the cache had run out wrote the conversation again. Other unlogged requests sometimes cache the conversation with its latest reply (Appendix B).
 
 **Choosing between them.** The 1-hour cache costs an extra 0.75 × input for every token written. A pause of between 5 and 60 minutes on a 5-minute cache costs re-writing the whole context. So the 1-hour cache wins when:
 
@@ -172,7 +173,7 @@ What doesn't break it: appending messages, tool calls and results. Mid-conversat
 **Where the API and a client differ, check the client.** Examples from Claude Code:
 - **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5, Sonnet 5.5 and Fable 5.1 (with an API key or subscription; not on Bedrock or Google Cloud). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
 - **Fast mode:** the API table says switching speed invalidates system and messages. Claude Code sends the fast-mode header once per conversation, so only turning it on the first time costs a re-write. Turning it off and on again later keeps the cache.
-- **Resuming:** Claude Code keeps the system prompt a conversation started with, so a resumed session reads back whatever is still within the lifetime (6 of 6 real resumes did; Appendix B).
+- **Resuming:** Claude Code keeps the system prompt a conversation started with, so a resumed session reads back whatever is still within the lifetime (8 of 10 real resumes did; the other two read back only the tool list; Appendix B).
 - **MCP servers:** connecting or removing one changes the tool list only if its tools aren't deferred; by default they are.
 - **Editing CLAUDE.md mid-session:** doesn't break the cache, and doesn't take effect until `/clear`, `/compact` or a restart.
 
@@ -297,8 +298,8 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 ## 18. Costs you don't see
 
 Clients make requests you don't type, and not all of them appear in session logs:
-- **Claude Code:** session titles, prompt suggestions (mostly cache reads), `/compact`'s summarising request, WebSearch's sub-requests, background summaries for `--resume`.
-- **How much, in real sessions:** the transcripts held 56–98% of what Claude Code itself billed, 85–95% for most sessions. In one interactive session with a `/compact` they held 87%. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
+- **Claude Code:** session titles, prompt suggestions (mostly cache reads), the recap it writes while you're away, `/compact`'s summarising request, WebSearch's sub-requests, background summaries for `--resume`.
+- **How much, in real sessions:** the transcripts held 41–100% of what Claude Code itself billed (a median of 89%), least in very short sessions and in ones that ran many subagents. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
 - **The FinOps rule:** reconcile against the provider's usage report, the client's own total (`/usage`, `cost-state`), or an OpenTelemetry export, not only against your logs.
 
 ---
@@ -425,18 +426,20 @@ What building and reviewing usdash measured in real Claude Code transcripts, com
 
 | Question | What was measured |
 |---|---|
-| Does the next request read back the whole previous prompt? | Yes: in 103 consecutive same-model pairs, to within 100 tokens (the uncached remainder was at most 0.04% of a prompt) |
+| Does the next request read back the whole previous prompt? | Yes: 1,938 of 1,939 same-model pairs within the lifetime, to within 100 tokens (the uncached remainder was at most 0.04% of a prompt). The other changed effort on Sonnet 5, which re-writes |
 | How big is Claude Code's tool list? | CLI 22–25k tokens; VS Code extension 20.8k; Desktop app 36.3k; `claude -p` 10–20k depending on model and version |
 | Is the tool list cached when the conversation's cache isn't? | Usually. Own model on a 1-hour cache: 36 of 39 cold starts read it back, once after 11¾ hours idle. 5-minute cache: 9 of 48 with no other session using the model, 13 of 22 with one. Another model with no session on it: once yes (Sonnet 5), once no (Opus 5.5) |
-| Is the lifetime exact? | No, a minimum: a 5-minute entry read back after 6.7 minutes on some requests, missed from 5.65 minutes on others |
+| Is the lifetime exact? | No, a minimum, but only just. With nothing refreshing it in between, one 5-minute entry was read back 5.6 minutes after its last use (all but its newest 220 tokens); 2 others were gone at 5.8 and 10.6 minutes |
+| Does Claude Code's recap refresh the cache? | It re-sends the conversation: a recap written 74 minutes into a pause, after the 1-hour cache had run out, wrote it again, and the next message, 15 minutes later, read all of it back. 27 of 40 recaps came within 4 minutes of the last reply, the rest 4–74 minutes after |
+| Do other unlogged requests touch the conversation's cache? | Sometimes: with no recap in between, 140 of 1,913 next messages within the lifetime read back more than the previous request had sent, so an unlogged request had cached the conversation with its latest reply |
 | Tokenizer ratio, old to new? | 0.758 in one switch, 0.74 in another; Anthropic says ~30% more tokens (0.77) |
 | Does an effort change keep the cache? | Opus 5.5 in Claude Code: 7 of 7 read everything back. Opus 5 in Claude Code: 7% read back |
-| Does resuming keep the cache? | Within the lifetime: 6 of 6 resumes read the whole conversation back (1-hour and 5-minute caches, one after a file edit). After ≥ 92 minutes: 31 of 31 re-wrote it |
+| Does resuming keep the cache? | Within the lifetime: 8 of 10 resumes read the whole conversation back (1-hour and 5-minute caches, one after a file edit); the other two, 3½ and 40 minutes after the last request, read back only the tool list. After ≥ 92 minutes: 31 of 31 re-wrote it |
 | What does a warm `/compact` request read? | What the latest turn's first request had cached: 46,885 of 56,584 tokens after a four-turn session, 15,804 of 58,787 when one turn built the context. The rest went at the input price; it wrote only 147–555 tokens |
 | And a cold one? | The tool list (13,790), the rest (37,628) at the input price |
 | How big is the summary? | Its output: 1,065–3,804 tokens. Its `postTokens`: 3.2–6k for 54–65k conversations, 13,984 at 450k, 16,088 at 972k |
 | How big is the conversation right after `/compact`? | 33,335 / 24,987 / 20,315 tokens in three sessions. Tool list + `postTokens` was 13–32% short; first prompt + `postTokens` came within 6% |
-| How much do the transcripts miss? | They held 56–98% of Claude Code's own totals (85–95% for most); 87% with a `/compact`; 28% in a session with four web searches |
+| How much do the transcripts miss? | They held 41–100% of Claude Code's own totals in 34 exited sessions (quartiles 72%, 89%, 99%), least in very short sessions and in ones that ran many subagents; 28% in a session with four web searches |
 | A real model switch? | Moving a warm 55.9k conversation from Opus 5.5 to Sonnet 5 cost $0.143, against about $0.02 to stay |
 
 # Appendix C: Glossary
