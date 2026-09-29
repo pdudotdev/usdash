@@ -15,10 +15,13 @@ transcripts don't log cost: /compact's is one of them.
     3ba7fa9a  the same with no file written
     5b175e45  the same on a 5-minute cache, resumed 18 seconds after the last reply
 """
-import pytest
-from conftest import FIXTURES, PRICES
+import json
 
-from usdash import engine
+import pytest
+from conftest import FIXTURES, PRICES, T0, Transcript
+from sanity.manual import ledger
+
+from usdash import app, engine
 from usdash.models import model_key
 from usdash.prices import request_cost
 from usdash.sessions import Store
@@ -127,3 +130,36 @@ def test_a_switch_from_the_older_tokenizer_is_a_rewrite(records):
     misses = sum(day.get("model switch", 0) for day in store.rewrites.values())
     assert misses == pytest.approx(sonnet.rewrite_cost + opus.rewrite_cost)
     assert session.total == pytest.approx(0.6367772)  # exited: Claude Code's own total
+
+
+# --- manual.py's `ledger`, which the manual checks against Claude Code's records use --------
+
+
+def verdicts(text: str) -> list[str]:
+    return [line.split("  ")[-1] for line in text.splitlines() if " Claude Code " in line and "$" in line]
+
+
+def test_the_ledger_command_holds_usdash_to_claude_codes_own_record():
+    # Per model, the transcripts' tokens and cost (usdash's figures) next to Claude Code's own.
+    text = ledger("4fe42f1c", CHECKS)
+    assert text.splitlines()[0].startswith("4fe42f1c (shop): Claude Code's total $0.6368")
+    haiku, opus, sonnet = verdicts(text)
+    assert sonnet == "✓ same tokens, same cost"  # every Sonnet 5 request logged, and priced the same
+    assert haiku == opus == "Claude Code counted more: requests the transcripts don't log"
+
+
+def test_the_ledger_command_waits_for_the_session_to_exit(tmp_path):
+    folder = tmp_path / "-home-user-proj"
+    folder.mkdir()
+    t = Transcript(session="open-1")
+    t.turn(T0, write=40_000)
+    (folder / "open-1.jsonl").write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
+    assert ledger("open-1", tmp_path) == "open-1: no total of Claude Code's yet: /exit the session first"
+
+
+def test_the_ledger_command_catches_a_wrong_price(monkeypatch):
+    # usdash pricing Sonnet 5's output at twice the list price: the same tokens, a different cost.
+    shipped = app.load_pricing()
+    wrong = dict(shipped.models, **{"claude-sonnet-5": dict(shipped.models["claude-sonnet-5"], output=20)})
+    monkeypatch.setattr(app, "load_pricing", lambda: type(shipped)(wrong, shipped.web_search, shipped.verified))
+    assert verdicts(ledger("4fe42f1c", CHECKS))[2] == "✗ same tokens, different cost"

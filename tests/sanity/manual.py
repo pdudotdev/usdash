@@ -7,8 +7,8 @@ runs. Run them after a Claude Code update, after a change to usdash's screen or
 prices, or if the header reports records of unknown types.
 
 **What they cost:** real requests. On an API key, a full run costs a few
-dollars (checks 18 and 30 cost the most); on a subscription, it uses plan
-usage. The long-turn checks (23–27) take about 10 minutes each.
+dollars (checks 18, 30, 33 and 34 cost the most); on a subscription, it uses
+plan usage, except fast mode, which draws on usage credits. The long-turn checks (23–27) take about 10 minutes each.
 
 ### How to run them (a person, or an agent with a terminal)
 
@@ -25,7 +25,7 @@ usage. The long-turn checks (23–27) take about 10 minutes each.
   characters of the session id, as in `/status`). The Claude Code session running
   these checks shows up on the dashboard too: ignore it.
 - **Labels:** `[GUI]` needs the VS Code extension or the Desktop app;
-  `[remote]` needs a second machine; `[record]` settles an open question: report
+  `[remote]` needs a second machine; `[API key]` needs a Claude Console API key; `[record]` settles an open question: report
   what you see, there's no fail. Skip what you can't do, and say why.
 - **Transcripts,** where a check asks for one: one file per session,
   `~/.claude/projects/<its folder's path, with / and spaces as ->/<session id>.jsonl`
@@ -108,8 +108,102 @@ These check the cache clock when one turn runs longer than the cache lifetime. O
 | 30 | In an Opus 5.5 session with some context, turn `/fast` on and send a message. Then turn it off and send another | With fast on: MODEL says `Opus 5.5 … fast`, the header adds `speed change`, the `now` amount is about twice CONTEXT × $0.20 per million, and Stats' by model has an `Opus 5.5 … fast` row. With it off again: MODEL drops `fast`, and no new cause | Fast mode is priced from each reply's `usage.speed`. Turning it on adds a header that's part of the cache key; Claude Code keeps sending it, so turning it off keeps the cache |
 | 31 | Ask Claude Code to search the web for something. Note the session's TOTAL, then `/exit` | Before `/exit`, TOTAL shows only the logged requests. After, TOTAL (now Claude Code's figure) is at least N × $0.01 above the noted one, N being the `searchCount` in the tool result's `toolUseResult` in the transcript | Claude Code's WebSearch tool searches in a request of its own that the transcripts don't log; Claude Code's own total counts it |
 
+### Amounts against Claude Code's own records
+
+When a session exits, Claude Code writes its own cost for each model it used (`modelUsage`, in the transcript's last `cost-state` record). `python3 tests/sanity/manual.py ledger <session id, or its first characters>`, run from the usdash clone with its virtual environment active, prints each model's tokens and cost as the transcripts show them (usdash's figures, at the prices usdash last read) next to Claude Code's. Where the tokens are the same, the costs must be too, to the millionth of a dollar: `✓ same tokens, same cost`. A model whose tokens differ ran requests the transcripts don't log, such as Claude Code's own on Haiku 4.5. The checks use one run, in a scratch folder: `claude -p --allowedTools "Bash(date)" "Run date, then count from 1 to 100 in words, one per line"`. It exits at once, and its two requests price every kind of token: the second reads back what the first wrote, and writes a few hundred tokens of output. `ls -t ~/.claude/projects/*/*.jsonl | head -1` finds its transcript.
+
+| # | Do this | Pass criteria (`ledger`) | Why |
+|---|---|---|---|
+| 32 | The run on your usual model, then `ledger` on its session. Then again with `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` in front, for the 5-minute cache's write price (or `1h`, on an API key) | Its model's row: `✓ same tokens, same cost`, both times. Any other model is counted by Claude Code only | The method the checks below rely on: Claude Code prices the same tokens as usdash does |
+| 33 | The run with `--model claude-sonnet-5-5`, then `--model claude-opus-5`, then `--model claude-fable-5-1` (skip one your plan doesn't offer; about $1 in all at list prices) | Each run's model: `✓ same tokens, same cost` | usdash prices every model from the pricing page; these are the ones your own use hasn't checked yet |
+| 34 | Fast mode: the run with `--settings '{"fastMode": true}'` on Opus 5.5, then the same with `--model claude-opus-5` | Each row notes `speed fast` and says `✓ same tokens, same cost` | Fast mode's input and output prices, with the cache multipliers on top of them |
+| 35 | `[API key]` US-only inference: with an API key from a Console workspace whose default inference geo is US, the run on Opus 5.5 | The Opus 5.5 row notes `region us` and says `✓ same tokens, same cost`. `[record]` Whether Claude Code's own requests on Haiku 4.5, which can't run US-only, fail there | US-only inference costs 1.1× on every kind of token for Claude 4.6 and later; usdash reads it from each reply's `inference_geo` |
+| 36 | Ask a session to search the web for today's date, `/exit`, then `ledger` | The searches show under Claude Code only, and that model's Claude Code cost is above the transcripts' by at least the searches × $0.01. `[record]` Whether a logged request carried searches of its own (Stats' where the money goes then has a `web searches` row) | Claude Code's WebSearch tool searches in a request of its own that the transcripts don't log |
+| 37 | `[GUI]` In the Desktop app's Code tab, start a session, send a message or two, close it, then `ledger` on its session | Its model's row: `✓ same tokens, same cost`. `[record]` Whether Claude Code's total comes out $0.00 instead, with no models listed: one Desktop session here recorded $0.00 for $0.90 of Sonnet 5 requests | Once a session exits, TOTAL shows Claude Code's own total |
+
 **Overall pass:** after `/exit`, each session's TOTAL is Claude Code's own figure. On an API key, an open session's TOTAL is a little below `/cost` in that session (Claude Code doesn't log some requests; the README's Limitations has the measured gap). Nothing in the header is yellow.
 """
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+def ledger(session: str, projects: Path | None = None) -> str:
+    """For a session that exited: each model's tokens and cost as its transcripts show them
+    (usdash's figures) next to Claude Code's own, the `modelUsage` of its last `cost-state`."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # this clone's usdash
+    from usdash.app import knowledge
+    from usdash.models import model_key
+    from usdash.sessions import Store
+    from usdash.transcripts import Tailer, default_projects_dir
+
+    root = Path(projects or default_projects_dir()).expanduser()
+    found = sorted(root.glob(f"*/{session}*.jsonl"))
+    if len(found) != 1:
+        return f"{session}: {len(found)} transcripts match in {root}"
+    main = found[0]
+    tailer = Tailer(root)
+    # Only this session's files, read the way the dashboard reads them.
+    tailer.transcripts = lambda: [main, *sorted((main.parent / main.stem / "subagents").glob("*.jsonl"))]
+    known = knowledge(offline=True)  # the prices usdash last read, else those it ships with: no network
+    store = Store(known.prices, known.facts, known.web_search)
+    store.add_all(tailer.poll())
+    s = store.sessions[main.stem]
+    states = [json.loads(line) for line in main.open() if '"cost-state"' in line]
+    states = [d for d in states if d.get("type") == "cost-state"]
+    if not states:
+        return f"{s.id[:8]}: no total of Claude Code's yet: /exit the session first"
+    if not s.ended:
+        return f"{s.id[:8]}: resumed since it last exited: /exit it again"
+
+    def blank():
+        return {"tokens": [0, 0, 0, 0], "searches": 0, "cost": 0.0, "unpriced": 0, "notes": set()}
+
+    ours, theirs = defaultdict(blank), defaultdict(blank)
+    for r in s.requests.values():
+        row, u = ours[r.family], r.usage
+        for i, value in enumerate((u["fresh"], u["output"], u["read"], u["write_5m"] + u["write_1h"])):
+            row["tokens"][i] += value
+        row["searches"] += u["searches"]
+        if r.cost is None:
+            row["unpriced"] += 1
+        else:
+            row["cost"] += r.cost
+        row["notes"] |= {note for note, on in (("speed fast", r.speed == "fast"), ("region us", r.geo == "us")) if on}
+    for name, use in (states[-1].get("modelUsage") or {}).items():
+        row = theirs[model_key(name)]
+        for i, key in enumerate(("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")):
+            row["tokens"][i] += use.get(key) or 0
+        row["searches"] += use.get("webSearchRequests") or 0
+        row["cost"] += use.get("costUSD") or 0.0
+
+    lines = [f"{s.id[:8]} ({s.project}): Claude Code's total ${states[-1].get('totalCostUSD') or 0:.4f}, "
+             f"the transcripts' ${s.cost_at_state:.4f}", "",
+             f"{'MODEL':20}{'':13}{'INPUT':>9}{'OUTPUT':>10}{'READ':>12}{'WRITTEN':>12}{'SEARCHES':>10}{'COST':>13}"]
+    for family in sorted(set(ours) | set(theirs), key=str):
+        a, b = ours.get(family), theirs.get(family)
+        if a is None:
+            verdict = "counted by Claude Code only: requests the transcripts don't log"
+        elif b is None:
+            verdict = "✗ not in Claude Code's record"
+        elif a["unpriced"]:
+            verdict = "✗ usdash has no price for it"
+        elif a["tokens"] == b["tokens"]:
+            verdict = "✓ same tokens, same cost" if abs(a["cost"] - b["cost"]) < 1e-6 else "✗ same tokens, different cost"
+        elif all(x <= y for x, y in zip(a["tokens"], b["tokens"])):
+            verdict = "Claude Code counted more: requests the transcripts don't log"
+        else:
+            verdict = "✗ the transcripts show more than Claude Code counted"
+        for who, row, note in (("transcripts", a, " · ".join(sorted(a["notes"])) if a else ""), ("Claude Code", b, verdict)):
+            row = row or blank()
+            numbers = "".join(f"{value:>{width},}" for value, width in zip([*row["tokens"], row["searches"]], (9, 10, 12, 12, 10)))
+            lines.append(f"{family if who == 'transcripts' else '':20}{who:13}{numbers}{'$' + format(row['cost'], '.6f'):>13}  {note}".rstrip())
+    return "\n".join(lines)
+
 
 if __name__ == "__main__":
-    print(__doc__)
+    if len(sys.argv) == 3 and sys.argv[1] == "ledger":
+        print(ledger(sys.argv[2]))
+    else:
+        print(__doc__)
