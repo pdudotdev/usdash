@@ -22,7 +22,8 @@ def run(tmp_path: Path, source: str | None = None, **stubs: str) -> subprocess.C
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for tool in ("uname", "mktemp", "rm", "sh"):
-        (bin_dir / tool).symlink_to(shutil.which(tool))
+        if tool not in stubs:
+            (bin_dir / tool).symlink_to(shutil.which(tool))
     for name, script in stubs.items():
         stub(bin_dir, name, script)
     env = {"HOME": str(tmp_path / "home"), "PATH": str(bin_dir), **({"USDASH_SOURCE": source} if source else {})}
@@ -61,3 +62,10 @@ def test_usdash_source_installs_from_elsewhere(tmp_path):
     result = run(tmp_path, source=".", uv=f'echo "$*" >> "{log}"\n')  # CI installs from its checkout
     assert result.returncode == 0, result.stderr
     assert log.read_text().splitlines()[0] == "tool install --force --reinstall-package usdash ."
+
+
+def test_another_system_is_turned_away(tmp_path):
+    log = tmp_path / "uv.log"
+    result = run(tmp_path, uname="echo FreeBSD\n", uv=f'echo "$*" >> "{log}"\n')
+    assert result.returncode == 1 and "this installer is for macOS and Linux" in result.stderr
+    assert not log.exists()  # nothing installed

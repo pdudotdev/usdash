@@ -181,6 +181,25 @@ def test_an_earlier_row_with_nothing_in_it_is_left_out(store):
     assert len(days) == 13 and days[0].day == "2026-09-17" and all(d.day != st.EARLIER for d in days)
 
 
+def test_last_5_hours_are_by_when_requests_ended(store):
+    t = Transcript()
+    t.turn(at(29, 9, 59, 50), write=10_000, took=15)  # started before 10:00, ended after
+    t.turn(at(29, 9, 30), write=10_000, took=10, message_id="early")  # all before 10:00
+    t.into(store)
+    s = st.compute(store, NOW, WINDOW)
+    assert s.recent == pytest.approx(cost(OPUS, w1h=10_000)) and s.spend == pytest.approx(2 * cost(OPUS, w1h=10_000))
+
+
+def test_a_subagents_prompt_is_not_the_sessions_peak(store):
+    t = Transcript()
+    t.turn(at(29, 10), write=10_000)
+    t.user("read everything", at(29, 10, 1), subagent="a1")
+    t.reply(at(29, 10, 2), subagent="a1", write=90_000)  # a subagent's own, bigger conversation
+    t.into(store)
+    (row,) = st.compute(store, NOW, WINDOW).top
+    assert row.peak == 10_002
+
+
 def test_today_has_a_row_even_with_nothing_spent_yet(store):
     t = Transcript()
     t.turn(at(28, 12), write=10_000)
@@ -317,9 +336,10 @@ def test_the_figures_are_kept_while_nothing_changes_and_refreshed_every_few_seco
     t = Transcript(session="dddd-4444")
     t.turn(NOW - 10, write=1_000)
     t.into(store)
-    # A busy session brings records every second: walking every request each time would be wasted.
-    assert st.compute(store, NOW + st.REFRESH - 1, WINDOW) is first
-    assert st.compute(store, NOW + st.REFRESH, WINDOW).requests == 9
+    # A busy session brings records every second: walking every request each time would be wasted,
+    # but the figures are never more than 5 seconds behind.
+    assert st.compute(store, NOW + 4, WINDOW) is first
+    assert st.compute(store, NOW + 5, WINDOW).requests == 9
     later = st.compute(store, NOW + 60, WINDOW)  # a new minute: the period moved on
     assert later is not first and later.requests == 9
 
@@ -400,6 +420,15 @@ def test_no_misses_is_said_in_green(store):
     t.into(store)
     panel = ui.cache_misses(st.compute(store, NOW, WINDOW), "3d")
     assert panel.renderable.plain == "no cache misses in the last 3d" and str(panel.renderable.style) == "green"
+
+
+def test_the_top_sessions_title_gives_their_share_once_there_are_more(store):
+    for i in range(6):  # six sessions, spending 1, 2, … 6 units: the top 5 are 20 of 21
+        t = Transcript(session=f"s{i}")
+        t.turn(at(29, 10, i), write=10_000 * (i + 1), fresh=0, out=0)
+        t.into(store)
+    text = render(store, ui.View(now=NOW, window=WINDOW, mode="stats"), 160)
+    assert "top sessions · top 5 = 95% of spend" in text
 
 
 def test_the_stats_scroll_one_row_at_a_time(store):
