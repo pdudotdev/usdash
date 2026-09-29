@@ -133,6 +133,8 @@ class Tailer:
     clock: object = time.monotonic
     files: dict[Path, _Followed] = field(default_factory=dict)
     last_scan: float | None = None
+    # The oldest transcript's last write, those left alone included: the history reaches back that far.
+    oldest: float | None = None
     unknown_types: Counter = field(default_factory=Counter)
     bad_lines: int = 0
 
@@ -166,6 +168,7 @@ class Tailer:
                     stat = path.stat()
                 except OSError:
                     continue
+                self.oldest = stat.st_mtime if self.oldest is None else min(self.oldest, stat.st_mtime)
                 state = self.files.get(path)
                 if state is None:
                     if stat.st_mtime < self.since and not self._session_followed(path):

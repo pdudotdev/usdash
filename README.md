@@ -104,7 +104,7 @@ Under the summary, the panels come in pairs, in the order you'd ask: **when, and
 
 | Panel | What it shows |
 |---|---|
-| **Summary** | SPEND, and per day over a period longer than a day; the last 5 hours (for a period longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
+| **Summary** | SPEND, and per day over the days the transcripts cover (`since` the day they begin, if that's after the period does; none for a day or less); the last 5 hours (for a period longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, the subagents' share of SPEND, and how much of Claude Code's own totals the transcripts hold, in the sessions that exited ([Limitations](#️-limitations)) |
 | **By day** | The last 5 local days, today included: SPEND with a bar, requests, the share read from cache (green from 90%, yellow from 30%, red below) and what cache misses added. The rest of the period is one `earlier` row above them, with no bar (it sums many days), and none at all if nothing was spent then |
 | **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens: reads, writes and uncached input together. A web searches row appears if any logged request made server-side searches |
 | **By model** | Each model at each effort, and fast mode, as a row of its own: its share of requests against its share of SPEND. A model and effort with 20% of the requests and 70% of the spend is the first place to look for savings |
@@ -192,7 +192,7 @@ pip install -e .
 | Option | Meaning | Default |
 |---|---|---|
 | `--window 8h` | Show sessions active this recently | `5d` |
-| `--period 7d` | What the stats cover | `30d` |
+| `--period 7d` | What the stats cover (Claude Code keeps transcripts 30 days by default: [Limitations](#️-limitations)) | `30d` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
 | `--stats` | Start in the Stats view | off |
 | `--once` | Print one screen and exit | off |
@@ -223,7 +223,13 @@ pip install -e .
 Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION` in the session. That happens in a terminal started from inside a Claude Code session (e.g. a terminal app launched by one): it inherits that variable, and every `claude` started from it saves no transcript. Quit the terminal app and open it again from the Dock or launcher.
 
 ▫️ **Amounts read low until a session exits:**
-Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, the recap it writes while you're away, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 41–100% of what Claude Code itself counted (a median of 89%, and over 72% in three sessions of four), least in very short sessions and in ones that ran many subagents. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request.
+Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, the recap it writes while you're away, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 41–100% of what Claude Code itself counted (a median of 89%, and over 72% in three sessions of four), least in very short sessions and in ones that ran many subagents. Weighted by cost, they held 84%: 84% on Opus 5.5, 23% on Haiku 4.5, which Claude Code uses for requests of its own. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request. The Stats summary says how much of Claude Code's totals your own exited sessions' transcripts hold: for a budget, divide SPEND by that share to estimate the full amount at list prices.
+
+▫️ **Past requests are priced at today's list prices:**
+usdash reads the prices at start and prices every request with them, whenever it ran. After Anthropic changes a price, earlier days are priced anew too, and can differ from what was billed then.
+
+▫️ **The stats reach back only as far as the transcripts do:**
+Claude Code deletes a session's transcript 30 days after its last activity by default ([`cleanupPeriodDays`](https://code.claude.com/docs/en/data-usage), in its settings; Desktop sessions are kept). A `--period` longer than that finds nothing older unless you raise it. When the transcripts begin after the period does, the Stats average a day covers only the days they do, and says since when.
 
 ▫️ **Claude Code's web search isn't in any amount until the session exits:**
 Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. Claude Code's own total counts them, so an exited session's TOTAL includes them. They can be most of a session's cost: in one real `claude -p` session, the requests behind four searches were 72% of it.

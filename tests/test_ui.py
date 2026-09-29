@@ -478,6 +478,23 @@ def test_a_poll_is_a_change_when_any_session_gained_a_request(tmp_path):
     assert not dash.poll()
 
 
+def test_an_older_transcript_on_disk_means_the_history_reaches_back_past_it(tmp_path):
+    # Too old to read for the period, but there: the days before the first record read weren't missing data.
+    folder = tmp_path / "-home-user-proj"
+    folder.mkdir()
+    for session, when in (("new", T0), ("old", T0 - 40 * 86400)):
+        t = Transcript(session=session)
+        t.turn(when, write=40_000)
+        path = folder / f"{session}.jsonl"
+        path.write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
+        os.utime(path, (when + 60,) * 2)
+    dash = app.App(tmp_path, since=T0 - 30 * 86400, window=ONE_HOUR, clock=lambda: T0 + 60)
+    dash.poll()
+    assert "old" not in dash.store.sessions  # not read
+    assert dash.store.history_from == pytest.approx(T0 - 40 * 86400 + 60)  # its last write
+    assert stats.compute(dash.store, T0 + 60, 30 * 86400).since is None
+
+
 def test_history_reaches_back_to_the_stats_period():
     now = datetime(2026, 9, 28, 15, 0).timestamp()
     assert app.history_start(now, 5 * 86400, 30 * 86400) == now - 30 * 86400

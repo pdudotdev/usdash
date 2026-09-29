@@ -63,7 +63,9 @@ def sessions() -> Store:
     billing.record("ai-title", aiTitle="Migrate billing to v2")
     grow(billing, T - 5 * 3600, (42_000, 150_000, 290_000, 420_000),
          ("plan the migration", "move the invoice models", "port the webhooks", "run the backfill"), out=2_500)
-    billing.record("cost-state", totalCostUSD=6.9)
+    # Claude Code's own total at each exit: about 1.15 times what the transcripts show, as in real
+    # sessions (84% of it logged, weighted by cost); never less.
+    billing.record("cost-state", totalCostUSD=4.56)
     # Closed script runs in one folder: one row.
     runs = []
     for i in range(3):
@@ -98,7 +100,7 @@ def history() -> list[Transcript]:
     sdk.user("find the callers", T - 4 * DAY + 70, subagent="a1")
     sdk.reply(T - 4 * DAY + 90, subagent="a1", model="claude-haiku-4-5", effort=None, write=30_000, ttl="5m", out=800)
     sdk.reply(T - 4 * DAY + 120, read=172_002, write=6_000, out=1_200)
-    sdk.record("cost-state", totalCostUSD=4.1)
+    sdk.record("cost-state", totalCostUSD=3.57)
     # Friday: effort turned down on Opus 5, which re-writes the conversation (Claude Code keeps the
     # cache across an effort change only on Opus 5.5, Sonnet 5.5 and Fable 5.1).
     login = Transcript(session="c4d2e8a1", cwd="/home/you/shop")
@@ -109,7 +111,7 @@ def history() -> list[Transcript]:
                out=900)
     login.turn(T - 3 * DAY + 300, text="just rerun the last command", model="claude-opus-5", effort="low",
                read=23_300, write=49_000, out=300)
-    login.record("cost-state", totalCostUSD=0.9)
+    login.record("cost-state", totalCostUSD=1.26)
     # Saturday: resumed, and missed the cache (something changed at the restart).
     docs = Transcript(session="0a9e5f13", cwd="/home/you/billing")
     docs.record("ai-title", aiTitle="Docs pass")
@@ -122,7 +124,7 @@ def history() -> list[Transcript]:
     infra.record("ai-title", aiTitle="Review the Terraform plan")
     infra.turn(T - DAY, text="review this plan", read=23_300, write=60_000, out=3_000, speed="standard")
     infra.turn(T - DAY + 120, text="now the staging one", read=23_300, write=64_000, out=2_000, speed="fast")
-    infra.record("cost-state", totalCostUSD=2.3)
+    infra.record("cost-state", totalCostUSD=1.91)
     return [*earlier, sdk, login, docs, infra]
 
 

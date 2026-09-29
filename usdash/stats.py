@@ -2,15 +2,17 @@
 
 Everything here is a sum over logged requests with a known price, whose end
 falls in the period (30 days by default, up to now): the same requests and
-amounts as the sessions view, grouped other ways. Nothing is estimated. Pure
-data: ui.py draws it.
+amounts as the sessions view, grouped other ways. Nothing is estimated. The
+one figure from outside the transcripts is Claude Code's own total for the
+sessions that exited, to say how much of it the transcripts hold. Pure data:
+ui.py draws it.
 """
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import PurePath
 
-from .sessions import Session, Store, reason_group
+from .sessions import Session, Store, day_of, reason_group
 
 # Context-size bands, by the prompt a request sent: (upper bound, label).
 BANDS = ((50_000, "under 50k"), (100_000, "50–100k"), (200_000, "100–200k"), (500_000, "200–500k"),
@@ -121,11 +123,30 @@ class Stats:
     top: list[SessionRow] = field(default_factory=list)
     projects: list[Project] = field(default_factory=list)
     turns: list[Turn] = field(default_factory=list)  # the costliest TOP
+    history_from: float | None = None  # how far back the transcripts go (Store.history_from)
+    # The share of Claude Code's own totals that the transcripts held, in the period's sessions
+    # that exited (Claude Code counts requests its transcripts never log); None without any.
+    logged: float | None = None
+
+    @property
+    def covered_from(self) -> float:
+        """Where the data begins: the period's start, or the start of the first day the
+        transcripts cover, if that's later (a new install, or older transcripts deleted)."""
+        if self.history_from is None or self.history_from <= self.start:
+            return self.start
+        first = datetime.fromtimestamp(self.history_from).replace(hour=0, minute=0, second=0, microsecond=0)
+        return max(self.start, first.timestamp())
+
+    @property
+    def since(self) -> str | None:
+        """The day the data begins (YYYY-MM-DD), when that's after the period began."""
+        return day_of(self.covered_from) if self.covered_from > self.start else None
 
     @property
     def per_day(self) -> float | None:
-        """SPEND a day, over a period longer than a day."""
-        return self.spend / (self.period / 86400) if self.period > 86400 else None
+        """SPEND a day, over the days the data covers, when that's more than a day."""
+        days = (self.now - self.covered_from) / 86400
+        return self.spend / days if days > 1 else None
 
     @property
     def cached(self) -> float | None:
@@ -178,7 +199,7 @@ def compute(store: Store, now: float, period: int) -> Stats:
 
 def _compute(store: Store, now: float, period: int) -> Stats:
     start = now - period
-    stats = Stats(start, now, period)
+    stats = Stats(start, now, period, history_from=store.history_from)
     recent_from = now - RECENT if period > RECENT else None
     stats.recent = 0.0 if recent_from is not None else None
     days = {day: Day(day) for day in local_days(start, now)}
@@ -188,6 +209,7 @@ def _compute(store: Store, now: float, period: int) -> Stats:
     bands = [Band(label) for _, label in BANDS]
     rows: list[SessionRow] = []
     turns: list[Turn] = []
+    logged = counted_by_claude = 0.0  # exited sessions: the transcripts' cost, and Claude Code's own total, at the exit
     for session in store.sessions.values():
         typed = sorted(session.prompts.values())
         times = [when for when, _, _ in typed]
@@ -254,8 +276,12 @@ def _compute(store: Store, now: float, period: int) -> Stats:
                 turn.spend += cost
         if counted:
             rows.append(row)
+            if session.cost_state is not None:  # it exited: Claude Code wrote its own total, all requests counted
+                logged += session.cost_at_state
+                counted_by_claude += session.cost_state
         turns.extend(answers.values())
 
+    stats.logged = logged / counted_by_claude if counted_by_claude > 0 else None
     stats.sessions = len(rows)
     stats.days = fold_days(sorted(days.values(), key=lambda d: d.day))
     stats.kinds = [Kind(name, tokens, spend) for (name, _, _), (tokens, spend) in zip(KINDS, kinds) if tokens]
