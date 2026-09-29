@@ -612,6 +612,19 @@ def test_each_request_keeps_the_prices_it_paid(store):
     assert unknown.paid is None and unknown.cost is None
 
 
+def test_requests_that_paid_the_same_prices_share_them(store):
+    t = Transcript()
+    for i in range(3):
+        t.turn(T0 + 60 * i, write=10_000, speed="fast")
+    t.turn(T0 + 300, write=10_000)
+    t.into(store)
+    session = store.sessions["sess-1"]
+    *fast, standard = sorted(session.requests.values(), key=lambda r: r.start)
+    assert fast[0].paid is fast[1].paid is fast[2].paid  # one dict for all of them, not one each
+    assert standard.paid is not fast[0].paid and standard.paid["input"] == 4
+    assert store.price("claude-opus-5-5", session) is standard.paid  # the session's price: the same one
+
+
 @pytest.mark.parametrize(("cwd", "folder"), [
     ("/home/user/shop", "shop"),
     ("/Users/me/Library/Application Support/Claude/local-agent/abc", "no folder"),

@@ -17,7 +17,6 @@ class Facts:
     effort_keeps: frozenset[str]  # where Claude Code keeps the cache across an effort change
     old_tokenizer_before: tuple[int, int]  # models older than this version use the old tokenizer
     ratio: float  # the old tokenizer's tokens for one of the current tokenizer's
-    verified: str = ""
 
     def effort_keeps_cache(self, model: str | None) -> bool:
         """Whether an effort change on this model keeps the cache (never on a cloud provider)."""
@@ -39,4 +38,4 @@ def load_facts(path: str | Path = MODELS) -> Facts:
     data = yaml.safe_load(Path(path).read_text())
     major, minor = str(data["old_tokenizer_before"]).split(".")
     return Facts(frozenset(data["effort_keeps_cache"]), (int(major), int(minor)),
-                 float(data["old_tokenizer_ratio"]), str(data.get("verified", "")))
+                 float(data["old_tokenizer_ratio"]))

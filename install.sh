@@ -9,26 +9,32 @@
 # update usdash. USDASH_SOURCE installs from elsewhere (a folder, another URL).
 set -eu
 
+fail() {
+    echo "usdash: $*" >&2
+    exit 1
+}
+
 case "$(uname -s)" in
     Darwin | Linux) ;;
-    *)
-        echo "usdash: this installer is for macOS and Linux (try: pipx install usdash@git+https://github.com/pdudotdev/usdash)" >&2
-        exit 1
-        ;;
+    *) fail "this installer is for macOS and Linux (try: pipx install usdash@git+https://github.com/pdudotdev/usdash)" ;;
 esac
 
 if ! command -v uv > /dev/null 2>&1; then
     echo "Installing uv..."
+    # Downloaded first, then run: a failed download stops here and says so.
+    installer=$(mktemp)
+    trap 'rm -f "$installer"' EXIT
     if command -v curl > /dev/null 2>&1; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        curl -LsSf https://astral.sh/uv/install.sh -o "$installer" || fail "couldn't download uv's installer (see above)"
     elif command -v wget > /dev/null 2>&1; then
-        wget -qO- https://astral.sh/uv/install.sh | sh
+        wget -qO "$installer" https://astral.sh/uv/install.sh || fail "couldn't download uv's installer (see above)"
     else
-        echo "usdash: curl or wget is needed to install uv" >&2
-        exit 1
+        fail "curl or wget is needed to install uv"
     fi
-    PATH="$HOME/.local/bin:$PATH"  # where uv's installer puts it
+    sh "$installer" || fail "uv's installer failed (see above)"
+    PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$HOME/.local/bin:$PATH"  # where uv's installer puts it
     export PATH
+    command -v uv > /dev/null 2>&1 || fail "uv isn't on the PATH after installing it; install it from https://docs.astral.sh/uv/ and run this again"
 fi
 
 uv tool install --force --reinstall-package usdash "${USDASH_SOURCE:-usdash @ https://github.com/pdudotdev/usdash/archive/refs/heads/master.tar.gz}"

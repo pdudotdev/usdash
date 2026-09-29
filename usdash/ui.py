@@ -427,12 +427,13 @@ EIGHTHS = " ▏▎▍▌▋▊▉"
 _measure = Console(file=io.StringIO(), width=TWO_COLUMNS, color_system=None, legacy_windows=False)
 
 
-def share(part: float, whole: float) -> str:
+def percent(value: float) -> str:
     """'43%'; a share too small to round to 1% but not zero, '<1%'."""
-    if not whole:
-        return "—"
-    value = part / whole
     return "<1%" if 0 < value < 0.005 else f"{value:.0%}"
+
+
+def share(part: float, whole: float) -> str:
+    return percent(part / whole) if whole else "—"
 
 
 def cached_text(value: float | None) -> Text:
@@ -470,7 +471,7 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
         first.append(Text(f"last 5 hours {money(stats.recent)}"))
     if cached is not None:
         first.append(Text(f"{cached:.0%} read from cache", style="green" if cached >= 0.9 else "yellow"))
-    if stats.misses >= 0.005:
+    if stats.causes:  # as the cache-misses panel lists them: a miss under half a cent is still one
         first.append(Text(f"cache misses {money(stats.misses)} ({share(stats.misses, stats.spend)})", style="red"))
     else:
         first.append(Text("no cache misses", style="green"))
@@ -497,16 +498,17 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
 def by_day(stats: Stats, today: str) -> Panel:
     table = stats_table(("DAY", False), ("SPEND", True), ("", False), ("REQS", True), ("CACHED", True),
                         ("MISSES", True))
-    top = max((day.spend for day in stats.days), default=0.0)
+    # The bars compare days: the "earlier" row, many days together, gets none and sets no scale.
+    top = max((day.spend for day in stats.days if day.day != EARLIER), default=0.0)
     for day in stats.days:
         label = Text(day_label(day.day, today), style="dim" if day.day == EARLIER else "")
         if not day.requests:
             table.add_row(label, Text("—", style="dim"), Text(""), Text("0", style="dim"), cached_text(None),
                           Text("—", style="dim"))
             continue
-        misses = Text(money(day.misses), style="red") if day.misses >= 0.005 else Text("—", style="dim")
-        table.add_row(label, money(day.spend), bar(day.spend, top), f"{day.requests:,}", cached_text(day.cached),
-                      misses)
+        misses = Text(money(day.misses), style="red") if day.misses > 0 else Text("—", style="dim")
+        table.add_row(label, money(day.spend), Text("") if day.day == EARLIER else bar(day.spend, top),
+                      f"{day.requests:,}", cached_text(day.cached), misses)
     return stats_panel("by day", table)
 
 
@@ -560,7 +562,7 @@ def top_sessions(stats: Stats) -> Panel:
                       share(row.spend, stats.spend), _tokens(row.peak) if row.peak else Text("—", style="dim"))
     title = "top sessions"
     if stats.sessions > len(stats.top):
-        title += f" · top {len(stats.top)} = {share(sum(r.spend for r in stats.top), stats.spend)} of spend"
+        title += f" · top {len(stats.top)} = {percent(stats.top_share)} of spend"
     return stats_panel(title, table)
 
 

@@ -8,12 +8,14 @@ def money(value: float) -> str:
 
 
 def tokens_text(value: float | None) -> str:
-    """504,113 -> '504k', 9,500 -> '9.5k', 3,200,000 -> '3.2M'."""
+    """504,113 -> '504k', 9,500 -> '9.5k', 3,200,000 -> '3.2M'. The unit is
+    picked after rounding: 999,600 is '1.0M', not '1000k'; 9,960 is '10k'."""
     if value is None:
         return "?"
-    if value >= 1_000_000:
+    thousands = value / 1000
+    if round(thousands) >= 1000:
         return f"{value / 1_000_000:.1f}M"
-    return f"{value / 1000:.0f}k" if value >= 10_000 else f"{value / 1000:.1f}k"
+    return f"{thousands:.0f}k" if round(thousands, 1) >= 10 else f"{thousands:.1f}k"
 
 
 def clock(seconds: int) -> str:
