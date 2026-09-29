@@ -6,7 +6,6 @@ as the sessions view, grouped other ways. Nothing is estimated. Pure data:
 ui.py draws it.
 """
 from bisect import bisect_left
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 

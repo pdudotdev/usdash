@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 import pytest
-from conftest import PRICES, PROJECTS, T0, Transcript
+from conftest import PROJECTS, T0, Transcript
 from rich.console import Console
 
 from usdash import app, ui
