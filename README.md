@@ -44,7 +44,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Line | What it says |
 |---|---|
-| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache |
+| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache: green from 90%, yellow from 30%, red below (the same in Stats) |
 | **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again, instead of reading it back, cost beyond reading it. By cause, the biggest first; a cause that added under half a cent is left out here. [Stats](#-stats) has them all, over the last 30 days |
 | **Prices** | Which prices the dollars are: Anthropic's current API list prices, or, if the pricing page can't be read at start, the last ones read, with their date. On a subscription it adds that your plan isn't billed per token. Warnings follow in yellow: requests with no known price (left out of the totals), a pricing page that no longer reads as expected, and record types usdash doesn't know |
 | **Caveat** | Amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)) |
@@ -105,9 +105,9 @@ Under the summary, the panels come in pairs, in the order you'd ask: **when, and
 | Panel | What it shows |
 |---|---|
 | **Summary** | SPEND, and per day over a period longer than a day; the last 5 hours (for a period longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
-| **By day** | The last 5 local days, today included: SPEND with a bar, requests, the share read from cache (green from 80%, yellow from 30%, red below) and what cache misses added. The rest of the period is one `earlier` row above them, with no bar (it sums many days), and none at all if nothing was spent then |
+| **By day** | The last 5 local days, today included: SPEND with a bar, requests, the share read from cache (green from 90%, yellow from 30%, red below) and what cache misses added. The rest of the period is one `earlier` row above them, with no bar (it sums many days), and none at all if nothing was spent then |
 | **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens: reads, writes and uncached input together. A web searches row appears if any logged request made server-side searches |
-| **By model** | Each model, and fast mode as a row of its own: its share of requests against its share of SPEND. A model with 20% of the requests and 70% of the spend is the first place to look for savings |
+| **By model** | Each model at each effort, and fast mode, as a row of its own: its share of requests against its share of SPEND. A model and effort with 20% of the requests and 70% of the spend is the first place to look for savings |
 | **By context size** | Requests grouped by how big their conversation was: under 50k, 50–100k, 100–200k, 200–500k, 500k and more. Late turns in a long conversation cost more each; this shows how much of SPEND they are |
 | **By project** | SPEND by project folder (branches together), the top 5, then the rest as `others`. Two folders with the same name show with as much of their path as tells them apart: `work/api`, `personal/api` |
 | **Top sessions** | The 5 that cost the most in the period, their share of SPEND together and each, and PEAK, the largest conversation each sent |
@@ -199,7 +199,7 @@ pip install -e .
 | `--offline` | Don't read the pricing page at start; use its last copy (the header shows the prices' date) | off |
 | `--version` | Print the version and exit | |
 
-↑/↓, the mouse wheel or `j`/`k` scroll a session (in Stats, a row of panels) at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `s` swaps the sessions and the stats, each keeping its place. `q` quits.
+↑/↓, the mouse wheel or `j`/`k` scroll a session (in Stats, a row of panels) at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. When they don't all fit, the header's title says which sessions show (`sessions 1–16 of 55`: the panes' counts added up), and the Stats summary's title which rows of panels (`rows 1–3 of 4`). `s` swaps the sessions and the stats, each keeping its place. `q` quits.
 
 > ⚠️ **NOTE:** usdash shows the sessions **of the machine it runs on**: it reads Claude Code's transcripts there, and Claude Code writes them where it runs. When you work on a remote machine over SSH, that's the remote machine, so install and run usdash there:
 > - **VS Code, or a fork like Cursor, with Remote-SSH:** the Claude Code extension runs on the server. Run usdash in the editor's built-in terminal
