@@ -462,3 +462,17 @@ def test_cached_is_coloured_by_how_much_was_read_back():
     # The README: green from 80%, yellow from 30%, red below.
     assert [str(ui.cached_text(share).style) for share in (0.8, 0.3, 0.29)] == ["green", "yellow", "red"]
     assert ui.cached_text(None).plain == "—"
+
+
+def test_stats_prints_the_stats_view(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("COLUMNS", "160")
+    app.main(["--projects", str(PROJECTS), "--window", "3650d", "--once", "--offline", "--stats"])
+    out = capsys.readouterr().out
+    assert "usdash · stats" in out and "summary · last 3650d" in out and "╭─ by day" in out
+
+
+def test_version(capsys):
+    with pytest.raises(SystemExit):
+        app.main(["--version"])
+    assert capsys.readouterr().out.startswith("usdash ")

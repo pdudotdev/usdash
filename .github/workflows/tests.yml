@@ -6,9 +6,10 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]  # the oldest usdash supports, and a current one
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +18,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
+        env:
+          TZ: UTC
       # Days are local days: a test whose requests straddle midnight somewhere fails only there.
       - run: pytest -q
         env:
           TZ: Asia/Tokyo
+
+  install:
+    # install.sh as a user runs it, from this checkout: uv, then usdash on the PATH.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh install.sh
+        env:
+          USDASH_SOURCE: .
+      - run: ~/.local/bin/usdash --version
+      - run: ~/.local/bin/usdash --once --offline --projects tests/fixtures/projects --window 3650d
+      - run: ~/.local/bin/usdash --once --offline --projects tests/fixtures/projects --window 3650d --stats
