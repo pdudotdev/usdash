@@ -110,6 +110,14 @@ def test_a_read_bigger_than_the_first_prompt_is_not_the_tool_list(store):
     big.turn(T0 + 60, read=90_000, write=500)
     big.into(store)
     assert store.sessions["sess-3"].tool_list is None
+    # Nor, after a break, a read bigger than the first prompt that's still short of the conversation:
+    # something else (a forked session) kept most of the conversation cached.
+    fork = Transcript(session="sess-4")
+    fork.turn(T0, write=40_000)  # the first prompt: 40,002
+    fork.turn(T0 + 60, read=40_000, write=60_000)  # 100,002
+    fork.turn(T0 + ONE_HOUR + 120, read=90_000, write=10_100)
+    fork.into(store)
+    assert store.sessions["sess-4"].tool_list is None
 
 
 def test_the_tool_list_is_measured_after_a_switch_from_haiku(store):

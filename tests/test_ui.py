@@ -343,7 +343,8 @@ def test_closed_sessions_show_claude_codes_total_and_the_way_back(fixture_store)
 
 
 def test_parse_keys():
-    assert app.parse_keys("\x1b[Aj q\x1b[6~xrs") == ["up", "down", "pgdn", "quit", "pgdn", "stats"]  # r: nothing
+    assert app.parse_keys("\x1b[Aj q\x1b[6~xs") == ["up", "down", "pgdn", "quit", "pgdn", "stats"]
+    assert app.parse_keys("r") == []  # the request list is gone
 
 
 @pytest.mark.parametrize(("text", "seconds"), [("30m", 1800), ("2h", 7200), ("1d", 86400)])

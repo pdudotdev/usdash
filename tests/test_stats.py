@@ -154,6 +154,32 @@ def test_the_invariants(store):
         assert day.misses == pytest.approx(sum(store.rewrites.get(day.day, {}).values()), abs=1e-9)
 
 
+def test_a_request_counts_in_the_period_it_ended_in(store):
+    t = Transcript()
+    t.turn(at(26, 14, 30), write=10_000, took=10)  # ended at 14:30:10, before the period
+    t.turn(at(26, 14, 59, 50), read=10_002, write=100, took=15)  # started before 15:00, ended after
+    t.into(store)
+    s = st.compute(store, NOW, WINDOW)
+    assert s.requests == 1 and s.spend == pytest.approx(cost(OPUS, read=10_002, w1h=100))
+
+
+def test_today_has_a_row_even_with_nothing_spent_yet(store):
+    t = Transcript()
+    t.turn(at(28, 12), write=10_000)
+    t.into(store)
+    days = st.compute(store, NOW, WINDOW).days
+    assert days[-1].day == "2026-09-29" and days[-1].requests == 0
+
+
+def test_a_models_row_shows_its_latest_effort(store):
+    t = Transcript()
+    t.turn(at(29, 10), write=10_000, effort="high")
+    t.turn(at(29, 10, 5), read=10_002, write=100, effort="low")
+    t.into(store)
+    (row,) = st.compute(store, NOW, WINDOW).models
+    assert (row.effort, row.requests) == ("low", 2)
+
+
 def test_a_request_ending_just_before_midnight_counts_on_that_day(store):
     t = Transcript()
     t.turn(at(27, 23, 59, 40), write=10_000, took=19)  # ends 23:59:59
