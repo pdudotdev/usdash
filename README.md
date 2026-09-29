@@ -191,7 +191,6 @@ pip install -e .
 
 | Option | Meaning | Default |
 |---|---|---|
-| `--since 40d` | How much history to load first (`m`, `h` or `d`); never less than `--period` or `--window` | The longer of the two, or since midnight if that's earlier |
 | `--window 8h` | Show sessions active this recently | `5d` |
 | `--period 7d` | What the stats cover | `30d` |
 | `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |

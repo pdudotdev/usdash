@@ -479,7 +479,10 @@ def test_long_names_give_way_before_any_number(store, width):
     lines = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), width).splitlines()
     assert all(len(line) <= width for line in lines)
     top = next(i for i, line in enumerate(lines) if "╭─ top sessions" in line)
-    row = next(line for line in lines[top:] if "dddd" in line)
+    at_row, row = next((i, line) for i, line in enumerate(lines) if i > top and "dddd" in line)
     assert "PEAK" in lines[top + 1] and "$4.10" in row and "100%" in row and "512k" in row and "…" in row
+    assert "a-project-folde…" in row  # a project keeps up to 16 characters
+    column = lines[top].index("╭─ top sessions")
+    assert not any(c.isalpha() for c in lines[at_row + 1][column:])  # cut on its row, not wrapped onto the next
     prompt = next(line for line in lines if "dddd" in line and "a prompt" in line)
     assert prompt.rstrip(" │").endswith("1  $4.10")

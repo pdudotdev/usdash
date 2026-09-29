@@ -362,7 +362,7 @@ def test_bad_duration(text):
 def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))  # no account file: API wording
     monkeypatch.setenv("COLUMNS", "200")
-    app.main(["--projects", str(PROJECTS), "--since", "3650d", "--window", "3650d", "--once", "--offline"])
+    app.main(["--projects", str(PROJECTS), "--window", "3650d", "--once", "--offline"])
     out = capsys.readouterr().out
     assert "usdash · sessions" in out and "Test plan vs test case" in out and "Pong reply" in out
 
@@ -421,27 +421,43 @@ def test_warnings_come_first_on_the_headers_second_line(store):
 
 
 @pytest.mark.parametrize(
-    ("now", "since", "window", "start"),
+    ("now", "window", "start"),
     [
         # 00:30 with a 3-hour window: reach back to 21:30 the day before, not just midnight.
-        (datetime(2026, 9, 28, 0, 30).timestamp(), None, 3 * 3600, datetime(2026, 9, 27, 21, 30).timestamp()),
+        (datetime(2026, 9, 28, 0, 30).timestamp(), 3 * 3600, datetime(2026, 9, 27, 21, 30).timestamp()),
         # 15:00: midnight is further back than the window.
-        (datetime(2026, 9, 28, 15, 0).timestamp(), None, 3 * 3600, datetime(2026, 9, 28, 0, 0).timestamp()),
-        # --since further back than the window wins.
-        (datetime(2026, 9, 28, 15, 0).timestamp(), 86400, 3 * 3600, datetime(2026, 9, 27, 15, 0).timestamp()),
-        # --since shorter than the window: the window still loads, so every listed session is there.
-        (datetime(2026, 9, 28, 15, 0).timestamp(), 3600, 3 * 3600, datetime(2026, 9, 28, 12, 0).timestamp()),
+        (datetime(2026, 9, 28, 15, 0).timestamp(), 3 * 3600, datetime(2026, 9, 28, 0, 0).timestamp()),
     ],
 )
-def test_history_reaches_back_to_the_window_after_midnight(now, since, window, start):
-    assert app.history_start(now, since, window) == start
+def test_history_reaches_back_to_the_window_after_midnight(now, window, start):
+    assert app.history_start(now, window) == start
+
+
+def test_a_poll_is_a_change_when_any_session_gained_a_request(tmp_path):
+    folder = tmp_path / "-home-user-proj"
+    folder.mkdir()
+    first, last = Transcript(session="aaaa"), Transcript(session="bbbb")  # read in that order
+    first.turn(T0, write=40_000)
+    last.turn(T0, write=40_000)
+    for t in (first, last):
+        (folder / f"{t.session}.jsonl").write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
+    dash = app.App(tmp_path, since=0, window=ONE_HOUR, clock=lambda: T0 + 60)
+    assert dash.poll()
+    more_first, more_last = Transcript(session="aaaa"), Transcript(session="bbbb")
+    more_first.turn(T0 + 30, read=40_002, write=100, message_id="m2")
+    more_last.record("custom-title", customTitle="Renamed")  # no request
+    for t in (more_first, more_last):
+        with (folder / f"{t.session}.jsonl").open("a") as file:
+            file.write("".join(json.dumps(r.data) + "\n" for r in t.records))
+    assert dash.poll()  # the first session's new request counts, whatever came after it
+    assert not dash.poll()
 
 
 def test_history_reaches_back_to_the_stats_period():
     now = datetime(2026, 9, 28, 15, 0).timestamp()
-    assert app.history_start(now, None, 5 * 86400, 30 * 86400) == now - 30 * 86400
-    assert app.history_start(now, 40 * 86400, 5 * 86400, 30 * 86400) == now - 40 * 86400  # --since further back
-    assert app.history_start(now, 86400, 5 * 86400, 30 * 86400) == now - 30 * 86400  # but never short of it
+    assert app.history_start(now, 5 * 86400, 30 * 86400) == now - 30 * 86400
+    assert app.history_start(now, 40 * 86400, 30 * 86400) == now - 40 * 86400  # or the window, if that's longer
+
 
 
 def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
