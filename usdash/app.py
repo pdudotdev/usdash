@@ -1,8 +1,9 @@
 """usdash: a live terminal dashboard of your own Claude Code costs and prompt caches.
 
-    usdash                  # the last 5 days of sessions, then live
-    usdash --since 2d       # load more history first
+    usdash                  # sessions of the last 5 days, stats of the last 30, then live
+    usdash --since 60d      # load more history first
     usdash --window 8h      # show sessions active this recently (default 5d)
+    usdash --period 7d      # what the stats cover (default 30d)
     usdash --stats          # start in the Stats view
     usdash --once           # print one screen and exit (no live view)
     usdash --offline        # don't read Anthropic's docs; use the last prices read
@@ -34,7 +35,7 @@ from .facts import Facts, load_facts
 from .prices import load_pricing
 from .sessions import Store, desktop_sessions, subscription_account
 from .transcripts import Tailer, default_projects_dir
-from .ui import DEFAULT_WINDOW, View, press, render
+from .ui import DEFAULT_PERIOD, DEFAULT_WINDOW, View, duration_text, press, render
 
 POLL_SECONDS = 1.0
 DESKTOP_SECONDS = 10.0  # how often to re-read the Desktop app's session titles
@@ -131,30 +132,33 @@ def start_of_today(now: float) -> float:
     return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
-def history_start(now: float, since: int | None, window: int) -> float:
+def history_start(now: float, since: int | None, window: int, period: int = 0) -> float:
     """Where to start reading: --since ago if given, else midnight, but never
-    later than the start of the window, so every session the window lists
-    (some maybe still warm) is loaded."""
+    later than the start of the window or of the stats period, so every
+    session the window lists (some maybe still warm) and every request the
+    stats count is loaded."""
     start = now - since if since else start_of_today(now)
-    return min(start, now - window)
+    return min(start, now - window, now - period)
 
 
 class App:
-    def __init__(self, projects: Path, since: float, window: int, clock=time.time, known: Known | None = None) -> None:
+    def __init__(self, projects: Path, since: float, window: int, clock=time.time, known: Known | None = None,
+                 period: int = DEFAULT_PERIOD) -> None:
         """`known`: what knowledge() returns; without it, the shipped files only."""
         known = known or knowledge()
         self.clock = clock
         self.tailer = Tailer(projects, since=since)
         self.store = Store(known.prices, known.facts, known.web_search)
-        self.view = View(now=clock(), subscription=subscription_account(), window=window, prices=known.label,
-                         docs_changed=known.changed)
+        self.view = View(now=clock(), subscription=subscription_account(), window=window, period=period,
+                         prices=known.label, docs_changed=known.changed)
         self.desktop_read = 0.0
 
     def poll(self) -> bool:
         """Take in whatever the transcripts gained; True if anything did."""
-        added = self.store.add_all(self.tailer.poll())
+        changed = False
+        for batch in self.tailer.batches():  # a session at a time: its records are let go before the next
+            changed = bool(self.store.add_all(batch)) or changed
         now = self.clock()
-        changed = bool(added)
         if now - self.desktop_read >= DESKTOP_SECONDS:
             self.store.apply_desktop(desktop_sessions())
             self.desktop_read = now
@@ -176,9 +180,11 @@ def version() -> str:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
     parser.add_argument("--since", type=duration,
-                        help="history to load first, e.g. 2d (default: --window, or since midnight if that's earlier)")
+                        help="history to load first, e.g. 60d (default: the longer of --period and --window)")
     parser.add_argument("--window", type=duration, default=DEFAULT_WINDOW,
                         help="show sessions active this recently, e.g. 3h or 2d (default: 5d)")
+    parser.add_argument("--period", type=duration, default=DEFAULT_PERIOD,
+                        help="what the stats cover, e.g. 7d (default: 30d)")
     parser.add_argument("--projects", type=Path, default=None,
                         help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
     parser.add_argument("--stats", action="store_true", help="start in the Stats view (s swaps views)")
@@ -189,13 +195,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     now = time.time()
-    since = history_start(now, args.since, args.window)
+    since = history_start(now, args.since, args.window, args.period)
     projects = (args.projects or default_projects_dir()).expanduser()
-    app = App(projects, since, args.window, known=knowledge(args.offline))
+    app = App(projects, since, args.window, known=knowledge(args.offline), period=args.period)
     if args.stats:
         app.view.mode = "stats"
     if not projects.is_dir():
         print(f"usdash: no Claude Code transcripts at {projects} (use --projects)", file=sys.stderr)
+    elif sys.stderr.isatty():  # weeks of history take a few seconds to read
+        print(f"usdash: reading the last {duration_text(round(now - since))} of transcripts…", file=sys.stderr)
     app.poll()
     console = Console()
     if args.once:

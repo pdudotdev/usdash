@@ -1,9 +1,9 @@
-"""The Stats view's figures: where the money went over the sessions window.
+"""The Stats view's figures: where the money went over the stats period.
 
 Everything here is a sum over logged requests with a known price, whose end
-falls in the period (the window, up to now): the same requests and amounts
-as the sessions view, grouped other ways. Nothing is estimated. Pure data:
-ui.py draws it.
+falls in the period (30 days by default, up to now): the same requests and
+amounts as the sessions view, grouped other ways. Nothing is estimated. Pure
+data: ui.py draws it.
 """
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -15,7 +15,7 @@ from .sessions import Session, Store, reason_group
 # Context-size bands, by the prompt a request sent: (upper bound, label).
 BANDS = ((50_000, "under 50k"), (100_000, "50–100k"), (200_000, "100–200k"), (500_000, "200–500k"),
          (None, "500k and more"))
-MAX_DAYS = 14  # rows in "by day": older days fold into one "earlier" row
+DAYS = 5  # "by day" shows the last 5 days, today included; the rest of the period folds into one row
 TOP = 5  # rows in "top sessions", "by project" (before "others") and "costliest prompts"
 RECENT = 5 * 3600  # "last 5 hours"
 REFRESH = 5  # seconds: while sessions are at work, the stats are worked out again at most this often
@@ -101,7 +101,7 @@ class Turn:
 class Stats:
     start: float  # the period: from here up to `now`
     now: float
-    window: int
+    period: int
     spend: float = 0.0
     requests: int = 0
     prompts: int = 0  # the prompts and commands the period's requests answer (Turn)
@@ -124,8 +124,8 @@ class Stats:
 
     @property
     def per_day(self) -> float | None:
-        """SPEND a day, over a window longer than a day."""
-        return self.spend / (self.window / 86400) if self.window > 86400 else None
+        """SPEND a day, over a period longer than a day."""
+        return self.spend / (self.period / 86400) if self.period > 86400 else None
 
     @property
     def cached(self) -> float | None:
@@ -146,7 +146,7 @@ class Stats:
 
 @dataclass
 class _Cached:
-    key: tuple  # (minute, window)
+    key: tuple  # (minute, period)
     revision: int  # store.revision when worked out
     at: float  # when
     stats: Stats
@@ -162,24 +162,24 @@ def local_days(start: float, now: float) -> list[str]:
     return days
 
 
-def compute(store: Store, now: float, window: int) -> Stats:
-    """The stats for the period `window` back from `now`. Kept for the rest of
+def compute(store: Store, now: float, period: int) -> Stats:
+    """The stats for the `period` seconds up to `now`. Kept for the rest of
     the minute while nothing changes, and for REFRESH seconds while something
     does: a busy session brings new records every second, and working the
     stats out walks every request loaded."""
-    key = (int(now // 60), window)
+    key = (int(now // 60), period)
     cached = getattr(store, "_stats", None)
     if cached is not None and cached.key == key and (cached.revision == store.revision or now - cached.at < REFRESH):
         return cached.stats
-    stats = _compute(store, now, window)
+    stats = _compute(store, now, period)
     store._stats = _Cached(key, store.revision, now, stats)
     return stats
 
 
-def _compute(store: Store, now: float, window: int) -> Stats:
-    start = now - window
-    stats = Stats(start, now, window)
-    recent_from = now - RECENT if window > RECENT else None
+def _compute(store: Store, now: float, period: int) -> Stats:
+    start = now - period
+    stats = Stats(start, now, period)
+    recent_from = now - RECENT if period > RECENT else None
     stats.recent = 0.0 if recent_from is not None else None
     days = {day: Day(day) for day in local_days(start, now)}
     kinds = [[0, 0.0] for _ in KINDS]  # tokens, spend
@@ -281,11 +281,11 @@ def band_of(prompt: int) -> int:
 
 
 def fold_days(days: list[Day]) -> list[Day]:
-    """At most MAX_DAYS rows: the oldest days fold into one EARLIER row, left
-    out if nothing was spent on them."""
-    if len(days) <= MAX_DAYS:
+    """The last DAYS days, each a row, and the period's earlier days folded into
+    one EARLIER row before them, left out if nothing was spent then."""
+    if len(days) <= DAYS:
         return days
-    older, kept = days[: len(days) - MAX_DAYS + 1], days[len(days) - MAX_DAYS + 1:]
+    older, kept = days[:-DAYS], days[-DAYS:]
     earlier = Day(EARLIER)
     for day in older:
         earlier.spend += day.spend

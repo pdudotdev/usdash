@@ -22,7 +22,7 @@ from usdash import ui  # noqa: E402
 from usdash.sessions import Store  # noqa: E402
 
 # (file, view, width, height)
-SCREENS = (("dashboard.svg", "sessions", 140, 24), ("stats.svg", "stats", 160, 44))
+SCREENS = (("dashboard.svg", "sessions", 140, 24), ("stats.svg", "stats", 144, 44))
 DAY = 86400
 T = datetime(2026, 9, 28, 14, 0).timestamp()  # a Monday, 14:00 local time
 
@@ -77,7 +77,17 @@ def sessions() -> Store:
 
 
 def history() -> list[Transcript]:
-    """The four days before: exited sessions, each with a cache miss of its own kind."""
+    """Two sessions from earlier in the month (the stats' "earlier" row), then the four days
+    before: exited sessions, each with a cache miss of its own kind."""
+    earlier = []
+    for session, days, folder, title, sizes, texts in (
+            ("e0c7a4d2", 23, "shop", "Search reindex", (40_000, 90_000), ("reindex the catalog", "why is it slow")),
+            ("5d1f3b90", 12, "api", "Rate limiter", (50_000, 120_000, 210_000),
+             ("add a rate limiter", "per key, please", "load-test it"))):
+        old = Transcript(session=session, cwd=f"/home/you/{folder}")
+        old.record("ai-title", aiTitle=title)
+        grow(old, T - days * DAY, sizes, texts, out=2_000)
+        earlier.append(old)
     # Thursday: back after lunch, the cache had expired.
     sdk = Transcript(session="71be09f2", cwd="/home/you/shop")
     sdk.record("ai-title", aiTitle="Upgrade the payments SDK")
@@ -113,7 +123,7 @@ def history() -> list[Transcript]:
     infra.turn(T - DAY, text="review this plan", read=23_300, write=60_000, out=3_000, speed="standard")
     infra.turn(T - DAY + 120, text="now the staging one", read=23_300, write=64_000, out=2_000, speed="fast")
     infra.record("cost-state", totalCostUSD=2.3)
-    return [sdk, login, docs, infra]
+    return [*earlier, sdk, login, docs, infra]
 
 
 def main() -> None:

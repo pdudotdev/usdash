@@ -22,13 +22,14 @@ from .engine import cache_clock, context, resend_costs
 from .fmt import clock, money, plural, tokens_text
 from .models import pretty_model
 from .sessions import Session, Store, day_of, snippet
-from .stats import EARLIER, Stats, compute, day_label
+from .stats import DAYS, EARLIER, Stats, compute, day_label
 
 MODEL_STYLES = {"Opus": "bright_magenta", "Sonnet": "bright_blue", "Haiku": "bright_green", "Fable": "bright_yellow"}
 # The VS Code extension also runs in its forks (Cursor, Windsurf, …): "IDE" is true for all of them.
 APPS = {"cli": "CLI", "claude-vscode": "IDE", "claude-desktop": "Desktop"}
 SESSION_STYLES = ["cyan", "yellow", "magenta", "green", "blue", "bright_cyan", "bright_yellow", "bright_magenta"]
 DEFAULT_WINDOW = 5 * 86400  # sessions active this recently are listed
+DEFAULT_PERIOD = 30 * 86400  # what the stats cover
 PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
 EXPIRING = 600  # seconds: the countdown turns yellow for the last of these (at most half the lifetime)
@@ -41,6 +42,7 @@ class View:
     now: float
     subscription: bool = False
     window: int = DEFAULT_WINDOW  # sessions idle longer than this are hidden
+    period: int = DEFAULT_PERIOD  # what the stats cover
     prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
     docs_changed: list[str] = field(default_factory=list)  # Anthropic's pages that no longer read as expected
     unknown_types: int = 0
@@ -421,7 +423,7 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
 
 # --- Stats -------------------------------------------------------------------------
 
-TWO_COLUMNS = 160  # from this terminal width, the stats panels go two by two
+TWO_COLUMNS = 144  # from this terminal width, the stats panels go two by two
 BAR = 16  # cells in a day's spend bar
 EIGHTHS = " ▏▎▍▌▋▊▉"
 _measure = Console(file=io.StringIO(), width=TWO_COLUMNS, color_system=None, legacy_windows=False)
@@ -448,13 +450,21 @@ def bar(value: float, top: float) -> Text:
     return Text("█" * (eighths // 8) + (EIGHTHS[eighths % 8] if eighths % 8 else ""), style="cyan")
 
 
-def stats_table(*columns: tuple[str, bool]) -> Table:
+def stats_table(*columns: tuple[str, bool] | tuple[str, bool, bool]) -> Table:
     """A table of the stats panels' shape: no lines, dim column names,
-    numbers to the right, nothing wraps (a long text is cut with …)."""
+    numbers to the right, nothing wraps (a long text is cut with …).
+    Columns marked to shrink (a name, a prompt: fill them with cut()) give up
+    room first when the panel is narrow; the others keep every character."""
     table = Table(box=None, padding=(0, 1), pad_edge=False, show_edge=False, header_style="dim", expand=False)
-    for name, right in columns:
-        table.add_column(name, justify="right" if right else "left", no_wrap=True, overflow="ellipsis")
+    for name, right, *shrinks in columns:
+        # rich takes room only from columns that may wrap; cut() keeps their text on one line.
+        table.add_column(name, justify="right" if right else "left", no_wrap=not shrinks, overflow="ellipsis")
     return table
+
+
+def cut(text: str | None, width: int, style: str = "") -> Text:
+    """A shrinking column's text: at most `width` characters, and cut with … to fit a narrower column."""
+    return Text(snippet(text, width) or "", style=style, no_wrap=True, overflow="ellipsis")
 
 
 def stats_panel(title: str, body: RenderableType) -> Panel:
@@ -509,7 +519,8 @@ def by_day(stats: Stats, today: str) -> Panel:
         misses = Text(money(day.misses), style="red") if day.misses > 0 else Text("—", style="dim")
         table.add_row(label, money(day.spend), Text("") if day.day == EARLIER else bar(day.spend, top),
                       f"{day.requests:,}", cached_text(day.cached), misses)
-    return stats_panel("by day", table)
+    # Over a longer period, the days before the last DAYS are the one "earlier" row.
+    return stats_panel(f"by day · last {DAYS} days" if stats.period > DAYS * 86400 else "by day", table)
 
 
 def by_model(stats: Stats) -> Panel:
@@ -535,9 +546,9 @@ def money_kinds(stats: Stats) -> Panel:
     return stats_panel("where the money goes", Group(*body))
 
 
-def cache_misses(stats: Stats, window: str) -> Panel:
+def cache_misses(stats: Stats, period: str) -> Panel:
     if not stats.causes:
-        return stats_panel("cache misses", Text(f"no cache misses in the last {window}", style="green"))
+        return stats_panel("cache misses", Text(f"no cache misses in the last {period}", style="green"))
     table = stats_table(("CAUSE", False), ("MISSES", True), ("RE-WRITTEN", True), ("EXTRA", True))
     for cause in stats.causes:
         table.add_row(cause.cause, f"{cause.misses:,}", _tokens(cause.rewritten), Text(money(cause.extra), style="red"))
@@ -553,12 +564,12 @@ def by_context(stats: Stats) -> Panel:
 
 
 def top_sessions(stats: Stats) -> Panel:
-    table = stats_table(("ID", False), ("SESSION", False), ("PROJECT", False), ("SPEND", True), ("SHARE", True),
-                        ("PEAK", True))
+    table = stats_table(("ID", False), ("SESSION", False, True), ("PROJECT", False, True), ("SPEND", True),
+                        ("SHARE", True), ("PEAK", True))
     for row in stats.top:
         session = row.session
-        table.add_row(session_tag(session), Text(snippet(session.name, 24) or "", style="bold"),
-                      Text(snippet(session.project, 16) or "", style="dim"), money(row.spend),
+        table.add_row(session_tag(session), cut(session.name, 24, "bold"), cut(session.project, 16, "dim"),
+                      money(row.spend),
                       share(row.spend, stats.spend), _tokens(row.peak) if row.peak else Text("—", style="dim"))
     title = "top sessions"
     if stats.sessions > len(stats.top):
@@ -567,17 +578,17 @@ def top_sessions(stats: Stats) -> Panel:
 
 
 def by_project(stats: Stats) -> Panel:
-    table = stats_table(("PROJECT", False), ("SESSIONS", True), ("SPEND", True), ("SHARE", True))
+    table = stats_table(("PROJECT", False, True), ("SESSIONS", True), ("SPEND", True), ("SHARE", True))
     for project in stats.projects:
-        name = Text(snippet(project.name, 24) or "", style="dim" if project.name == "others" else "")
+        name = cut(project.name, 24, "dim" if project.name == "others" else "")
         table.add_row(name, f"{project.sessions:,}", money(project.spend), share(project.spend, stats.spend))
     return stats_panel("by project", table)
 
 
 def costliest_prompts(stats: Stats) -> Panel:
-    table = stats_table(("ID", False), ("PROMPT", False), ("REQS", True), ("SPEND", True))
+    table = stats_table(("ID", False), ("PROMPT", False, True), ("REQS", True), ("SPEND", True))
     for turn in stats.turns:
-        table.add_row(session_tag(turn.session), Text(snippet(turn.text, 36) or "", style="italic"),
+        table.add_row(session_tag(turn.session), cut(turn.text, 36, "italic"),
                       f"{turn.requests:,}", money(turn.spend))
     return stats_panel("costliest prompts", table)
 
@@ -588,10 +599,13 @@ def height(renderable: RenderableType, width: int) -> int:
 
 def stats_rows(stats: Stats, view: View, width: int) -> list[tuple[RenderableType, int]]:
     """The panels after the summary, in their rows (two by two from TWO_COLUMNS
-    wide), each row with its height in lines."""
-    window, today = duration_text(view.window), day_of(view.now)
-    panels = [by_day(stats, today), by_model(stats), money_kinds(stats), cache_misses(stats, window),
-              by_context(stats), top_sessions(stats), by_project(stats), costliest_prompts(stats)]
+    wide), each row with its height in lines. They tell the story in pairs: when
+    and on what the money went, what drove it, where it went, what to act on."""
+    period, today = duration_text(view.period), day_of(view.now)
+    panels = [by_day(stats, today), money_kinds(stats),  # when, and on what
+              by_model(stats), by_context(stats),  # the two things that set the price of a request
+              by_project(stats), top_sessions(stats),  # where it went
+              cache_misses(stats, period), costliest_prompts(stats)]  # what to act on
     if width < TWO_COLUMNS:
         return [(panel, height(panel, width)) for panel in panels]
     half = (width - 1) // 2
@@ -610,12 +624,12 @@ def stats_rows(stats: Stats, view: View, width: int) -> list[tuple[RenderableTyp
 
 def stats_view(store: Store, view: View, width: int, rows: int) -> RenderableType:
     """The summary, then the panels in rows, scrolled by whole row."""
-    stats = compute(store, view.now, view.window)
-    window = duration_text(view.window)
+    stats = compute(store, view.now, view.period)
+    period = duration_text(view.period)
     keys = Text("↑↓/wheel/j/k: scroll · s: sessions · q: quit", style="dim")
     if not stats.requests:
-        return Panel(Text(f"no priced requests in the last {window}", style="dim"), subtitle=keys,
-                     title=Text(f"stats · last {window}", style="bold"), title_align="left", subtitle_align="right")
+        return Panel(Text(f"no priced requests in the last {period}", style="dim"), subtitle=keys,
+                     title=Text(f"stats · last {period}", style="bold"), title_align="left", subtitle_align="right")
     lines = summary_lines(stats, width - 4)  # the panel's border and padding
     room = rows - (len(lines) + PANE_FRAME)
     blocks = stats_rows(stats, view, width)
@@ -631,7 +645,7 @@ def stats_view(store: Store, view: View, width: int, rows: int) -> RenderableTyp
         shown.append(block)
         used += tall
     view.stats_page = len(shown)
-    title = f"summary · last {window}"
+    title = f"summary · last {period}"
     if len(shown) < len(blocks):
         title += f" · rows {view.stats_scroll + 1}–{view.stats_scroll + len(shown)} of {len(blocks)}"
     subtitle = Text("g: back to the top", style="bold yellow") if view.stats_scroll else keys
