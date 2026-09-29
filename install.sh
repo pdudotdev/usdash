@@ -31,6 +31,6 @@ if ! command -v uv > /dev/null 2>&1; then
     export PATH
 fi
 
-uv tool install --force "${USDASH_SOURCE:-usdash @ https://github.com/pdudotdev/usdash/archive/refs/heads/master.tar.gz}"
+uv tool install --force --reinstall-package usdash "${USDASH_SOURCE:-usdash @ https://github.com/pdudotdev/usdash/archive/refs/heads/master.tar.gz}"
 uv tool update-shell > /dev/null 2>&1 || true  # puts uv's tool folder on the PATH of new shells
 echo "usdash installed: open a new terminal and run usdash"

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 504" width="820" height="504" role="img" aria-labelledby="title desc">
   <title id="title">How usdash works</title>
-  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at Anthropic's list prices (read from its docs at start), cache misses and why, a cache clock per session, what re-sending each conversation costs on each model, and a warning to /compact before a big one expires. It shows a header, live sessions with what the next message costs, expired and exited sessions with what coming back costs, and, on r, every request.</desc>
+  <desc id="desc">Claude Code in the terminal, the VS Code extension, the Desktop app's Code tab and scripts all write transcripts to ~/.claude/projects. usdash reads them: one request per reply, its cost at Anthropic's list prices (read from its docs at start), cache misses and why, a cache clock per session, what re-sending each conversation costs, and the day, model, project and prompt each dollar went to. It shows a header, live sessions with what the next message costs, expired and exited sessions with what coming back costs at most, and, on s, the stats.</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #c5c8c6; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
@@ -60,9 +60,9 @@
     <rect x="46" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
     <text class="step" x="156" y="341">a cache clock per session</text>
     <rect x="300" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
-    <text class="step" x="410" y="341">re-sending, on each model</text>
+    <text class="step" x="410" y="341">re-sending: now, up to</text>
     <rect x="554" y="318" width="220" height="36" rx="6" fill="#3a3a3a"/>
-    <text class="step" x="664" y="341">the /compact warning</text>
+    <text class="step" x="664" y="341">spend, grouped for stats</text>
   </g>
   <path class="flow" d="M268,274 H296"/>
   <path class="flow" d="M522,274 H550"/>
@@ -83,14 +83,14 @@
     <rect class="card" x="222" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
     <text class="label" x="312" y="426">Live sessions</text>
     <text class="sub" x="312" y="447">what the next message</text>
-    <text class="sub" x="312" y="463">costs, on each model</text>
+    <text class="sub" x="312" y="463">costs, now or later</text>
     <rect class="card" x="418" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
     <text class="label" x="508" y="426">Expired, exited</text>
     <text class="sub" x="508" y="447">what coming back</text>
-    <text class="sub" x="508" y="463">costs, on each model</text>
+    <text class="sub" x="508" y="463">costs, at most</text>
     <rect class="card" x="614" y="402" width="180" height="78" rx="8" stroke="#608ab1"/>
-    <text class="label" x="704" y="426">Requests (r)</text>
-    <text class="sub" x="704" y="447">every request, with</text>
-    <text class="sub" x="704" y="463">cache misses marked ⟳</text>
+    <text class="label" x="704" y="426">Stats (s)</text>
+    <text class="sub" x="704" y="447">spend by day, model,</text>
+    <text class="sub" x="704" y="463">project and prompt</text>
   </g>
 </svg>
