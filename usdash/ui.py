@@ -33,6 +33,9 @@ DEFAULT_PERIOD = 30 * 86400  # what the stats cover
 PANE_FRAME = 2  # a pane's top and bottom border
 GAP = "  "
 EXPIRING = 600  # seconds: the countdown turns yellow for the last of these (at most half the lifetime)
+# The share of input read back from the cache is green from the first, yellow from the second,
+# red below: in the header, the stats' summary and by day alike.
+CACHED_GOOD, CACHED_POOR = 0.9, 0.3
 
 
 @dataclass
@@ -50,6 +53,7 @@ class View:
     session_scroll: int = 0  # sessions hidden above the view
     session_page: int = 1  # sessions shown at the last render
     session_last: int = 0  # the furthest the sessions could scroll at the last render
+    session_shown: str = ""  # which sessions showed at the last render, if not all: '1–16 of 55'
     stats_scroll: int = 0  # rows of stats panels hidden above the view
     stats_page: int = 1  # rows shown at the last render
     stats_last: int = 0  # the furthest the stats could scroll at the last render
@@ -85,6 +89,11 @@ def age_text(seconds: float) -> str:
 def _ago(seconds: float) -> str:
     seconds = max(0, int(seconds))
     return f"{seconds}s ago" if seconds < 60 else f"{age_text(seconds)} ago"
+
+
+def cached_style(share: float) -> str:
+    """The colour of a share of input read back from the cache, the same wherever it shows."""
+    return "green" if share >= CACHED_GOOD else "yellow" if share >= CACHED_POOR else "red"
 
 
 def session_style(session_id: str) -> str:
@@ -141,7 +150,7 @@ def top_lines(store: Store, view: View) -> list[Text]:
     rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost >= 0.005}
     line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), no_wrap=True, overflow="ellipsis")
     if hit is not None:
-        line.append(f"  ·  {hit:.0%} of input read from cache", style="green" if hit >= 0.9 else "yellow")
+        line.append(f"  ·  {hit:.0%} of input read from cache", style=cached_style(hit))
     lines = [line]
     if rewrites:
         # What requests paid to write the conversation again instead of reading it back (Stats has them by cause):
@@ -164,7 +173,8 @@ def top_lines(store: Store, view: View) -> list[Text]:
         detail.append(f"  ·  Anthropic's {pages} page{'s' if len(view.docs_changed) > 1 else ''} changed: "
                       f"usdash may need an update", style="yellow")
     if view.unknown_types:
-        detail.append(f"  ·  {view.unknown_types} records of unknown types (newer Claude Code?)", style="yellow")
+        detail.append(f"  ·  {plural(view.unknown_types, 'record')} of unknown types (newer Claude Code?)",
+                      style="yellow")
     # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
     # summary); an exited session's TOTAL is Claude Code's own, which counts them.
     caveat = Text("Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…). "
@@ -172,8 +182,10 @@ def top_lines(store: Store, view: View) -> list[Text]:
     return [*lines, detail, caveat]
 
 
-def header(lines: list[Text], mode: str = "sessions") -> Panel:
-    return Panel(Group(*lines), title=Text(f"💲 usdash · {mode}", style="bold"), title_align="left")
+def header(lines: list[Text], mode: str = "sessions", shown: str = "") -> Panel:
+    """Titled with the view, and which of its sessions show when they don't all fit."""
+    title = f"💲 usdash · {mode}" + (f" {shown}" if shown else "")
+    return Panel(Group(*lines), title=Text(title, style="bold"), title_align="left")
 
 
 # --- Tables ------------------------------------------------------------------------
@@ -385,6 +397,7 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     window = duration_text(view.window)
     entries = session_entries(store, view)
     keys = Text("↑↓/wheel/j/k: scroll · s: stats · q: quit", style="dim")
+    view.session_shown = ""
     if not entries:
         return Panel(Text(f"no Claude Code activity in the last {window}", style="dim"), subtitle=keys,
                      title=Text(f"sessions · last {window}", style="bold"), title_align="left", subtitle_align="right")
@@ -403,13 +416,17 @@ def sessions_view(store: Store, view: View, rows: int) -> Layout | Panel:
     counts: Counter = Counter()
     for entry in entries:
         counts[entry.pane] += entry.sessions
+    if shown < len(entries):
+        # Which sessions show, for the header's title: counted as the panes count them (a folded
+        # row of script runs is each of its runs), so the panes' counts add up to its total.
+        before = sum(entry.sessions for entry in entries[:view.session_scroll])
+        showing = sum(entry.sessions for entry in entries[view.session_scroll:view.session_scroll + shown])
+        view.session_shown = f"{before + 1:,}–{before + showing:,} of {sum(counts.values()):,}"
     parts = []
     for i, (key, lines) in enumerate(panes):
         final = i == len(panes) - 1
         title, subtitle = f"{key} · {plural(counts[key], 'session')}", None
         if final:  # what matters most first: a narrow terminal cuts the title from the right
-            if shown < len(entries):
-                title += f" · rows {view.session_scroll + 1}–{view.session_scroll + shown} of {len(entries)}"
             title += f" · last {window}"
             subtitle = Text("g: back to the top", style="bold yellow") if view.session_scroll else keys
         title += f" · {PANES[key]}"
@@ -441,7 +458,7 @@ def share(part: float, whole: float) -> str:
 def cached_text(value: float | None) -> Text:
     if value is None:
         return Text("—", style="dim")
-    return Text(f"{value:.0%}", style="green" if value >= 0.8 else "yellow" if value >= 0.3 else "red")
+    return Text(f"{value:.0%}", style=cached_style(value))
 
 
 def bar(value: float, top: float) -> Text:
@@ -480,7 +497,7 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
     if stats.recent is not None:
         first.append(Text(f"last 5 hours {money(stats.recent)}"))
     if cached is not None:
-        first.append(Text(f"{cached:.0%} read from cache", style="green" if cached >= 0.9 else "yellow"))
+        first.append(Text(f"{cached:.0%} read from cache", style=cached_style(cached)))
     if stats.causes:  # as the cache-misses panel lists them: a miss under half a cent is still one
         first.append(Text(f"cache misses {money(stats.misses)} ({share(stats.misses, stats.spend)})", style="red"))
     else:
@@ -683,9 +700,9 @@ def render(store: Store, view: View, height: int, width: int = 160) -> Layout:
     top = len(lines) + PANE_FRAME
     body = max(3, height - top)
     if view.mode == "stats":
-        panel = stats_view(store, view, width, body)
+        panel, shown = stats_view(store, view, width, body), ""
     else:
-        panel = sessions_view(store, view, body)  # the panes, their frames included
+        panel, shown = sessions_view(store, view, body), view.session_shown  # the panes, their frames included
     layout = Layout()
-    layout.split_column(Layout(header(lines, view.mode), size=top), Layout(panel))
+    layout.split_column(Layout(header(lines, view.mode, shown), size=top), Layout(panel))
     return layout

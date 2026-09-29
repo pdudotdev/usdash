@@ -44,7 +44,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Line | What it says |
 |---|---|
-| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache |
+| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache: green from 90%, yellow from 30%, red below (the same in Stats) |
 | **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again, instead of reading it back, cost beyond reading it. By cause, the biggest first; a cause that added under half a cent is left out here. [Stats](#-stats) has them all, over the last 30 days |
 | **Prices** | Which prices the dollars are: Anthropic's current API list prices, or, if the pricing page can't be read at start, the last ones read, with their date. On a subscription it adds that your plan isn't billed per token. Warnings follow in yellow: requests with no known price (left out of the totals), a pricing page that no longer reads as expected, and record types usdash doesn't know |
 | **Caveat** | Amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)) |
@@ -82,7 +82,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 The gap between the two amounts is, at most, what letting the cache expire costs; while the countdown is yellow, the `up to` amount is too. Every amount is at the session's own model, speed and region.
 
 ▫️ **Measured or `up to`:**
-- **now** is the conversation read back from the cache: its size as the last request sent it, at the cache-read price. It's exact: every next message within the cache lifetime read the whole previous prompt back, to 100 tokens (in the [real-session tests](tests/test_real_checks.py) too). Resuming an exited session reads it back the same way while the cache lasts
+- **now** is the conversation read back from the cache: its size as the last request sent it, at the cache-read price. It's exact: in real sessions, 1,938 of 1,939 next messages within the cache lifetime read the whole previous prompt back, to 100 tokens (the other changed effort on a model where that re-writes it), and the [real-session tests](tests/test_real_checks.py) hold usdash to it. Resuming an exited session reads it back the same way while the cache lasts
 - **up to** is the conversation written to the cache again, at the write price. It's an upper bound: Claude Code's tool list at the start of every request (22–25k tokens in the CLI) often stays cached anyway, kept warm by another session in the same folder or by Claude Code's own unlogged requests. On Opus 5.5 with a 1-hour cache, that's about $0.18 less
 - What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of both
 
@@ -105,9 +105,9 @@ Under the summary, the panels come in pairs, in the order you'd ask: **when, and
 | Panel | What it shows |
 |---|---|
 | **Summary** | SPEND, and per day over a period longer than a day; the last 5 hours (for a period longer than that); the share of input read from the cache; what cache misses added, and their share of SPEND. Then requests, the prompts they answer (what you typed: a prompt, or a command like a skill that sends requests) and requests per prompt (how many API calls each thing you asked took), sessions, and the subagents' share of SPEND |
-| **By day** | The last 5 local days, today included: SPEND with a bar, requests, the share read from cache (green from 80%, yellow from 30%, red below) and what cache misses added. The rest of the period is one `earlier` row above them, with no bar (it sums many days), and none at all if nothing was spent then |
+| **By day** | The last 5 local days, today included: SPEND with a bar, requests, the share read from cache (green from 90%, yellow from 30%, red below) and what cache misses added. The rest of the period is one `earlier` row above them, with no bar (it sums many days), and none at all if nothing was spent then |
 | **Where the money goes** | Tokens and dollars by kind: cache reads, cache writes (1-hour and 5-minute), uncached input, output (a kind with no tokens is left out). Volume isn't cost: reads are most of the tokens and little of the money. Underneath, what input costs on average per million tokens: reads, writes and uncached input together. A web searches row appears if any logged request made server-side searches |
-| **By model** | Each model, and fast mode as a row of its own: its share of requests against its share of SPEND. A model with 20% of the requests and 70% of the spend is the first place to look for savings |
+| **By model** | Each model at each effort, and fast mode, as a row of its own: its share of requests against its share of SPEND. A model and effort with 20% of the requests and 70% of the spend is the first place to look for savings |
 | **By context size** | Requests grouped by how big their conversation was: under 50k, 50–100k, 100–200k, 200–500k, 500k and more. Late turns in a long conversation cost more each; this shows how much of SPEND they are |
 | **By project** | SPEND by project folder (branches together), the top 5, then the rest as `others`. Two folders with the same name show with as much of their path as tells them apart: `work/api`, `personal/api` |
 | **Top sessions** | The 5 that cost the most in the period, their share of SPEND together and each, and PEAK, the largest conversation each sent |
@@ -199,7 +199,7 @@ pip install -e .
 | `--offline` | Don't read the pricing page at start; use its last copy (the header shows the prices' date) | off |
 | `--version` | Print the version and exit | |
 
-↑/↓, the mouse wheel or `j`/`k` scroll a session (in Stats, a row of panels) at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. `s` swaps the sessions and the stats, each keeping its place. `q` quits.
+↑/↓, the mouse wheel or `j`/`k` scroll a session (in Stats, a row of panels) at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. When they don't all fit, the header's title says which sessions show (`sessions 1–16 of 55`: the panes' counts added up), and the Stats summary's title which rows of panels (`rows 1–3 of 4`). `s` swaps the sessions and the stats, each keeping its place. `q` quits.
 
 > ⚠️ **NOTE:** usdash shows the sessions **of the machine it runs on**: it reads Claude Code's transcripts there, and Claude Code writes them where it runs. When you work on a remote machine over SSH, that's the remote machine, so install and run usdash there:
 > - **VS Code, or a fork like Cursor, with Remote-SSH:** the Claude Code extension runs on the server. Run usdash in the editor's built-in terminal
@@ -223,7 +223,7 @@ pip install -e .
 Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION` in the session. That happens in a terminal started from inside a Claude Code session (e.g. a terminal app launched by one): it inherits that variable, and every `claude` started from it saves no transcript. Quit the terminal app and open it again from the Dock or launcher.
 
 ▫️ **Amounts read low until a session exits:**
-Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 56–98% of what Claude Code itself counted, 85–95% for most sessions (87% in an interactive session checked later, with a `/compact`). When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request.
+Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, the recap it writes while you're away, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 41–100% of what Claude Code itself counted (a median of 89%, and over 72% in three sessions of four), least in very short sessions and in ones that ran many subagents. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request.
 
 ▫️ **Claude Code's web search isn't in any amount until the session exits:**
 Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. Claude Code's own total counts them, so an exited session's TOTAL includes them. They can be most of a session's cost: in one real `claude -p` session, the requests behind four searches were 72% of it.
@@ -237,10 +237,10 @@ Sessions appear, their cache lifetime and costs are read the same way, and Bedro
 - Not yet checked with a real Bedrock or Google Cloud transcript: whether Claude Code records the provider's model id or the plain model name. If it's the plain name, a cache miss after an effort change there would show as `cause unknown` instead of `effort change`
 
 ▫️ **The cache lifetime is a minimum:**
-A 5-minute cache was still there 6¾ minutes later on some requests, and gone after 5⅔ on others. usdash counts a cache as expired once its lifetime is up, so a session may still read its cache back a little after the countdown ends. That's why coming back is priced `up to`.
+Anthropic deletes a cache "promptly, though not immediately" once its lifetime is up: in real sessions, one 5-minute cache was read back half a minute after that, and two others were gone at 5¾ and 10½ minutes. So a session may still read its cache back a little after the countdown ends: one more reason coming back is priced `up to`.
 
 ▫️ **A resumed session can miss the cache:**
-Resuming within the cache lifetime read it all back in 6 of 6 real resumes (one a minute after `/exit` with a file written in between, one on a 5-minute cache): a resumed conversation keeps the system prompt it started with. It can still miss when something else at the start of the request changed with the restart: tools an MCP server or plugin loads up front, the system prompt flags given to the resume, or a Claude Code upgrade (shown as `Claude Code upgraded`). The `now` amount assumes nothing did.
+Resuming within the cache lifetime read it all back in 8 of 10 real resumes (one a minute after `/exit` with a file written in between, one on a 5-minute cache); the other two read back only the tool list. A resumed conversation keeps the system prompt it started with. It can still miss when something else at the start of the request changed with the restart: tools an MCP server or plugin loads up front, the system prompt flags given to the resume, or a Claude Code upgrade (shown as `Claude Code upgraded`). The `now` amount assumes nothing did.
 
 ▫️ **Some causes are invisible:**
 Some changes that break the cache leave no trace in the transcripts, so a miss they cause shows up as `cause unknown`: tools that change mid-session (an MCP server or plugin that loads its tools up front, a deny rule for a whole tool when tool search is off), the oldest images that Claude Code drops once a request passes the image limit, and a gateway or proxy that strips the cache markers or changes the model behind Claude Code's back.
@@ -270,11 +270,12 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 | Main conversation | 1 hour | 5 minutes |
 | Subagents and compaction | 5 minutes | 5 minutes |
 
-`promptCacheTtl` (or `CLAUDE_CODE_PROMPT_CACHE_TTL`) changes the main conversation's lifetime; usdash reads the lifetime each session really uses from its usage data. The lifetime is a minimum: a cache is sometimes still there a minute or two later. The clock restarts at the **start** of every request that uses the cache:
+`promptCacheTtl` (or `CLAUDE_CODE_PROMPT_CACHE_TTL`) changes the main conversation's lifetime; usdash reads the lifetime each session really uses from its usage data. The lifetime is a minimum, but don't count on more: in real sessions a cache outlasted it once, by half a minute ([Limitations](#️-limitations)). The clock restarts at the **start** of every request that uses the cache:
 - A long skill run stays warm, since each tool step is a new request, unless a single step or tool runs longer than the lifetime
 - A subagent refreshes its own cache, not the parent's: a parent waiting on a long subagent can go cold
 - Either way, a session whose cache runs out while Claude Code is still busy there moves to the expired pane as `○ expired · working`: its next request will write the conversation again. usdash tells busy from the transcript: a reply that called a tool (a subagent is one) whose result isn't back yet, or results not yet answered. After 30 minutes without a new record, its subagents' included, it no longer counts as busy (the session was likely stopped mid-tool)
 - A subagent started in the background is different: the parent ends its turn and waits to be told the subagent is done. While that subagent keeps writing records after the parent's last reply, the parent shows `○ expired · subagent` (with the same 30-minute bound)
+- When Claude Code writes its recap of the session (usually within 4 minutes of its last reply, sometimes much later), that re-sends the conversation too: the clock restarts, and usdash's countdown jumps back up. A recap after the cache ran out writes the conversation again, and the session comes back to the live pane
 
 ▫️ **Switching model mid-conversation**
 

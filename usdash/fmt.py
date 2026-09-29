@@ -8,13 +8,16 @@ def money(value: float) -> str:
 
 
 def tokens_text(value: float | None) -> str:
-    """504,113 -> '504k', 9,500 -> '9.5k', 3,200,000 -> '3.2M'. The unit is
-    picked after rounding: 999,600 is '1.0M', not '1000k'; 9,960 is '10k'."""
+    """504,113 -> '504k', 9,500 -> '9.5k', 3,200,000 -> '3.2M', 1,211,300,000
+    -> '1.2B'. The unit is picked after rounding: 999,600 is '1.0M', not
+    '1000k'; 9,960 is '10k'; 999,960,000 is '1.0B', not '1000.0M'."""
     if value is None:
         return "?"
-    thousands = value / 1000
+    thousands, millions = value / 1000, value / 1_000_000
+    if round(millions, 1) >= 1000:
+        return f"{value / 1_000_000_000:.1f}B"
     if round(thousands) >= 1000:
-        return f"{value / 1_000_000:.1f}M"
+        return f"{millions:.1f}M"
     return f"{thousands:.0f}k" if round(thousands, 1) >= 10 else f"{thousands:.1f}k"
 
 
@@ -23,5 +26,5 @@ def clock(seconds: int) -> str:
 
 
 def plural(n: int, word: str, words: str | None = None) -> str:
-    """'1 message', '6 messages'; `words` for an irregular plural ('web searches')."""
-    return f"{n} {word}" if n == 1 else f"{n} {words or word + 's'}"
+    """'1 message', '6 messages', '3,864 requests'; `words` for an irregular plural ('web searches')."""
+    return f"{n:,} {word}" if n == 1 else f"{n:,} {words or word + 's'}"

@@ -50,12 +50,12 @@ class Kind:
 
 @dataclass
 class ModelRow:
-    model: str  # the model id of its latest request
+    """One model at one effort, and fast mode apart: each is a row of its own."""
+    model: str | None  # a model id of its requests (every spelling of it reads the same on screen)
     fast: bool
-    effort: str | None  # its latest request's
+    effort: str | None
     requests: int = 0
     spend: float = 0.0
-    latest: float = 0.0
 
 
 @dataclass
@@ -183,7 +183,7 @@ def _compute(store: Store, now: float, period: int) -> Stats:
     stats.recent = 0.0 if recent_from is not None else None
     days = {day: Day(day) for day in local_days(start, now)}
     kinds = [[0, 0.0] for _ in KINDS]  # tokens, spend
-    models: dict[tuple[str | None, bool], ModelRow] = {}
+    models: dict[tuple[str | None, str | None, bool], ModelRow] = {}  # (family, effort, fast)
     causes: dict[str, Cause] = {}
     bands = [Band(label) for _, label in BANDS]
     rows: list[SessionRow] = []
@@ -228,13 +228,11 @@ def _compute(store: Store, now: float, period: int) -> Stats:
                 stats.searches += searches
                 stats.search_spend += searches * store.web_search
             fast = r.speed == "fast"
-            model = models.get((r.family, fast))
+            model = models.get((r.family, r.effort, fast))
             if model is None:
-                model = models[(r.family, fast)] = ModelRow(r.model, fast, r.effort)
+                model = models[(r.family, r.effort, fast)] = ModelRow(r.model, fast, r.effort)
             model.requests += 1
             model.spend += cost
-            if r.end >= model.latest:
-                model.model, model.effort, model.latest = r.model, r.effort, r.end
             if r.reason:
                 group = reason_group(r.reason)
                 cause = causes.get(group)

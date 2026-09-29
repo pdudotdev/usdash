@@ -210,13 +210,19 @@ def test_today_has_a_row_even_with_nothing_spent_yet(store):
     assert days[-1].day == "2026-09-29" and days[-1].requests == 0
 
 
-def test_a_models_row_shows_its_latest_effort(store):
+def test_each_effort_is_a_row_of_its_own(store):
+    # One row per model and effort: a row labelled with its latest effort alone would pass off
+    # requests at other efforts as that one (in real use, a "Sonnet 5 low" row of 554 requests, 4 at low).
     t = Transcript()
     t.turn(at(29, 10), write=10_000, effort="high")
     t.turn(at(29, 10, 5), read=10_002, write=100, effort="low")
+    t.turn(at(29, 10, 10), read=10_104, write=100, effort="high")
     t.into(store)
-    (row,) = st.compute(store, NOW, WINDOW).models
-    assert (row.effort, row.requests) == ("low", 2)
+    s = st.compute(store, NOW, WINDOW)
+    assert [(r.effort, r.requests) for r in s.models] == [("high", 2), ("low", 1)]
+    assert sum(r.spend for r in s.models) == pytest.approx(s.spend)
+    text = render(store, ui.View(now=NOW, period=WINDOW, mode="stats"), 160)
+    assert "Opus 5.5 high" in text and "Opus 5.5 low" in text
 
 
 def test_a_request_ending_just_before_midnight_counts_on_that_day(store):

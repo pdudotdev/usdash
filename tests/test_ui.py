@@ -9,7 +9,7 @@ import pytest
 from conftest import PROJECTS, T0, Transcript
 from rich.console import Console
 
-from usdash import app, ui
+from usdash import app, stats, ui
 from usdash.prices import ONE_HOUR
 from usdash.sessions import subscription_account
 from usdash.transcripts import account_file
@@ -173,6 +173,29 @@ def test_closed_script_runs_fold_into_one_row(store):
     assert "exited · 3 sessions · last 5d" in text  # the folded row counts every run in it
 
 
+def test_which_sessions_show_is_counted_as_the_panes_count_them(store):
+    # A folded row of 3 script runs is 3 sessions in its pane's title, and so in the header's range:
+    # a count of rows (13) next to the pane's count of sessions (15) wouldn't add up.
+    for i in range(3):
+        run = Transcript(session=f"run-{i}", cwd="/home/user/jobs", entrypoint="sdk-cli")
+        run.turn(T0 + 60 * i, text="say OK", write=20_000)
+        run.record("cost-state", totalCostUSD=0.1)
+        run.into(store)
+    for i in range(12):
+        old = Transcript(session=f"old-{i:02}", cwd="/home/user/other")
+        old.turn(T0 - 600 - 60 * i, text=f"old task {i:02}", write=30_000)
+        old.record("cost-state", totalCostUSD=0.2)
+        old.into(store)
+    view = ui.View(now=T0 + 3600)
+    text = screen(store, view, height=20)
+    assert "exited · 15 sessions" in text and "rows" not in text
+    title = next(line for line in text.splitlines() if "usdash · sessions" in line)
+    assert "usdash · sessions 1–" in title and " of 15 " in title
+    ui.press(store, view, "down")  # past the folded row: its 3 runs
+    assert "usdash · sessions 4–" in screen(store, view, height=20)
+    assert "usdash · sessions ─" in screen(store, ui.View(now=T0 + 3600), height=80)  # all of them fit: no range
+
+
 def test_archived_and_long_idle_sessions_are_hidden(store):
     two_sessions(store)
     store.sessions["bbbb-2222"].archived = True
@@ -198,11 +221,13 @@ def test_scrolling_the_sessions_keeps_a_live_one_whole(store):
         idle.into(store)
     view = ui.View(now=NOW)
     text = screen(store, view, height=30)
-    assert "· rows 1–6 of 14" in text and len(block(text, "aaaa")) == 3  # the live one, whole, and five idle
-    assert "expired · 13 sessions · rows 1–6 of 14 ·" in screen(store, view, width=80, height=30)  # before the hint
+    # Which sessions show is the header's: the panes' own titles count only their own (1 + 13 = 14).
+    assert "usdash · sessions 1–6 of 14" in text and len(block(text, "aaaa")) == 3  # the live one, whole, and five idle
+    assert "expired · 13 sessions · last 5d · cache ran out" in text
+    assert "usdash · sessions 1–6 of 14" in screen(store, view, width=80, height=30)
     ui.press(store, view, "down")
     text = screen(store, view, height=30)
-    assert "aaaa" not in text and "· rows 2–" in text and "g: back to the top" in text
+    assert "aaaa" not in text and "usdash · sessions 2–" in text and "g: back to the top" in text
     assert "╭─ live" not in text  # the live pane scrolled away with its only session
     ui.press(store, view, "end")
     text = screen(store, view, height=30)
@@ -483,10 +508,28 @@ def test_a_miss_cause_under_half_a_cent_is_left_off_the_header(store):
     assert line.plain == "⟳ cache misses added $0.05: model switch $0.05"
 
 
-def test_cached_is_coloured_by_how_much_was_read_back():
-    # The README: green from 80%, yellow from 30%, red below.
-    assert [str(ui.cached_text(share).style) for share in (0.8, 0.3, 0.29)] == ["green", "yellow", "red"]
+def test_the_share_read_from_cache_has_one_colour_rule():
+    # The README: green from 90%, yellow from 30%, red below.
+    assert [ui.cached_style(share) for share in (0.9, 0.89, 0.3, 0.29)] == ["green", "yellow", "yellow", "red"]
     assert ui.cached_text(None).plain == "—"
+
+
+@pytest.mark.parametrize(("read", "share", "colour"), [(38_000, "95%", "green"), (34_000, "85%", "yellow"),
+                                                        (8_000, "20%", "red")])
+def test_the_header_the_summary_and_by_day_colour_the_same_share_alike(store, read, share, colour):
+    # They once had rules of their own: 85% was green in by day but yellow above it, 20% red there only.
+    t = Transcript()
+    t.turn(T0, read=read, write=40_000 - read)  # `read` of 40,002 tokens read back
+    t.into(store)
+    figures = stats.compute(store, T0 + 60, 86400)
+    header = ui.top_lines(store, ui.View(now=T0 + 60))[0]
+    summary = ui.summary_lines(figures, 200)[0]
+
+    def style(line, words):
+        return next(str(span.style) for span in line.spans if words in line.plain[span.start:span.end])
+
+    assert style(header, f"{share} of input read from cache") == style(summary, f"{share} read from cache") == colour
+    assert str(ui.cached_text(figures.days[-1].cached).style) == colour  # its day, in by day
 
 
 def test_stats_prints_the_stats_view(capsys, monkeypatch, tmp_path):
