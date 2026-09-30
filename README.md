@@ -8,7 +8,7 @@ A live terminal dashboard for **your own Claude Code costs**. It reads the trans
 
 Every amount is measured: the tokens each request logged, at Anthropic's list prices, or, once a session exits, Claude Code's own total for it. The one exception is labelled `up to`, and it's an upper bound.
 
-It reads Claude Code's files, plus Anthropic's public pricing page once at start (`--offline` skips even that). The only file it writes is its copy of that page. Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
+It reads Claude Code's files, plus Anthropic's public pricing page once at start. The only file it writes is its copy of that page. Nothing is routed through it, nothing about you or your sessions leaves your machine, and it changes nothing in Claude Code.
 
 ▫️ **Why the prompt cache matters:**
 - [x] **While it's warm**, each message reads the conversation back at a tenth of the input price, or less
@@ -87,7 +87,7 @@ The gap between the two amounts is, at most, what letting the cache expire costs
 - What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of both
 
 ▫️ **Key characteristics:**
-- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only request goes to Anthropic's pricing page, at start (none with `--offline`), and the only file it writes is its copy of it
+- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only request goes to Anthropic's pricing page, at start, and the only file it writes is its copy of it
 - [x] **Every surface on the machine:** terminal, VS Code extension, Desktop app Code tab, scripts
 - [x] **Subscription or API key:** the cache lifetime of each session is read from its own usage data (1 hour or 5 minutes). On a subscription, the dollars are what the same requests would cost on the API: a like-for-like measure of your usage, not your bill
 - [x] **Numbers, not advice:** what each session has cost, what its next message costs now, and what it will cost at most once the cache expires
@@ -96,7 +96,7 @@ The gap between the two amounts is, at most, what letting the cache expire costs
 
 ## 📊 Stats
 
-Press `s` for where the money went over the last 30 days (`--period`), and `s` again to go back. It counts every logged request with a known price that ended in that period, main conversation and subagents alike. While sessions are at work, it's worked out again every few seconds.
+Press `s` for where the money went over the last 30 days, and `s` again to go back. It counts every logged request with a known price that ended in that period, main conversation and subagents alike. While sessions are at work, it's worked out again every few seconds.
 
 Under the summary, the panels come in pairs, in the order you'd ask: **when, and on what** (by day, where the money goes), **what set the price** (by model, by context size), **where it went** (by project, top sessions), and **what to act on** (cache misses, costliest prompts).
 
@@ -121,7 +121,7 @@ Every panel that splits SPEND (by day, by kind, by model, by context size, by pr
 ▫️ **Where the data comes from:**
 - [x] Claude Code writes every session to `~/.claude/projects/<folder>/<session-id>.jsonl`, and each subagent to `<session-id>/subagents/agent-<id>.jsonl`, one JSON line per record
 - [x] Each reply carries its model, effort and token usage: uncached input, cache reads, cache writes (5-minute or 1-hour) and output, and any server-side web searches
-- [x] At start, usdash reads the last 30 days (`--period`) a session at a time, keeping only the fields it uses: about 3 seconds and 120 MB of memory for 300 MB of transcripts, where it was tested. A shorter `--period` starts faster
+- [x] At start, usdash reads the last 30 days a session at a time, keeping only the fields it uses: about 3 seconds and 120 MB of memory for 300 MB of transcripts, where it was tested.
 - [x] Then it reads new lines about once a second, looks for new sessions and subagents every 5 seconds, and redraws at most twice a second
 
 ▫️ **Every reply:**
@@ -189,15 +189,12 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-| Option | Meaning | Default |
-|---|---|---|
-| `--window 8h` | Show sessions active this recently | `5d` |
-| `--period 7d` | What the stats cover (Claude Code keeps transcripts 30 days by default: [Limitations](#️-limitations)) | `30d` |
-| `--projects DIR` | Where Claude Code keeps its transcripts | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` |
-| `--stats` | Start in the Stats view | off |
-| `--once` | Print one screen and exit | off |
-| `--offline` | Don't read the pricing page at start; use its last copy (the header shows the prices' date) | off |
-| `--version` | Print the version and exit | |
+| Option | Meaning |
+|---|---|
+| `--once` | Print one screen and exit |
+| `--version` | Print the version and exit |
+
+It reads the transcripts in `$CLAUDE_CONFIG_DIR/projects` if that's set, else `~/.claude/projects`. The sessions cover the last 5 days, the stats the last 30.
 
 ↑/↓, the mouse wheel or `j`/`k` scroll a session (in Stats, a row of panels) at a time; `space`/`b` move a page, `g`/`G` jump to the top or the bottom. When they don't all fit, the header's title says which sessions show (`sessions 1–16 of 55`: the panes' counts added up), and the Stats summary's title which rows of panels (`rows 1–3 of 4`). `s` swaps the sessions and the stats, each keeping its place. `q` quits.
 
@@ -232,7 +229,7 @@ Archiving a session in the Desktop app keeps its transcript and Claude Code's to
 usdash reads the prices at start and prices every request with them, whenever it ran. After Anthropic changes a price, earlier days are priced anew too, and can differ from what was billed then.
 
 ▫️ **The stats reach back only as far as the transcripts do:**
-Claude Code deletes a session's transcript 30 days after its last activity by default ([`cleanupPeriodDays`](https://code.claude.com/docs/en/data-usage), in its settings; Desktop sessions are kept). A `--period` longer than that finds nothing older unless you raise it. When the transcripts begin after the period does, the Stats average a day covers only the days they do, and says since when.
+Claude Code deletes a session's transcript 30 days after its last activity by default ([`cleanupPeriodDays`](https://code.claude.com/docs/en/data-usage), in its settings; Desktop sessions are kept). The stats cover the same 30 days; with a lower `cleanupPeriodDays`, they reach back only that far. When the transcripts begin after the period does, the Stats average a day covers only the days they do, and says since when.
 
 ▫️ **Claude Code's web search isn't in any amount until the session exits:**
 Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. Claude Code's own total counts them, so an exited session's TOTAL includes them. They can be most of a session's cost: in one real `claude -p` session, the requests behind four searches were 72% of it.

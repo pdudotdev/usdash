@@ -16,8 +16,7 @@ plan usage, except fast mode, which draws on usage credits. The long-turn checks
   `tmux new-session -d -s usdash -x 200 -y 60 usdash`, read it with
   `tmux capture-pane -p -t usdash`, and send keys with
   `tmux send-keys -t usdash s` (`s` switches to the stats and back).
-  `COLUMNS=200 LINES=60 usdash --once` prints one screen of the sessions, and
-  `usdash --once --stats` one of the stats.
+  `COLUMNS=200 LINES=60 usdash --once` prints one screen of the sessions.
 - **Claude Code sessions:** one tmux session each, started in the folder the
   check names: `tmux new-session -d -s a -x 200 -y 50 -c <folder> claude`, then
   type with `tmux send-keys -t a '<message>' Enter` (slash commands the same
@@ -53,7 +52,7 @@ the 5-minute one.
 | 4 | In one folder, run `claude -p "say hi"` twice | One row for both in the exited pane: `2 runs`, WHERE `script`, CACHE `exited · …`, TOTAL the two runs' costs added | A loop of script runs mustn't bury the real sessions |
 | 5 | `[remote]` Over VS Code Remote-SSH to a Linux machine, start a session from the extension there, and run `usdash` in that machine's terminal. Then do the same from the Desktop app's SSH connection to it | Both sessions appear there (the Desktop one under Claude Code's own title); your laptop's sessions don't, and neither remote session appears on the laptop | usdash shows the sessions of the machine it runs on; both run Claude Code on the remote machine |
 | 6 | `[GUI]` In the Desktop app, archive a session that usdash lists | Within about 10 seconds it moves to the exited pane, CACHE `archived · …` (`archived · ● mm:ss` while its cache lasts), with its `└ resuming re-sends …` line; its spend stays in the stats | Archiving closes a session: done with, but what it cost and what coming back costs still count |
-| 7 | Run `usdash --once`, then `usdash --window 30m --once`, then add `--stats` to it, then `usdash --period 7d --once --stats` | First: the last pane's title says `last 5d`, and no session's CACHE age is over 5 days. Then: only sessions used in the last 30 minutes, and the last pane's title says `last 30m` (with no session at all: `no Claude Code activity in the last 30m`). With `--stats`: still `summary · last 30d`; with `--period 7d`, `summary · last 7d` | The default window is 5 days, and the stats' period 30; `--window` and `--period` each change only their own |
+| 7 | Run `usdash --once`, then `usdash --help` | The first prints one screen and exits: the last pane's title says `last 5d`, and no session's CACHE age is over 5 days. `--help` lists only `--once` and `--version` | The sessions cover 5 days and the stats 30 (check 19 shows `summary · last 30d`); nothing else is set by flags |
 
 ### Cache clock and what coming back costs
 
@@ -103,7 +102,7 @@ These check the cache clock when one turn runs longer than the cache lifetime. O
 
 | # | Do this | Pass criteria (dashboard) | Why |
 |---|---|---|---|
-| 28 | Start `usdash --once` with the network off, then `usdash --once --offline` with it on | The header's prices line (the one before the last) says `API list prices of <date> (couldn't refresh them)`, then `(offline)`: the date of the last prices read. Every amount is the same as with the network on | It falls back to the last prices it read, and says how fresh they are |
+| 28 | Start `usdash --once` with the network off | The header's prices line (the one before the last) says `API list prices of <date> (couldn't refresh them)`: the date of the last prices read. Every amount is the same as with the network on | It falls back to the last prices it read, and says how fresh they are |
 | 29 | Start `usdash --once` with the network on, then read `~/.cache/usdash/docs.json` (under `$XDG_CACHE_HOME` if that's set) | The header says `current API list prices`. The file has today's date under `pricing`, and nothing else but its format | The copy it falls back to is refreshed on every start |
 | 30 | In an Opus 5.5 session with some context, turn `/fast` on and send a message. Then turn it off and send another | With fast on: MODEL says `Opus 5.5 … fast`, the header adds `speed change`, the `now` amount is about twice CONTEXT × $0.20 per million, and Stats' by model has an `Opus 5.5 … fast` row. With it off again: MODEL drops `fast`, and no new cause | Fast mode is priced from each reply's `usage.speed`. Turning it on adds a header that's part of the cache key; Claude Code keeps sending it, so turning it off keeps the cache |
 | 31 | Ask Claude Code to search the web for something. Note the session's TOTAL, then `/exit` | Before `/exit`, TOTAL shows only the logged requests. After, TOTAL (now Claude Code's figure) is at least N × $0.01 above the noted one, N being the `searchCount` in the tool result's `toolUseResult` in the transcript | Claude Code's WebSearch tool searches in a request of its own that the transcripts don't log; Claude Code's own total counts it |

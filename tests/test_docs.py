@@ -96,7 +96,7 @@ def test_unreachable_pages_fall_back_to_the_saved_copy_then_the_shipped_files(tm
     # A copy older than what ships with usdash isn't used; a shipped file without a date rules nothing out.
     assert docs.read_docs(lambda url: None, saved, shipped={"pricing": "2026-12-01"})["pricing"].data is None
     assert docs.read_docs(lambda url: None, saved, shipped={"pricing": "?"})["pricing"].as_of == "2026-10-01"
-    assert docs.read_docs(None, tmp_path / "none.json")["pricing"] == docs.Page(None, None)  # --offline, no copy
+    assert docs.read_docs(None, tmp_path / "none.json")["pricing"] == docs.Page(None, None)  # nothing fetched, no copy
 
 
 def test_a_page_that_changed_is_flagged_and_its_copy_used(tmp_path):

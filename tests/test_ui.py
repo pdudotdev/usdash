@@ -1,5 +1,4 @@
 """The screen, rendered to text, and the CLI."""
-import argparse
 import json
 import os
 import time
@@ -397,23 +396,22 @@ def test_parse_keys():
     assert app.parse_keys("r") == []  # the request list is gone
 
 
-@pytest.mark.parametrize(("text", "seconds"), [("30m", 1800), ("2h", 7200), ("1d", 86400)])
-def test_duration(text, seconds):
-    assert app.duration(text) == seconds
+def offline(monkeypatch):
+    """main() reads the pricing page at start: not in a test."""
+    monkeypatch.setattr(app, "fetch_text", lambda url, timeout=0: None)
 
 
-@pytest.mark.parametrize("text", ["soon", "0m", "5", "2w"])
-def test_bad_duration(text):
-    with pytest.raises(argparse.ArgumentTypeError):
-        app.duration(text)
-
-
-def test_once_prints_a_screen_from_a_folder(capsys, monkeypatch, tmp_path):
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))  # no account file: API wording
+def test_once_prints_a_screen_from_claude_codes_folder(capsys, monkeypatch, fixture_store):
+    # The transcripts folder is $CLAUDE_CONFIG_DIR/projects; the fixtures' folder has no account file: API wording.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(PROJECTS.parent))
     monkeypatch.setenv("COLUMNS", "200")
-    app.main(["--projects", str(PROJECTS), "--window", "3650d", "--once", "--offline"])
+    offline(monkeypatch)
+    last = max(s.last_activity for s in fixture_store.sessions.values())
+    monkeypatch.setattr(app.time, "time", lambda: last + 60)  # the fixtures' sessions, within the 5-day window
+    app.main(["--once"])
     out = capsys.readouterr().out
-    assert "usdash · sessions" in out and "Test plan vs test case" in out and "Pong reply" in out
+    assert "usdash · sessions" in out and "Pong reply" in out and "Three-word greeting" in out
+    assert "Test plan vs test case" not in out  # 5 days before the others: outside the window
 
 
 def test_claude_config_dir_moves_the_account_file(monkeypatch, tmp_path):
@@ -536,7 +534,8 @@ def test_the_default_window_is_5_days(capsys, monkeypatch, tmp_path):
         (folder / f"{session}.jsonl").write_text("".join(json.dumps(r.data) + "\n" for r in t.records))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("COLUMNS", "200")
-    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
+    offline(monkeypatch)
+    app.main(["--once"])
     out = capsys.readouterr().out
     assert "expired · 1 session · last 5d" in out and "from 4 days ago" in out and "from 6 days ago" not in out
 
@@ -573,14 +572,6 @@ def test_the_header_the_summary_and_by_day_colour_the_same_share_alike(store, re
     assert str(ui.cached_text(figures.days[-1].cached).style) == colour  # its day, in by day
 
 
-def test_stats_prints_the_stats_view(capsys, monkeypatch, tmp_path):
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("COLUMNS", "160")
-    app.main(["--projects", str(PROJECTS), "--period", "3650d", "--once", "--offline", "--stats"])
-    out = capsys.readouterr().out
-    assert "usdash · stats" in out and "summary · last 3650d" in out and "╭─ by day · last 5 days" in out
-
-
 def test_the_stats_cover_30_days_by_default_and_the_sessions_5(capsys, monkeypatch, tmp_path):
     folder = tmp_path / "projects" / "-home-user-proj"
     folder.mkdir(parents=True)
@@ -594,12 +585,17 @@ def test_the_stats_cover_30_days_by_default_and_the_sessions_5(capsys, monkeypat
         os.utime(path, (now - days * 86400 + 60,) * 2)  # last written then: loaded only if history reaches back
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("COLUMNS", "200")
-    monkeypatch.setenv("LINES", "60")  # room for every row of panels
-    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline", "--stats"])
-    out = capsys.readouterr().out
+    dash = app.App(tmp_path / "projects", app.history_start(now, ui.DEFAULT_WINDOW, ui.DEFAULT_PERIOD),
+                   ui.DEFAULT_WINDOW, clock=lambda: now)  # as main() starts it
+    dash.poll()
+    dash.view.mode = "stats"
+    dash.view.now = now
+    out = screen(dash.store, dash.view, width=200, height=60)  # room for every row of panels
     assert "summary · last 30d" in out and "2 requests from 2 prompts" in out
     assert "from a week ago" in out and "from 29 days ago" in out and "from 31 days ago" not in out
-    app.main(["--projects", str(tmp_path / "projects"), "--once", "--offline"])
+    capsys.readouterr()  # the screen above printed too
+    offline(monkeypatch)
+    app.main(["--once"])
     out = capsys.readouterr().out  # the sessions: 5 days, as before
     assert "no Claude Code activity in the last 5d" in out and "from a week ago" not in out
 

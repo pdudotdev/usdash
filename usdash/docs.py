@@ -172,7 +172,7 @@ def read_docs(fetch=fetch_text, saved: Path | None = None, shipped: dict[str, st
               today: date | None = None) -> dict[str, Page]:
     """Every page in PAGES, read now if possible, else from its saved copy,
     if that's no older than what ships with usdash (`shipped`: page -> date).
-    `fetch` is None to read nothing (--offline)."""
+    `fetch` is None to read nothing."""
     saved = saved or saved_docs_file()
     try:
         kept = json.loads(saved.read_text())

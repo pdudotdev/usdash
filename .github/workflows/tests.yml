@@ -37,5 +37,6 @@ jobs:
         env:
           USDASH_SOURCE: .
       - run: ~/.local/bin/usdash --version
-      - run: ~/.local/bin/usdash --once --offline --projects tests/fixtures/projects --window 3650d
-      - run: ~/.local/bin/usdash --once --offline --projects tests/fixtures/projects --period 3650d --stats
+      - run: ~/.local/bin/usdash --once
+        env:
+          CLAUDE_CONFIG_DIR: tests/fixtures  # its projects folder: the fixtures' transcripts

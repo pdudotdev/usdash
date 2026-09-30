@@ -1,15 +1,12 @@
 """usdash: a live terminal dashboard of your own Claude Code costs and prompt caches.
 
     usdash                  # sessions of the last 5 days, stats of the last 30, then live
-    usdash --window 8h      # show sessions active this recently (default 5d)
-    usdash --period 7d      # what the stats cover (default 30d)
-    usdash --stats          # start in the Stats view
     usdash --once           # print one screen and exit (no live view)
-    usdash --offline        # don't read Anthropic's docs; use the last prices read
 
-Read-only: it reads Claude Code's transcripts on this machine, and nothing
-about them leaves it. At start it reads Anthropic's pricing page, sending
-nothing about you, unless --offline. `s` swaps the sessions and the stats.
+Read-only: it reads Claude Code's transcripts on this machine
+($CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects), and nothing about
+them leaves it. At start it reads Anthropic's pricing page, sending nothing
+about you. `s` swaps the sessions and the stats.
 Scroll with the arrow keys, the mouse wheel or j/k, a page with space/b, and
 jump to the top with g and the bottom with G; q quits.
 """
@@ -17,7 +14,6 @@ import argparse
 import importlib.metadata
 import os
 import queue
-import re
 import select
 import sys
 import threading
@@ -77,14 +73,6 @@ def read_keys(fd: int, keys: queue.Queue, stop: threading.Event) -> None:
                 keys.put(key)
 
 
-def duration(text: str) -> int:
-    """'30m' / '2h' / '1d' -> seconds; anything else is an error, not a guess."""
-    match = re.fullmatch(r"(\d+)([mhd])", text.strip())
-    if not match or int(match.group(1)) == 0:
-        raise argparse.ArgumentTypeError(f"{text!r}: use minutes, hours or days, e.g. 30m, 2h or 1d")
-    return int(match.group(1)) * {"m": 60, "h": 3600, "d": 86400}[match.group(2)]
-
-
 def prices_label(as_of: str | None, offline: bool) -> str:
     """How the header names the prices: read from the pricing page now, or
     the last ones read, with their date and why they weren't refreshed."""
@@ -140,14 +128,14 @@ def history_start(now: float, window: int, period: int = 0) -> float:
 
 
 class App:
-    def __init__(self, projects: Path, since: float, window: int, clock=time.time, known: Known | None = None,
+    def __init__(self, projects: Path, since: float, window: int, clock=None, known: Known | None = None,
                  period: int = DEFAULT_PERIOD) -> None:
         """`known`: what knowledge() returns; without it, the shipped files only."""
         known = known or knowledge()
-        self.clock = clock
+        self.clock = clock or time.time
         self.tailer = Tailer(projects, since=since)
         self.store = Store(known.prices, known.facts, known.web_search)
-        self.view = View(now=clock(), subscription=subscription_account(), window=window, period=period,
+        self.view = View(now=self.clock(), subscription=subscription_account(), window=window, period=period,
                          prices=known.label, docs_changed=known.changed)
         self.desktop_read = 0.0
 
@@ -181,27 +169,17 @@ def version() -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="usdash", description="Live dashboard of your Claude Code costs and prompt caches.")
-    parser.add_argument("--window", type=duration, default=DEFAULT_WINDOW,
-                        help="show sessions active this recently, e.g. 3h or 2d (default: 5d)")
-    parser.add_argument("--period", type=duration, default=DEFAULT_PERIOD,
-                        help="what the stats cover, e.g. 7d (default: 30d)")
-    parser.add_argument("--projects", type=Path, default=None,
-                        help="Claude Code's transcripts folder (default: $CLAUDE_CONFIG_DIR/projects or ~/.claude/projects)")
-    parser.add_argument("--stats", action="store_true", help="start in the Stats view (s swaps views)")
     parser.add_argument("--once", action="store_true", help="print one screen and exit")
-    parser.add_argument("--offline", action="store_true",
-                        help="don't read Anthropic's pricing page at start; use the last prices read")
     parser.add_argument("--version", action="version", version=f"usdash {version()}")
     args = parser.parse_args(argv)
 
     now = time.time()
-    since = history_start(now, args.window, args.period)
-    projects = (args.projects or default_projects_dir()).expanduser()
-    app = App(projects, since, args.window, known=knowledge(args.offline), period=args.period)
-    if args.stats:
-        app.view.mode = "stats"
+    since = history_start(now, DEFAULT_WINDOW, DEFAULT_PERIOD)
+    projects = default_projects_dir().expanduser()
+    app = App(projects, since, DEFAULT_WINDOW, known=knowledge(offline=False), period=DEFAULT_PERIOD)
     if not projects.is_dir():
-        print(f"usdash: no Claude Code transcripts at {projects} (use --projects)", file=sys.stderr)
+        print(f"usdash: no Claude Code transcripts at {projects} (set CLAUDE_CONFIG_DIR if Claude Code keeps them "
+              f"elsewhere)", file=sys.stderr)
     elif sys.stderr.isatty():  # weeks of history take a few seconds to read
         print(f"usdash: reading the last {duration_text(round(now - since))} of transcripts…", file=sys.stderr)
     app.poll()
