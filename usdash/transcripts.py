@@ -23,6 +23,7 @@ KNOWN_TYPES = {
     "assistant", "user", "system", "custom-title", "ai-title", "agent-name", "last-prompt", "cost-state",
     "attachment", "file-history-snapshot", "file-history-delta", "mode", "permission-mode", "queue-operation",
     "bridge-session", "atis-latch", "frame-link", "artifact-autoreact-ledger", "artifact-comment-monitor",
+    "pr-link",
 }
 
 
