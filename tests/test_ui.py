@@ -98,7 +98,23 @@ def test_an_exited_session_still_warm_can_be_resumed_from_the_cache(store):
     closing.into(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
     assert "exited · ● 50:00" in a[0]
-    assert a[1].strip("│ ") == "└ resuming re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires"
+    assert a[2].strip("│ ") == "└ resuming re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires"
+
+
+def test_an_exited_session_says_what_claude_code_counted_beyond_its_transcripts(store):
+    two_sessions(store)
+    closing = Transcript(session="aaaa-1111")
+    closing.record("cost-state", totalCostUSD=0.50)
+    closing.into(store)
+    a = block(screen(store, ui.View(now=NOW)), "aaaa")
+    gap = store.sessions["aaaa-1111"].claude_total - store.sessions["aaaa-1111"].cost_at_state
+    assert a[1].strip("│ ") == f"├ Claude Code counted ${gap:.2f} more than its transcripts show (requests it doesn't log)"
+    # Under a cent, or at what the transcripts show, TOTAL and TODAY agree: nothing to explain.
+    closing = Transcript(session="aaaa-1111")
+    closing.record("cost-state", totalCostUSD=store.sessions["aaaa-1111"].cost_total + 0.004)
+    closing.into(store)
+    a = block(screen(store, ui.View(now=NOW)), "aaaa")
+    assert not any("Claude Code counted" in line for line in a)
 
 
 def test_a_model_with_no_known_price_shows_the_size_only(store):
@@ -546,6 +562,11 @@ def test_a_miss_cause_under_half_a_cent_is_left_off_the_header(store):
     store.rewrites[today].update({"model switch": 0.05, "effort change": 0.004})
     line = next(line for line in ui.top_lines(store, ui.View(now=NOW)) if line.plain.startswith("⟳"))
     assert line.plain == "⟳ cache misses added $0.05: model switch $0.05"
+
+
+def test_a_share_read_from_cache_never_rounds_up_to_100_percent():
+    # 99.65% of a day's input read back, beside $0.28 of misses, read "100%".
+    assert [ui.cached_share(x) for x in (0.8649, 0.9899, 0.9965, 0.99999, 1.0)] == ["86%", "99%", "99.6%", "99.9%", "100%"]
 
 
 def test_the_share_read_from_cache_has_one_colour_rule():

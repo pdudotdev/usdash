@@ -8,6 +8,7 @@ A live session also shows what you last typed. Finished script runs fold into
 one row per folder.
 """
 import io
+import math
 import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -91,6 +92,16 @@ def _ago(seconds: float) -> str:
     return f"{seconds}s ago" if seconds < 60 else f"{age_text(seconds)} ago"
 
 
+def cached_share(share: float) -> str:
+    """A share of input read back from the cache: '86%', one decimal from 99% ('99.6%': rounded,
+    it would read '100%' next to a day's misses), and '100%' only when nothing was written."""
+    if share >= 1:
+        return "100%"
+    if share >= 0.99:
+        return f"{math.floor(share * 1000) / 10:.1f}%"
+    return f"{share:.0%}"
+
+
 def cached_style(share: float) -> str:
     """The colour of a share of input read back from the cache, the same wherever it shows."""
     return "green" if share >= CACHED_GOOD else "yellow" if share >= CACHED_POOR else "red"
@@ -150,7 +161,7 @@ def top_lines(store: Store, view: View) -> list[Text]:
     rewrites = {reason: cost for reason, cost in store.rewrites.get(today, {}).items() if cost >= 0.005}
     line = Text.assemble(("TODAY ", "bold"), (_money(spent), "bold green"), no_wrap=True, overflow="ellipsis")
     if hit is not None:
-        line.append(f"  ·  {hit:.0%} of input read from cache", style=cached_style(hit))
+        line.append(f"  ·  {cached_share(hit)} of input read from cache", style=cached_style(hit))
     lines = [line]
     if rewrites:
         # What requests paid to write the conversation again instead of reading it back (Stats has them by cause):
@@ -322,6 +333,15 @@ def resend_line(store: Store, session: Session, view: View) -> Text | None:
     return line
 
 
+def unlogged_line(sessions: list[Session]) -> Text | None:
+    """Why TOTAL is above TODAY for sessions that exited: what Claude Code counted, at their last exit,
+    beyond what their transcripts show (requests it doesn't log). None under a cent."""
+    gap = sum(s.claude_total - s.cost_at_state for s in sessions if s.claude_total is not None)
+    if gap < 0.005:
+        return None
+    return Text.assemble("Claude Code counted ", _money(gap), " more than its transcripts show (requests it doesn't log)")
+
+
 def tree(lines: list[Text]) -> list[Text]:
     """├ before each line, └ before the last."""
     return [Text.assemble(("└ " if i == len(lines) - 1 else "├ ", "dim"), line) for i, line in enumerate(lines)]
@@ -342,10 +362,12 @@ def script_runs(runs: list[Session], view: View) -> Entry:
         model = model_text(latest.model).append(" · mixed", style="dim")
     else:
         model = Text(plural(len(models), "model"), style="dim")
+    unlogged = unlogged_line(runs)
     return Entry("exited", [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
                          Text(app_name(latest), style="dim"), model,
                          Text(f"exited · {age}", style="dim"), Text(""),
-                         today_cell(today), Text(_money(sum(s.total for s in runs)))], sessions=len(runs))
+                         today_cell(today), Text(_money(sum(s.total for s in runs)))],
+                 tree([unlogged] if unlogged else []), sessions=len(runs))
 
 
 def session_entries(store: Store, view: View) -> list[Entry]:
@@ -356,14 +378,14 @@ def session_entries(store: Store, view: View) -> list[Entry]:
     for session in visible_sessions(store, view):
         cells, when = session_cells(store, session, view), session.last_activity or 0
         resend = resend_line(store, session, view)
+        extra = [line for line in (unlogged_line([session]), resend) if line]
         if not (session.ended or session.archived) and cache_clock(session, view.now)[0]:
-            below = [prompt_text(session, view), *([resend] if resend else [])]
-            panes["live"].append((when, Entry("live", cells, tree(below))))
+            panes["live"].append((when, Entry("live", cells, tree([prompt_text(session, view), *extra]))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
             pane = "exited" if session.ended or session.archived else "expired"
-            panes[pane].append((when, Entry(pane, cells, tree([resend] if resend else []))))
+            panes[pane].append((when, Entry(pane, cells, tree(extra))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     panes["exited"].sort(key=lambda item: -item[0])
     return [entry for pane in PANES for _, entry in panes[pane]]
@@ -468,7 +490,7 @@ def share(part: float, whole: float) -> str:
 def cached_text(value: float | None) -> Text:
     if value is None:
         return Text("—", style="dim")
-    return Text(f"{value:.0%}", style=cached_style(value))
+    return Text(cached_share(value), style=cached_style(value))
 
 
 def bar(value: float, top: float) -> Text:
@@ -508,7 +530,7 @@ def summary_lines(stats: Stats, width: int) -> list[Text]:
     if stats.recent is not None:
         first.append(Text(f"last 5 hours {money(stats.recent)}"))
     if cached is not None:
-        first.append(Text(f"{cached:.0%} read from cache", style=cached_style(cached)))
+        first.append(Text(f"{cached_share(cached)} read from cache", style=cached_style(cached)))
     if stats.causes:  # as the cache-misses panel lists them: a miss under half a cent is still one
         first.append(Text(f"cache misses {money(stats.misses)} ({share(stats.misses, stats.spend)})", style="red"))
     else:

@@ -298,7 +298,17 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 ## 18. Costs you don't see
 
 Clients make requests you don't type, and not all of them appear in session logs:
-- **Claude Code:** session titles, prompt suggestions (mostly cache reads), the recap it writes while you're away, `/compact`'s summarising request, WebSearch's sub-requests, background summaries for `--resume`.
+- **Claude Code** (measured at 2.1.278–2.1.285; Appendix B has the details):
+
+  | Request | Model | What was measured |
+  |---|---|---|
+  | Session titles | Haiku 4.5 | 893 tokens in, 10 out, in one session |
+  | Prompt suggestions | | Mostly cache reads |
+  | The recap written while you're away | The session's | Re-sends the conversation and restarts the cache clock; one written after the 1-hour cache had run out wrote it again. 27 of 40 came within 4 minutes of the last reply, the rest 4–74 minutes after |
+  | `/compact`'s summarising request | The session's | Warm: reads what the latest turn's first request had cached, the rest at the input price, writing only 147–555 tokens. Cold: reads the tool list, the rest at the input price. Output 1,065–3,804 tokens |
+  | WebSearch's searches | | A request of their own, plus $10 per 1,000 searches: four searches were 72% of one `claude -p` session's cost |
+  | Background summaries for `--resume` | | Not measured |
+  | The Desktop app's own requests | The session's | Claude Code counted $0.23 for a session whose transcripts show $0.16 |
 - **How much, in real sessions:** the transcripts held 41–100% of what Claude Code itself billed (a median of 89%; 84% weighted by cost), least in very short sessions and in ones that ran many subagents. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
 - **The FinOps rule:** reconcile against the provider's usage report, the client's own total (`/usage`, `cost-state`), or an OpenTelemetry export, not only against your logs.
 

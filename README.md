@@ -44,7 +44,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Line | What it says |
 |---|---|
-| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache: green from 90%, yellow from 30%, red below (the same in Stats) |
+| **TODAY** | Today's spend at list prices, and the share of all input read back from the cache (to a tenth of a percent from 99%, so it never rounds up to 100%): green from 90%, yellow from 30%, red below (the same in Stats) |
 | **⟳ cache misses added** | In red, only on a day with misses: what the requests that had to write the conversation again, instead of reading it back, cost beyond reading it. By cause, the biggest first; a cause that added under half a cent is left out here. [Stats](#-stats) has them all, over the last 30 days |
 | **Prices** | Which prices the dollars are: Anthropic's current API list prices, or, if the pricing page can't be read at start, the last ones read, with their date. On a subscription it adds that your plan isn't billed per token. Warnings follow in yellow: requests with no known price (left out of the totals), a pricing page that no longer reads as expected, and record types usdash doesn't know |
 | **Caveat** | Amounts can be lower than actual: Claude Code doesn't log some of its requests, but an exited session's TOTAL is complete ([Limitations](#️-limitations)) |
@@ -60,7 +60,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
 | **CACHE** | `● mm:ss`: the prompt cache is warm, and runs out in that long. Green, then **yellow** for its last 10 minutes (the last half of a 5-minute cache)<br>`○ expired · 2h`: it has run out, in a session that's still open, last used 2 hours ago. `○ expired · working` while Claude Code is still busy there (a tool or subagent running, or its answer to their results on its way); `○ expired · subagent` while it waits for a subagent working in the background<br>`exited · ● mm:ss`: you quit it (`/exit` or closing the window), and its cache outlasts it<br>`exited · 3h`: you quit it, and its cache has run out<br>`archived · 3h` (or `archived · ● mm:ss`): you archived it in the Desktop app, which also closes it<br>Once the cache has run out, the next message re-writes the whole conversation |
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far), as the last request sent it. `compacted` right after `/compact`, until the next message measures the new size |
-| **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since. A figure below what the transcripts show is an incomplete record, and TOTAL stays theirs |
+| **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since. A figure below what the transcripts show is an incomplete record, and TOTAL stays theirs. When Claude Code's figure is higher by a cent or more, a line under the session says by how much: `├ Claude Code counted $0.06 more than its transcripts show (requests it doesn't log)` |
 
 ▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (its cache ran out, but it wasn't exited: type in its window if it's still open, else `claude --resume <id>`; a session killed or crashed without exiting shows here too) and **exited** (you quit it, or archived it in the Desktop app: `claude --resume <id>`). A pane with no session in it isn't shown. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
 
@@ -121,7 +121,7 @@ Every panel that splits SPEND (by day, by kind, by model, by context size, by pr
 ▫️ **Where the data comes from:**
 - [x] Claude Code writes every session to `~/.claude/projects/<folder>/<session-id>.jsonl`, and each subagent to `<session-id>/subagents/agent-<id>.jsonl`, one JSON line per record
 - [x] Each reply carries its model, effort and token usage: uncached input, cache reads, cache writes (5-minute or 1-hour) and output, and any server-side web searches
-- [x] At start, usdash reads the last 30 days a session at a time, keeping only the fields it uses: about 3 seconds and 120 MB of memory for 300 MB of transcripts, where it was tested.
+- [x] At start, usdash reads the last 30 days a session at a time, keeping only the fields it uses: about 3 seconds and 120 MB of memory for 300 MB of transcripts, where it was tested
 - [x] Then it reads new lines about once a second, looks for new sessions and subagents every 5 seconds, and redraws at most twice a second
 
 ▫️ **Every reply:**
@@ -155,7 +155,7 @@ The page is fetched as plain Markdown, within 4 seconds, and read strictly: a pa
 | 6 | Step away until the countdown turns yellow | The last 10 minutes of the cache (2½ of a 5-minute one): the `up to` amount turns yellow too |
 | 7 | Stay away until it runs out | The session moves to the expired pane, `○ expired · 1h`, with `continuing re-sends …k tokens: up to $…` |
 | 8 | `/compact`, then send a message | CONTEXT says `compacted` until that message measures the new size |
-| 9 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
+| 9 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss, and a line under the session says by how much), and what resuming costs |
 | 10 | Press `s` | The session in **top sessions**, your prompts in **costliest prompts**, the day's bar in **by day** |
 
 ## 🚀 Installation & Usage
@@ -220,7 +220,21 @@ It reads the transcripts in `$CLAUDE_CONFIG_DIR/projects` if that's set, else `~
 Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION` in the session. That happens in a terminal started from inside a Claude Code session (e.g. a terminal app launched by one): it inherits that variable, and every `claude` started from it saves no transcript. Quit the terminal app and open it again from the Dock or launcher.
 
 ▫️ **Amounts read low until a session exits:**
-Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, the recap it writes while you're away, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 41–100% of what Claude Code itself counted (a median of 89%, and over 72% in three sessions of four), least in very short sessions and in ones that ran many subagents. Weighted by cost, they held 84%: 84% on Opus 5.5, 23% on Haiku 4.5, which Claude Code uses for requests of its own. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. It isn't always complete: a Desktop session reopened days later, sending nothing, wrote $0.00 for $0.90 of earlier requests, so a total below the transcripts' is left for theirs. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request. The Stats summary says how much of Claude Code's totals your own exited sessions' transcripts hold: for a budget, divide SPEND by that share to estimate the full amount at list prices.
+Claude Code makes requests its transcripts never log:
+
+| Request | What's known about it |
+|---|---|
+| Session titles | Small, on Haiku 4.5 |
+| Prompt suggestions | Mostly cache reads |
+| The recap written while you're away | Re-sends the conversation on the session's model: it restarts the cache clock, and after the cache has run out it writes the conversation again |
+| `/compact`'s summarising request | Reads what's cached, the rest at the input price; its output is the summary (1–4k tokens) |
+| WebSearch's searches | A request of their own, plus $10 per 1,000 searches: four searches were 72% of one `claude -p` session's cost |
+| Background summaries for `--resume` | Not measured |
+| The Desktop app's own requests | On the session's model |
+
+On the machine usdash was built on, the transcripts held 41–100% of what Claude Code counted (a median of 89%), least in very short sessions and in ones that ran many subagents. Weighted by cost, 84%, and 23% on Haiku 4.5, which Claude Code uses for requests of its own.
+
+When you quit a session, Claude Code writes its own total, which counts them all: TOTAL shows it from then on, and a line under the session says how much it adds. A total below the transcripts' is incomplete (a Desktop session reopened days later wrote $0.00 for $0.90 of requests), and TOTAL stays theirs. TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request. For a budget, divide SPEND by the Stats summary's `transcripts hold N%` to estimate the full amount at list prices.
 
 ▫️ **Deleting a Desktop session deletes its cost:**
 Archiving a session in the Desktop app keeps its transcript and Claude Code's total. Deleting it removes both, leaving only a marker with no costs (`<id>.desktop-released.json`), so what the session cost drops out of TODAY, TOTAL and the stats; a usdash already running keeps showing it until you restart it. Archive the sessions you want counted.
@@ -230,9 +244,6 @@ usdash reads the prices at start and prices every request with them, whenever it
 
 ▫️ **The stats reach back only as far as the transcripts do:**
 Claude Code deletes a session's transcript 30 days after its last activity by default ([`cleanupPeriodDays`](https://code.claude.com/docs/en/data-usage), in its settings; Desktop sessions are kept). The stats cover the same 30 days; with a lower `cleanupPeriodDays`, they reach back only that far. When the transcripts begin after the period does, the Stats average a day covers only the days they do, and says since when.
-
-▫️ **Claude Code's web search isn't in any amount until the session exits:**
-Its WebSearch tool searches in a request of its own that the transcripts don't log, so neither that request's tokens nor the $10 per 1,000 searches show up. Claude Code's own total counts them, so an exited session's TOTAL includes them. They can be most of a session's cost: in one real `claude -p` session, the requests behind four searches were 72% of it.
 
 ▫️ **Code execution:** without web search or web fetch in the same request, it's billed per container-hour against a free monthly allowance per organisation, so one session's share can't be known. It isn't counted; with them, it's free.
 
@@ -276,7 +287,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 | Main conversation | 1 hour | 5 minutes |
 | Subagents and compaction | 5 minutes | 5 minutes |
 
-`promptCacheTtl` (or `CLAUDE_CODE_PROMPT_CACHE_TTL`) changes the main conversation's lifetime; usdash reads the lifetime each session really uses from its usage data. The lifetime is a minimum, but don't count on more: in real sessions a cache outlasted it once, by half a minute ([Limitations](#️-limitations)). The clock restarts at the **start** of every request that uses the cache:
+`promptCacheTtl` (or `CLAUDE_CODE_PROMPT_CACHE_TTL`) changes the main conversation's lifetime; usdash reads the lifetime each session really uses from its usage data. It's a minimum, but don't count on more ([Limitations](#️-limitations)). The clock restarts at the **start** of every request that uses the cache:
 - A long skill run stays warm, since each tool step is a new request, unless a single step or tool runs longer than the lifetime
 - A subagent refreshes its own cache, not the parent's: a parent waiting on a long subagent can go cold
 - Either way, a session whose cache runs out while Claude Code is still busy there moves to the expired pane as `○ expired · working`: its next request will write the conversation again. usdash tells busy from the transcript: a reply that called a tool (a subagent is one) whose result isn't back yet, or results not yet answered. After 30 minutes without a new record, its subagents' included, it no longer counts as busy (the session was likely stopped mid-tool)
