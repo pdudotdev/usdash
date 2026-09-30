@@ -225,6 +225,9 @@ Claude Code then shows `⚠ Transcript saving is off — inherited CLAUDE_CODE_C
 ▫️ **Amounts read low until a session exits:**
 Some requests Claude Code makes never appear in its transcripts: session titles, prompt suggestions, the recap it writes while you're away, `/compact`'s own summarising request, and others. On the machine usdash was built on, the transcripts held 41–100% of what Claude Code itself counted (a median of 89%, and over 72% in three sessions of four), least in very short sessions and in ones that ran many subagents. Weighted by cost, they held 84%: 84% on Opus 5.5, 23% on Haiku 4.5, which Claude Code uses for requests of its own. When you quit a session, Claude Code writes its own total, which counts them all, and from then on TOTAL shows it. It isn't always complete: a Desktop session reopened days later, sending nothing, wrote $0.00 for $0.90 of earlier requests, so a total below the transcripts' is left for theirs. TODAY, the header's TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request. The Stats summary says how much of Claude Code's totals your own exited sessions' transcripts hold: for a budget, divide SPEND by that share to estimate the full amount at list prices.
 
+▫️ **Deleting a Desktop session deletes its cost:**
+Archiving a session in the Desktop app keeps its transcript and Claude Code's total. Deleting it removes both, leaving only a marker with no costs (`<id>.desktop-released.json`), so what the session cost drops out of TODAY, TOTAL and the stats; a usdash already running keeps showing it until you restart it. Archive the sessions you want counted.
+
 ▫️ **Past requests are priced at today's list prices:**
 usdash reads the prices at start and prices every request with them, whenever it ran. After Anthropic changes a price, earlier days are priced anew too, and can differ from what was billed then.
 
