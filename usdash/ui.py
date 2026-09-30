@@ -20,7 +20,7 @@ from rich.text import Text
 
 from .engine import cache_clock, context, resend_costs
 from .fmt import clock, money, plural, tokens_text
-from .models import pretty_model
+from .models import model_key, pretty_model
 from .sessions import Session, Store, day_of, snippet
 from .stats import DAYS, EARLIER, Stats, compute, day_label
 
@@ -129,10 +129,10 @@ def app_name(session: Session) -> str:
 
 
 def visible_sessions(store: Store, view: View) -> list[Session]:
-    """Sessions active within the window, most recent first; archived Desktop sessions hidden."""
+    """Sessions active within the window, most recent first (archived Desktop sessions too: their pane says so)."""
     shown = [
         s for s in store.sessions.values()
-        if s.last_activity and view.now - s.last_activity <= view.window and not s.archived and s.last_request
+        if s.last_activity and view.now - s.last_activity <= view.window and s.last_request
     ]
     return sorted(shown, key=lambda s: -(s.last_activity or 0))
 
@@ -260,10 +260,11 @@ def cache_cell(session: Session, view: View) -> Text:
     warm, left, ttl = cache_clock(session, view.now)
     age = age_text(view.now - (session.last_activity or view.now))
     style = "yellow" if expiring(left, ttl) else "green"
-    if session.ended:
+    if session.ended or session.archived:  # quit, or archived in the Desktop app
+        word = "archived" if session.archived else "exited"
         if warm:  # its cache outlives it: resuming reads it back until it runs out
-            return Text.assemble(("exited · ", "dim"), (f"● {clock(left)}", style))
-        return Text(f"exited · {age}", style="dim")
+            return Text.assemble((f"{word} · ", "dim"), (f"● {clock(left)}", style))
+        return Text(f"{word} · {age}", style="dim")
     if warm:
         return Text(f"● {clock(left)}", style=style)
     if session.working(view.now):  # its next request will re-write it all
@@ -303,7 +304,7 @@ def resend_line(store: Store, session: Session, view: View) -> Text | None:
     if tokens is None:
         return None
     warm, left, ttl = cache_clock(session, view.now)
-    verb = "resuming" if session.ended else "next message" if warm else "continuing"
+    verb = "resuming" if session.ended or session.archived else "next message" if warm else "continuing"
     line = Text(f"{verb} re-sends {_tokens(tokens)} tokens")
     costs = resend_costs(store, session, view.now)
     if costs is None:
@@ -332,8 +333,17 @@ def script_runs(runs: list[Session], view: View) -> Entry:
     today = sum(s.cost_by_day.get(day_of(view.now), 0.0) for s in runs)
     name = Text(plural(len(runs), "run"), style="bold")
     age = age_text(view.now - (latest.last_activity or view.now))
+    # Their model and effort, as any row shows them, when the runs share them; else how many there were.
+    kinds = {(model_key(s.model), s.effort, s.main.speed) for s in runs}
+    models = {family for family, _, _ in kinds}
+    if len(kinds) == 1:
+        model = model_text(latest.model, latest.effort, latest.main.speed)
+    elif len(models) == 1:
+        model = model_text(latest.model).append(" · mixed", style="dim")
+    else:
+        model = Text(plural(len(models), "model"), style="dim")
     return Entry("exited", [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
-                         Text(app_name(latest), style="dim"), model_text(latest.model),
+                         Text(app_name(latest), style="dim"), model,
                          Text(f"exited · {age}", style="dim"), Text(""),
                          today_cell(today), Text(_money(sum(s.total for s in runs)))], sessions=len(runs))
 
@@ -346,13 +356,13 @@ def session_entries(store: Store, view: View) -> list[Entry]:
     for session in visible_sessions(store, view):
         cells, when = session_cells(store, session, view), session.last_activity or 0
         resend = resend_line(store, session, view)
-        if not session.ended and cache_clock(session, view.now)[0]:
+        if not (session.ended or session.archived) and cache_clock(session, view.now)[0]:
             below = [prompt_text(session, view), *([resend] if resend else [])]
             panes["live"].append((when, Entry("live", cells, tree(below))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
-            pane = "exited" if session.ended else "expired"
+            pane = "exited" if session.ended or session.archived else "expired"
             panes[pane].append((when, Entry(pane, cells, tree([resend] if resend else []))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     panes["exited"].sort(key=lambda item: -item[0])

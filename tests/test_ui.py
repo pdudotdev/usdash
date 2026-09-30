@@ -196,13 +196,37 @@ def test_which_sessions_show_is_counted_as_the_panes_count_them(store):
     assert "usdash · sessions ─" in screen(store, ui.View(now=T0 + 3600), height=80)  # all of them fit: no range
 
 
-def test_archived_and_long_idle_sessions_are_hidden(store):
+def test_an_archived_session_is_in_the_exited_pane_and_says_so(store):
+    # Archived in the Desktop app: done with, but its spend and what coming back costs still show.
     two_sessions(store)
     store.sessions["bbbb-2222"].archived = True
-    text = screen(store, ui.View(now=NOW))
-    assert "Release notes" not in text  # gone from the sessions (its requests still count in Stats)
-    assert "Fix checkout totals" in text
+    b = block(screen(store, ui.View(now=NOW)), "bbbb")
+    assert "archived · 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
+    assert "╭─ exited · 1 session" in screen(store, ui.View(now=NOW))
+    store.sessions["aaaa-1111"].archived = True  # still warm: it's out of the live pane all the same
+    a = block(screen(store, ui.View(now=NOW)), "aaaa")
+    assert "archived · ● 50:00" in a[0] and "╭─ live" not in screen(store, ui.View(now=NOW))
+
+
+def test_long_idle_sessions_are_hidden(store):
+    two_sessions(store)
     assert "no Claude Code activity in the last 5d" in screen(store, ui.View(now=T0 + 6 * 86400))
+
+
+def test_folded_runs_show_their_model_and_effort_only_when_they_share_them(store):
+    def runs(folder, *models):
+        for i, (model, effort) in enumerate(models):
+            run = Transcript(session=f"{folder}-{i}", cwd=f"/home/user/{folder}", entrypoint="sdk-cli")
+            run.turn(T0 + 60 * i, text="say OK", model=model, effort=effort, write=20_000)
+            run.record("cost-state", totalCostUSD=0.2)
+            run.into(store)
+    runs("same", ("claude-opus-5-5", "high"), ("claude-opus-5-5", "high"))
+    runs("effort", ("claude-opus-5-5", "high"), ("claude-opus-5-5", "low"))
+    runs("models", ("claude-opus-5-5", "high"), ("claude-sonnet-5-5", "high"), ("claude-opus-5", "high"))
+    rows = {line.split()[3]: line for line in screen(store, ui.View(now=T0 + 3600)).splitlines() if " runs " in line}
+    assert "Opus 5.5 high" in rows["same"]
+    assert "Opus 5.5 · mixed" in rows["effort"]
+    assert "3 models" in rows["models"] and "Opus 5.5" not in rows["models"]
 
 
 def test_a_narrow_terminal_cuts_lines_and_never_wraps(store):
