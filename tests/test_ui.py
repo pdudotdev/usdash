@@ -98,23 +98,7 @@ def test_an_exited_session_still_warm_can_be_resumed_from_the_cache(store):
     closing.into(store)
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
     assert "exited · ● 50:00" in a[0]
-    assert a[2].strip("│ ") == "└ resuming re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires"
-
-
-def test_an_exited_session_says_what_claude_code_counted_beyond_its_transcripts(store):
-    two_sessions(store)
-    closing = Transcript(session="aaaa-1111")
-    closing.record("cost-state", totalCostUSD=0.50)
-    closing.into(store)
-    a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    gap = store.sessions["aaaa-1111"].claude_total - store.sessions["aaaa-1111"].cost_at_state
-    assert a[1].strip("│ ") == f"├ Claude Code counted ${gap:.2f} more than its transcripts show (requests it doesn't log)"
-    # Under a cent, or at what the transcripts show, TOTAL and TODAY agree: nothing to explain.
-    closing = Transcript(session="aaaa-1111")
-    closing.record("cost-state", totalCostUSD=store.sessions["aaaa-1111"].cost_total + 0.004)
-    closing.into(store)
-    a = block(screen(store, ui.View(now=NOW)), "aaaa")
-    assert not any("Claude Code counted" in line for line in a)
+    assert a[1].strip("│ ") == "└ resuming re-sends 42k tokens: $0.01 now · up to $0.34 once the cache expires"
 
 
 def test_a_model_with_no_known_price_shows_the_size_only(store):

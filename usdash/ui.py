@@ -333,15 +333,6 @@ def resend_line(store: Store, session: Session, view: View) -> Text | None:
     return line
 
 
-def unlogged_line(sessions: list[Session]) -> Text | None:
-    """Why TOTAL is above TODAY for sessions that exited: what Claude Code counted, at their last exit,
-    beyond what their transcripts show (requests it doesn't log). None under a cent."""
-    gap = sum(s.claude_total - s.cost_at_state for s in sessions if s.claude_total is not None)
-    if gap < 0.005:
-        return None
-    return Text.assemble("Claude Code counted ", _money(gap), " more than its transcripts show (requests it doesn't log)")
-
-
 def tree(lines: list[Text]) -> list[Text]:
     """├ before each line, └ before the last."""
     return [Text.assemble(("└ " if i == len(lines) - 1 else "├ ", "dim"), line) for i, line in enumerate(lines)]
@@ -362,12 +353,10 @@ def script_runs(runs: list[Session], view: View) -> Entry:
         model = model_text(latest.model).append(" · mixed", style="dim")
     else:
         model = Text(plural(len(models), "model"), style="dim")
-    unlogged = unlogged_line(runs)
     return Entry("exited", [Text(""), name, Text(snippet(latest.project, 18) or "", style="dim"),
                          Text(app_name(latest), style="dim"), model,
                          Text(f"exited · {age}", style="dim"), Text(""),
-                         today_cell(today), Text(_money(sum(s.total for s in runs)))],
-                 tree([unlogged] if unlogged else []), sessions=len(runs))
+                         today_cell(today), Text(_money(sum(s.total for s in runs)))], sessions=len(runs))
 
 
 def session_entries(store: Store, view: View) -> list[Entry]:
@@ -378,14 +367,14 @@ def session_entries(store: Store, view: View) -> list[Entry]:
     for session in visible_sessions(store, view):
         cells, when = session_cells(store, session, view), session.last_activity or 0
         resend = resend_line(store, session, view)
-        extra = [line for line in (unlogged_line([session]), resend) if line]
         if not (session.ended or session.archived) and cache_clock(session, view.now)[0]:
-            panes["live"].append((when, Entry("live", cells, tree([prompt_text(session, view), *extra]))))
+            below = [prompt_text(session, view), *([resend] if resend else [])]
+            panes["live"].append((when, Entry("live", cells, tree(below))))
         elif session.scripted and session.ended:
             runs[(session.cwd, session.entrypoint)].append(session)
         else:
             pane = "exited" if session.ended or session.archived else "expired"
-            panes[pane].append((when, Entry(pane, cells, tree(extra))))
+            panes[pane].append((when, Entry(pane, cells, tree([resend] if resend else []))))
     panes["exited"] += [(max(s.last_activity or 0 for s in group), script_runs(group, view)) for group in runs.values()]
     panes["exited"].sort(key=lambda item: -item[0])
     return [entry for pane in PANES for _, entry in panes[pane]]
