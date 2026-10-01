@@ -60,7 +60,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **MODEL** | The model and effort of the last request, and `fast` in fast mode |
 | **CACHE** | `● mm:ss`: the prompt cache is warm, and runs out in that long. Green, then **yellow** for its last 10 minutes (the last half of a 5-minute cache)<br>`○ expired · idle 2h`: it has run out, in a session that's still open, unused for 2 hours. `○ expired · working` while Claude Code is still busy there (a tool or subagent running, or its answer to their results on its way); `○ expired · subagent` while it waits for a subagent working in the background<br>`exited · ● mm:ss`: you quit it (`/exit` or closing the window), and its cache outlasts it<br>`exited · idle 3h`: you quit it, and its cache has run out<br>`archived · idle 3h` (or `archived · ● mm:ss`): you archived it in the Desktop app, which also closes it<br>Once the cache has run out, the next message re-writes the whole conversation |
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far), as the last request sent it. `compacted` right after `/compact`, until the next message measures the new size |
-| **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since. A figure below what the transcripts show is an incomplete record, and TOTAL stays theirs. |
+| **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since. A figure below what the transcripts show is an incomplete record, and TOTAL stays theirs |
 
 ▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (its cache ran out, but it wasn't exited: type in its window if it's still open, else `claude --resume` and pick it; a session killed or crashed without exiting shows here too) and **exited** (you quit it, or archived it in the Desktop app: `claude --resume` and pick it). A pane with no session in it isn't shown. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
 
@@ -79,15 +79,15 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | Exited, cache run out | `resuming re-sends 420k tokens: up to $3.36` |
 | Right after `/compact` | `compacted: the next message measures the new size` |
 
-The gap between the two amounts is, at most, what letting the cache expire costs; while the countdown is yellow, the `up to` amount is too. Every amount is at the session's own model, speed and region.
+The gap between the two amounts is, at most, what letting the cache expire costs; while the countdown is yellow, so is the `up to` amount. Every amount is at the session's own model, speed and region.
 
 ▫️ **Measured or `up to`:**
-- **now** is the conversation read back from the cache: its size as the last request sent it, at the cache-read price. It's exact: in real sessions, 1,938 of 1,939 next messages within the cache lifetime read the whole previous prompt back, to 100 tokens (the other changed effort on a model where that re-writes it), and the [real-session tests](tests/test_real_checks.py) hold usdash to it. Resuming an exited session reads it back the same way while the cache lasts
+- **now** is the conversation read back from the cache: its size as the last request sent it, at the cache-read price. It's exact: in real sessions on Claude Code 2.1.278–2.1.283, 1,938 of 1,939 next messages within the cache lifetime read the whole previous prompt back, to 100 tokens (the other changed effort on a model where that re-writes it), and the [real-session tests](tests/test_real_checks.py) hold usdash to it. Resuming an exited session reads it back the same way while the cache lasts
 - **up to** is the conversation written to the cache again, at the write price. It's an upper bound: Claude Code's tool list at the start of every request (22–25k tokens in the CLI) often stays cached anyway, kept warm by another session in the same folder or by Claude Code's own unlogged requests. On Opus 5.5 with a 1-hour cache, that's about $0.18 less
 - What your next message adds (your text, tool results, the reply) isn't known yet, so it's left out of both
 
 ▫️ **Key characteristics:**
-- [x] **Read-only and local:** it reads Claude Code's transcript files and nothing else, except two fields of your account record (subscription or not) and the Desktop app's session titles. Its only request goes to Anthropic's pricing page, at start, and the only file it writes is its copy of it
+- [x] **Read-only and local:** besides the transcripts, it reads two fields of your account record (subscription or not), and the Desktop app's session titles and deleted-session markers
 - [x] **Every surface on the machine:** terminal, VS Code extension, Desktop app Code tab, scripts
 - [x] **Subscription or API key:** the cache lifetime of each session is read from its own usage data (1 hour or 5 minutes). On a subscription, the dollars are what the same requests would cost on the API: a like-for-like measure of your usage, not your bill
 - [x] **Numbers, not advice:** what each session has cost, what its next message costs now, and what it will cost at most once the cache expires
@@ -155,7 +155,7 @@ The page is fetched as plain Markdown, within 4 seconds, and read strictly: a pa
 | 6 | Step away until the countdown turns yellow | The last 10 minutes of the cache (2½ of a 5-minute one): the `up to` amount turns yellow too |
 | 7 | Stay away until it runs out | The session moves to the expired pane, `○ expired · idle 1h`, with `continuing re-sends …k tokens: up to $…` |
 | 8 | `/compact`, then send a message | CONTEXT says `compacted` until that message measures the new size |
-| 9 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually a little higher: it counts requests the transcripts miss), and what resuming costs |
+| 9 | `/exit` | `exited · ● mm:ss` (the cache outlives the session), TOTAL becomes Claude Code's own figure (usually higher: it counts requests the transcripts miss), and what resuming costs |
 | 10 | Press `s` | The session in **top sessions**, your prompts in **costliest prompts**, the day's bar in **by day** |
 
 ## 🚀 Installation & Usage
@@ -238,7 +238,7 @@ On the machine usdash was built on, the transcripts held 41–100% of what Claud
 When you quit a session, Claude Code writes its own total, which counts them all: TOTAL shows it from then on. A total below the transcripts' is incomplete (a Desktop session reopened days later wrote $0.00 for $0.90 of requests), and TOTAL stays theirs. TODAY and the stats stay the transcripts' figures: Claude Code's total isn't split by day or by request. For a budget, divide SPEND by the Stats summary's `transcripts hold N%` to estimate the full amount at list prices.
 
 ▫️ **Deleting a Desktop session deletes its cost:**
-Archiving a session in the Desktop app keeps its transcript and Claude Code's total. Deleting it removes both, leaving only a marker with no costs (`<id>.desktop-released.json`), so what the session cost drops out of TODAY, TOTAL and the stats; a usdash already running keeps showing it until you restart it. The header says, in yellow, how many were deleted in the last 30 days. Archive the sessions you want counted.
+Archiving a session in the Desktop app keeps its transcript and Claude Code's total. Deleting it removes both and leaves only a marker with no costs (`<id>.desktop-released.json`): what the session cost drops out of TODAY, TOTAL and the stats, and the header counts, in yellow, the sessions deleted in the last 30 days. A usdash already running keeps showing a deleted session until you restart it. Archive the sessions you want counted.
 
 ▫️ **Past requests are priced at today's list prices:**
 usdash reads the prices at start and prices every request with them, whenever it ran. After Anthropic changes a price, earlier days are priced anew too, and can differ from what was billed then.
