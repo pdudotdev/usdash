@@ -85,6 +85,21 @@ def test_a_missing_folder_is_not_an_error(tmp_path):
     assert Tailer(tmp_path / "nowhere").poll() == []
 
 
+def test_deleted_desktop_sessions_are_found_by_their_marker(tmp_path):
+    # Deleting a Desktop session leaves `<id>.desktop-released.json`; archiving leaves none.
+    folder = tmp_path / "-scratch"
+    folder.mkdir()
+    (folder / "gone.desktop-released.json").write_text(json.dumps(
+        {"v": 1, "releasedAt": "2026-10-01T04:58:24.604Z", "reason": "delete"}))
+    (folder / "kept.desktop-released.json").write_text(json.dumps({"v": 1, "reason": "delete"}))
+    (folder / "kept.jsonl").write_text("")  # its transcript is still there: nothing was lost
+    (folder / "other.desktop-released.json").write_text(json.dumps({"v": 1, "reason": "something else"}))
+    (folder / "broken.desktop-released.json").write_text("{not json")
+    tailer = Tailer(tmp_path)
+    tailer.poll()
+    assert tailer.deleted == {"gone": parse_time("2026-10-01T04:58:24.604Z")}
+
+
 def test_parse_time():
     assert parse_time("2026-09-27T10:00:00.500Z") == parse_time("2026-09-27T10:00:00Z") + 0.5
     assert parse_time("yesterday") is None

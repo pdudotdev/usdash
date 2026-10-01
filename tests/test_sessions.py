@@ -146,7 +146,7 @@ def test_claude_code_upgrade(store):
 
 def test_an_upgrade_is_the_cause_even_though_it_comes_with_a_resume(store):
     # Claude Code applies an upgrade when it next starts: after an exit, so every upgrade is a resume
-    # too. A resume alone keeps the system prompt; the upgrade changes the tool definitions.
+    # too. A resume alone keeps the system prompt; an upgrade can change the tool definitions.
     t = Transcript()
     t.turn(T0, write=40_000)
     t.record("cost-state", totalCostUSD=0.30)

@@ -27,6 +27,8 @@ REWRITE_SHARE, REWRITE_MIN_TOKENS = 0.3, 5_000
 RECAP_LAG = 5
 SNIPPET = 60
 SLASH_COMMAND = re.compile(r"/[\w:.-]+(?:\s|$)")
+# A subagent reporting back to its parent: Claude Code's own message, naming the subagent.
+HANDBACK = re.compile(r'<agent-message from="([^"]+)"')
 # A session still at work goes this long without a new record, its subagents' included,
 # at most: longer, and it was stopped mid-tool (killed, or its window closed).
 WORKING_QUIET = 30 * 60
@@ -110,7 +112,9 @@ def rewrite_reason(request: Request, prev: ChainState, facts: Facts) -> str:
     if prev.touched is not None and request.start - prev.touched >= ttl:
         return f"cache expired (idle {(request.start - prev.touched) / 60:.0f} min)"
     # An upgrade applies only when Claude Code starts, so it comes with a resume: check it first.
-    # It usually changes the tool definitions at the start of every request.
+    # It can change the tool definitions or system prompt at the start of every request; not every
+    # one does (two measured, 2.1.284 to 2.1.285 and 2.1.285 to 2.1.286, kept the cache), so this
+    # names a miss that came with one, it doesn't predict one.
     if request.version and prev.version and request.version != prev.version:
         return "Claude Code upgraded"
     if prev.resumed:
@@ -185,6 +189,30 @@ def typed(record: Record) -> tuple[str, bool] | None:
     return (text, command_name(raw) is not None or bool(SLASH_COMMAND.match(text))) if text else None
 
 
+def queued_prompt(record: Record) -> tuple[str, bool] | None:
+    """(what the user typed, whether it's a slash command), if this attachment is a message
+    typed while Claude Code was at work and slipped into the running turn. Claude Code queues
+    its own notes the same way (a subagent's task notification): only a human's count."""
+    attachment = record.data.get("attachment")
+    if record.subagent or not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+        return None
+    origin = attachment.get("origin")
+    human = origin.get("kind") == "human" if isinstance(origin, dict) else attachment.get("commandMode") == "prompt"
+    prompt = attachment.get("prompt")
+    if not human or not isinstance(prompt, str):
+        return None
+    text = " ".join(prompt.split())
+    return (text, bool(SLASH_COMMAND.match(text))) if text else None
+
+
+def handback_from(record: Record) -> str | None:
+    """The subagent reporting back in this user record (Claude Code's own message), if any."""
+    if record.subagent or not record.data.get("isMeta"):
+        return None
+    match = HANDBACK.search(record_text(record) or "")
+    return match.group(1) if match else None
+
+
 def at_work_after(record: Record) -> bool | None:
     """Whether Claude Code is still at work after this main-conversation
     record: a reply that ended calling tools (a tool or a subagent runs), or
@@ -252,6 +280,10 @@ class Session:
     # Everything typed in the main conversation, prompts and slash commands: record uuid ->
     # (when, text, whether it's a command). By uuid, so a file read again adds nothing.
     prompts: dict[str, tuple[float, str, bool]] = field(default_factory=dict)
+    # Subagents reporting back: record uuid -> (when, subagent id). What the parent does then
+    # belongs to the prompt that started the subagent.
+    handbacks: dict[str, tuple[float | None, str]] = field(default_factory=dict)
+    attachments: set[str] = field(default_factory=set)  # uuids of what Claude Code attached to prompts and results
     revision: int = 0  # bumped on every change to its requests
     _memo: tuple = field(default=(-1, None), repr=False)  # see memo()
     uuids: dict[str, tuple] = field(default_factory=dict)  # uuid -> (time, message id, parent uuid)
@@ -425,21 +457,16 @@ class Store:
         if kind == "assistant":
             return self._add_assistant(session, record)
         if kind == "user":
-            found = typed(record)
-            if found:
-                text, command = found
-                session.ended = False
-                prompt_key = uuid or f"@{record.when}"
-                if record.when is not None and prompt_key not in session.prompts:
-                    session.prompts[prompt_key] = (record.when, text, command)
-                    self.revision += 1  # the stats' prompt count and turns
-                if command:
-                    session.pending_command = text
-                else:
-                    session.first_prompt = session.first_prompt or text
-                session.last_prompt = text
-                session.last_prompt_at = record.when
-                session.last_activity = max(session.last_activity or 0, record.when or 0) or None
+            if found := typed(record):
+                self._typed(session, uuid or f"@{record.when}", record.when, *found)
+            elif uuid and (agent := handback_from(record)) and uuid not in session.handbacks:
+                session.handbacks[uuid] = (record.when, agent)
+                self.revision += 1  # the stats' turns
+        elif kind == "attachment" and not record.subagent and not data.get("isSidechain"):
+            if found := queued_prompt(record):
+                self._typed(session, uuid or f"@{record.when}", record.when, *found)
+            if uuid:
+                session.attachments.add(uuid)
         elif kind == "custom-title" and data.get("customTitle"):
             session.custom_title = data["customTitle"]
         elif kind == "agent-name" and data.get("agentName"):
@@ -471,6 +498,21 @@ class Store:
                 if main.touched is not None and started > main.touched:
                     main.touched = started
         return None
+
+    def _typed(self, session: Session, key: str, when: float | None, text: str, command: bool) -> None:
+        """Something typed in the main conversation: a prompt, a slash command, or a message
+        Claude Code slipped into the turn it was running."""
+        session.ended = False
+        if when is not None and key not in session.prompts:
+            session.prompts[key] = (when, text, command)
+            self.revision += 1  # the stats' prompt count and turns
+        if command:
+            session.pending_command = text
+        else:
+            session.first_prompt = session.first_prompt or text
+        session.last_prompt = text
+        session.last_prompt_at = when
+        session.last_activity = max(session.last_activity or 0, when or 0) or None
 
     @staticmethod
     def _settle_command(session: Session, record: Record) -> None:
@@ -506,6 +548,12 @@ class Store:
         while parent in session.uuids and seen < 50:
             when, parent_message, grandparent = session.uuids[parent]
             if not message_id or parent_message != message_id:
+                # What Claude Code attached to a prompt or a tool result can be stamped a moment
+                # before it: the request went out once both were there.
+                while parent in session.attachments and grandparent in session.uuids and seen < 50:
+                    parent, seen = grandparent, seen + 1
+                    earlier, _, grandparent = session.uuids[parent]
+                    when = max(when or 0, earlier or 0) or None
                 return when
             parent, seen = grandparent, seen + 1
         return None

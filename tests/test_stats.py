@@ -548,3 +548,66 @@ def test_long_names_give_way_before_any_number(store, width):
     assert not any(c.isalpha() for c in lines[at_row + 1][column:])  # cut on its row, not wrapped onto the next
     prompt = next(line for line in lines if "dddd" in line and "a prompt" in line)
     assert prompt.rstrip(" │").endswith("1  $4.10")
+
+
+def test_a_background_subagent_stays_with_the_prompt_that_started_it():
+    # Check 40 in tests/sanity/manual.py: a prompt starts a background subagent and its turn ends;
+    # the user asks something else while it works; then it reports back. Its requests, and the
+    # parent's reply to its hand-back, are what the first prompt set off, not the second.
+    store = Store(PRICES)
+    t = Transcript(session="bg-1")
+    t.user("run it in a background subagent", at(29, 10, 0))
+    t.reply(at(29, 10, 0, 2), write=30_000)
+    t.user("go", at(29, 10, 0, 3), subagent="a1")
+    t.reply(at(29, 10, 0, 4), subagent="a1", write=20_000, ttl="5m")
+    t.turn(at(29, 10, 0, 10), text="what's 2+2?", took=2, read=30_000, write=100)
+    t.user("next step", at(29, 10, 2), subagent="a1")
+    t.reply(at(29, 10, 2, 1), subagent="a1", read=20_000, write=500, ttl="5m")
+    t.user('Another Claude session sent a message: <agent-message from="a1">done</agent-message>',
+           at(29, 10, 3), isMeta=True)
+    t.reply(at(29, 10, 3, 2), read=30_100, write=200)
+    t.into(store)
+    figures = st.compute(store, NOW, WINDOW)
+    turns = {turn.text: (turn.requests, turn.spend) for turn in figures.turns}
+    assert turns["what's 2+2?"] == (1, pytest.approx(cost(OPUS, read=30_000, w1h=100)))
+    assert turns["run it in a background subagent"][0] == 4  # its own reply, the subagent's two, the hand-back's
+    assert figures.prompts == 2
+
+
+def test_a_message_typed_while_claude_code_works_is_a_prompt():
+    # Typed during a tool run, Claude Code slips it into the turn as a `queued_command` attachment:
+    # no user record. Its own queued notes (a subagent's task notification) aren't prompts.
+    store = Store(PRICES)
+    t = Transcript(session="q-1")
+    t.user("run three slow steps", at(29, 11, 0))
+    t.reply(at(29, 11, 0, 2), write=30_000, stop="tool_use")
+    t.record("attachment", at(29, 11, 0, 30), attachment={
+        "type": "queued_command", "prompt": "also tell me the date", "commandMode": "prompt",
+        "origin": {"kind": "human"}, "source_uuid": "x", "humanTurn": True})
+    t.record("attachment", at(29, 11, 0, 40), attachment={
+        "type": "queued_command", "prompt": "<task-notification>…</task-notification>",
+        "commandMode": "task-notification", "origin": {"kind": "task-notification"}})
+    t.tool_result(at(29, 11, 1))
+    t.reply(at(29, 11, 1, 2), read=30_000, write=300)
+    t.into(store)
+    session = store.sessions["q-1"]
+    assert session.last_prompt == "also tell me the date"
+    figures = st.compute(store, NOW, WINDOW)
+    assert figures.prompts == 2
+    assert [(turn.text, turn.requests) for turn in sorted(figures.turns, key=lambda turn: turn.when)] == [
+        ("run three slow steps", 1), ("also tell me the date", 1)]
+
+
+def test_a_turn_starts_after_what_claude_code_attached_to_its_prompt():
+    # Claude Code can stamp what it attaches to a prompt a millisecond before the prompt itself,
+    # and the turn's first request answers the attachment: it still belongs to that prompt.
+    store = Store(PRICES)
+    t = Transcript(session="ms-1")
+    t.turn(at(29, 12, 0), text="first", read=0, write=30_000)
+    t.user("second", at(29, 12, 5))
+    t.record("attachment", at(29, 12, 5) - 0.001, attachment={"type": "total_tokens_reminder"})
+    t.last_uuid = t.records[-1].data["uuid"]
+    t.reply(at(29, 12, 5, 2), read=30_000, write=100)
+    t.into(store)
+    figures = st.compute(store, NOW, WINDOW)
+    assert sorted((turn.text, turn.requests) for turn in figures.turns) == [("first", 1), ("second", 1)]

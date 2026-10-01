@@ -153,6 +153,7 @@ class App:
             self.store.apply_desktop(desktop_sessions())
             self.desktop_read = now
         self.view.unknown_types = sum(self.tailer.unknown_types.values())
+        self.view.deleted = sum(1 for when in self.tailer.deleted.values() if when >= now - self.view.period)
         return changed
 
     def frame(self, height: int, width: int = 160):

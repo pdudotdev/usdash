@@ -78,10 +78,14 @@ UNUSED = ("toolUseResult", "attachment", "rendered", "wireToolInputs", "serverCl
 
 
 def slim(data: dict) -> dict:
-    """A record without what usdash never reads: the fields in UNUSED, and a message's
-    content blocks down to their type, and a user message's text."""
+    """A record without what usdash never reads: the fields in UNUSED (but what a queued
+    message says), and a message's content blocks down to their type, and a user message's text."""
+    attachment = data.get("attachment")
     for key in UNUSED:
         data.pop(key, None)
+    if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+        # A message typed while Claude Code was at work, slipped into the running turn: it's a prompt.
+        data["attachment"] = {key: attachment.get(key) for key in ("type", "prompt", "commandMode", "origin")}
     message = data.get("message")
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, list):
@@ -138,6 +142,8 @@ class Tailer:
     oldest: float | None = None
     unknown_types: Counter = field(default_factory=Counter)
     bad_lines: int = 0
+    # Desktop sessions deleted in the app: session id -> when (deleted_desktop_sessions)
+    deleted: dict[str, float] = field(default_factory=dict)
 
     def transcripts(self) -> list[Path]:
         if not self.root.is_dir():
@@ -157,6 +163,7 @@ class Tailer:
         now = self.clock()
         if self.last_scan is None or now - self.last_scan >= self.scan_every:
             paths, self.last_scan = self.transcripts(), now
+            self.deleted = self.deleted_desktop_sessions()
         else:
             paths = list(self.files)  # between scans: only the files already being followed
         sessions: dict[str, list[Path]] = {}
@@ -185,6 +192,27 @@ class Tailer:
                 # should still arrive in the order they happened.
                 records.sort(key=lambda record: record.at)
                 yield records
+
+    def deleted_desktop_sessions(self) -> dict[str, float]:
+        """Desktop sessions deleted in the app: session id -> when. Deleting one takes its
+        transcript, and with it what the session cost, and leaves only `<id>.desktop-released.json`
+        ({"reason": "delete", "releasedAt": …}). Archiving leaves no such marker."""
+        found: dict[str, float] = {}
+        if not self.root.is_dir():
+            return found
+        for marker in self.root.glob("*/*.desktop-released.json"):
+            session = marker.name.removesuffix(".desktop-released.json")
+            if marker.with_name(f"{session}.jsonl").exists():
+                continue  # its transcript is still there: nothing was lost
+            try:
+                data = json.loads(marker.read_text())
+                if not isinstance(data, dict) or data.get("reason") != "delete":
+                    continue
+                when = parse_time(data.get("releasedAt"))
+                found[session] = when if when is not None else marker.stat().st_mtime
+            except (OSError, ValueError):
+                continue
+        return found
 
     def _session_followed(self, path: Path) -> bool:
         """Whether this is a subagent's transcript of a session being followed:

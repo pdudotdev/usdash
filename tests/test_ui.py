@@ -53,7 +53,7 @@ def test_sessions_are_told_apart_by_name_place_and_id(store):
     assert "● 50:00" in a[0] and " sub" not in a[0]  # the countdown shows the lifetime; no billing tag
     assert '├ 10m ago · "ok, fix it and add a test"' in a[1]  # what was last typed in that window
     b = block(text, "bbbb")
-    assert "Release notes" in b[0] and "shop               IDE" in b[0] and "○ expired · 10m" in b[0]
+    assert "Release notes" in b[0] and "shop               IDE" in b[0] and "○ expired · idle 10m" in b[0]
 
 
 def test_sections_and_counts(store):
@@ -88,7 +88,7 @@ def test_an_idle_session_shows_what_coming_back_costs_at_most(store):
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    assert "exited · 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
+    assert "exited · idle 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
 
 
 def test_an_exited_session_still_warm_can_be_resumed_from_the_cache(store):
@@ -200,7 +200,7 @@ def test_an_archived_session_is_in_the_exited_pane_and_says_so(store):
     two_sessions(store)
     store.sessions["bbbb-2222"].archived = True
     b = block(screen(store, ui.View(now=NOW)), "bbbb")
-    assert "archived · 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
+    assert "archived · idle 10m" in b[0] and b[1].strip("│ ") == "└ resuming re-sends 30k tokens: up to $0.08"
     assert "╭─ exited · 1 session" in screen(store, ui.View(now=NOW))
     store.sessions["aaaa-1111"].archived = True  # still warm: it's out of the live pane all the same
     a = block(screen(store, ui.View(now=NOW)), "aaaa")
@@ -290,7 +290,7 @@ def test_a_session_still_at_work_after_its_cache_expired_says_so(store):
     assert "○ expired · working" in row
 
     row = block(screen(store, ui.View(now=T0 + 40 * 60)), "wwww")[0]
-    assert "○ expired · 39m" in row  # 39 minutes without a word: no longer at work
+    assert "○ expired · idle 39m" in row  # 39 minutes without a word: no longer at work
 
 
 def test_a_session_waiting_on_a_subagent_after_its_cache_expired_says_so(store):
@@ -465,6 +465,16 @@ def test_warnings_come_first_on_the_headers_second_line(store):
     assert "Estimated at current API list prices  ·  1 request with no known price, left out (Mystery 9)  ·  " in text
     assert "Anthropic's pricing page changed: usdash may need an update" in screen(
         store, ui.View(now=NOW, docs_changed=["pricing"]), width=220)
+
+
+def test_deleted_desktop_sessions_are_named_in_the_header(store):
+    # Deleting a session in the Desktop app takes its transcript, and what it cost with it.
+    two_sessions(store)
+    assert "deleted" not in screen(store, ui.View(now=NOW), width=220)
+    assert "  ·  1 Desktop session deleted in the last 30d: its cost isn't counted" in screen(
+        store, ui.View(now=NOW, deleted=1), width=220)
+    assert "2 Desktop sessions deleted in the last 30d: their cost isn't counted" in screen(
+        store, ui.View(now=NOW, deleted=2), width=220)
 
 
 @pytest.mark.parametrize(

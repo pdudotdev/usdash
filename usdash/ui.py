@@ -50,6 +50,7 @@ class View:
     prices: str = "current API list prices"  # which prices, and how fresh (app.prices_label)
     docs_changed: list[str] = field(default_factory=list)  # Anthropic's pages that no longer read as expected
     unknown_types: int = 0
+    deleted: int = 0  # Desktop sessions deleted in the app within the period: what they cost is gone
     mode: str = "sessions"  # or "stats"
     session_scroll: int = 0  # sessions hidden above the view
     session_page: int = 1  # sessions shown at the last render
@@ -186,6 +187,9 @@ def top_lines(store: Store, view: View) -> list[Text]:
     if view.unknown_types:
         detail.append(f"  ·  {plural(view.unknown_types, 'record')} of unknown types (newer Claude Code?)",
                       style="yellow")
+    if view.deleted:
+        detail.append(f"  ·  {plural(view.deleted, 'Desktop session')} deleted in the last {duration_text(view.period)}: "
+                      f"{'its' if view.deleted == 1 else 'their'} cost isn't counted", style="yellow")
     # Claude Code bills requests its transcripts never log (titles, prompt suggestions, /compact's
     # summary); an exited session's TOTAL is Claude Code's own, which counts them.
     caveat = Text("Amounts can be lower than actual: Claude Code doesn't log some requests (titles, suggestions…). "
@@ -276,14 +280,14 @@ def cache_cell(session: Session, view: View) -> Text:
         word = "archived" if session.archived else "exited"
         if warm:  # its cache outlives it: resuming reads it back until it runs out
             return Text.assemble((f"{word} · ", "dim"), (f"● {clock(left)}", style))
-        return Text(f"{word} · {age}", style="dim")
+        return Text(f"{word} · idle {age}", style="dim")
     if warm:
         return Text(f"● {clock(left)}", style=style)
     if session.working(view.now):  # its next request will re-write it all
         return Text.assemble(("○ expired · ", "red"), ("working", "yellow"))
     if session.subagent_running(view.now):  # the same, once the subagent reports back
         return Text.assemble(("○ expired · ", "red"), ("subagent", "yellow"))
-    return Text(f"○ expired · {age}", style="red")
+    return Text(f"○ expired · idle {age}", style="red")
 
 
 def today_cell(cost: float) -> Text:

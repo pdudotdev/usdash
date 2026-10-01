@@ -214,6 +214,16 @@ def _compute(store: Store, now: float, period: int) -> Stats:
     for session in store.sessions.values():
         typed = sorted(session.prompts.values())
         times = [when for when, _, _ in typed]
+        # A subagent belongs to the prompt it started under, however long it runs; so does what the
+        # parent does once it reports back, until the next thing typed.
+        started: dict[str, float] = {}
+        for r in session.requests.values():
+            if r.subagent and r.start < started.get(r.subagent, float("inf")):
+                started[r.subagent] = r.start
+        marks = sorted([(when, i) for i, when in enumerate(times)]
+                       + [(when, bisect_right(times, started[agent]) - 1)
+                          for when, agent in session.handbacks.values() if when is not None and agent in started])
+        mark_times = [when for when, _ in marks]
         answers: dict[int, Turn] = {}  # index in `typed` -> its turn
         row, counted = SessionRow(session), 0
         for r in session.requests.values():
@@ -268,8 +278,14 @@ def _compute(store: Store, now: float, period: int) -> Stats:
             band.requests += 1
             band.spend += cost
             row.spend += cost
-            # The turn it belongs to: the latest thing typed in its session at or before it started.
-            if (i := bisect_right(times, r.start) - 1) >= 0:
+            # The turn it belongs to: the latest thing typed in its session at or before it started
+            # (for a subagent's, before the subagent started), or the hand-back it answers.
+            if r.subagent:
+                i = bisect_right(times, started[r.subagent]) - 1
+            else:
+                k = bisect_right(mark_times, r.start) - 1
+                i = marks[k][1] if k >= 0 else -1
+            if i >= 0:
                 turn = answers.get(i)
                 if turn is None:
                     turn = answers[i] = Turn(session, typed[i][0], typed[i][1])
