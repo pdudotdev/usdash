@@ -2,7 +2,7 @@
 
 How the cost of using a large language model is built, why it moves, and how to reason about any new case from first principles. Written around Claude and Claude Code, where every number here was checked. The principles carry over to any provider that bills by the token and caches prompts.
 
-**Checked on 2026-09-28** (Sonnet 5.5 added, Claude Code's caching doc re-read and the cache lifetime re-measured, on 2026-09-29) against Anthropic's docs (sources at the end) and against real Claude Code 2.1.283 sessions measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
+**Checked on 2026-10-01** against Anthropic's docs (sources at the end) and against real Claude Code sessions (2.1.278–2.1.286) measured while building usdash (Appendix B). Prices change. The principles don't, and Appendix A says where to re-check the numbers.
 
 ---
 
@@ -58,16 +58,16 @@ A **token** is the unit a model reads and writes: roughly 4 characters or ¾ of 
 One request costs:
 
 ```
-cost = input  × (plain input tokens)
-     + 1.25 × input × (tokens written to the 5-minute cache)
-     + 2    × input × (tokens written to the 1-hour cache)
-     + r    × input × (tokens read from the cache)
-     + 5    × input × (output tokens, thinking included)
+cost = ( input  × (plain input tokens)
+       + 1.25 × input × (tokens written to the 5-minute cache)
+       + 2    × input × (tokens written to the 1-hour cache)
+       + r    × input × (tokens read from the cache)
+       + 5    × input × (output tokens, thinking included) )
+       × modifiers (batch 0.5 · US-only inference 1.1 · fast mode · contract discount)
      + per-use fees (web search: $10 per 1,000 searches)
-all  × modifiers (batch 0.5 · US-only inference 1.1 · fast mode · contract discount)
 ```
 
-Here `input` is the model's base input price, and `r` is its cache-read multiplier: 0.1 on most models, 0.05 on Opus 5.5, 0.025 on Fable 5.1.
+Here `input` is the model's base input price, and `r` is its cache-read multiplier: 0.1 on most models, 0.05 on Opus 5.5, 0.025 on Fable 5.1. The modifiers multiply token prices; per-use fees are added on top.
 
 **The price ladder**, per million tokens (Appendix A has every model):
 
@@ -110,9 +110,9 @@ The rules that matter:
 |---|---|
 | Matching is exact, from the start | Appending is cheap. Any change earlier re-processes everything after it |
 | Writes happen only at breakpoints (up to 4 per request) | Put the breakpoint on the last block that stays the same, not on one that changes every time (a timestamp, the new question) |
-| A read looks back at most 20 blocks from each breakpoint for an earlier write | A turn that adds more than 20 blocks can miss the previous entry; a second breakpoint fixes it (a run of parallel tool calls counts as one block) |
+| A read looks back at most 20 blocks from each breakpoint for an earlier write | A turn that adds more than 20 blocks can miss the previous entry; a second breakpoint fixes it (a run of parallel tool calls counts as one block, and so does the run of their results) |
 | Each model has its own cache | A model switch re-sends everything as new |
-| There's a minimum cacheable size: 512 tokens on Opus 5.5, Sonnet 5.5 and Fable 5.1, 1,024 on Sonnet 5, 4,096 on Haiku 4.5 | Below it, nothing is cached and no error says so; both cache counts read 0 |
+| There's a minimum cacheable size: 512 tokens on Opus 5.5, Opus 5, Sonnet 5.5 and Fable 5.1, 1,024 on Sonnet 5, 4,096 on Haiku 4.5 | Below it, nothing is cached and no error says so; both cache counts read 0 |
 | Caches are isolated per workspace (per organisation on Bedrock and Google Cloud) | Identical prompts in two workspaces don't share |
 | An entry exists only once the first response has begun | Parallel requests sent at the same instant all write; none reads |
 
@@ -133,7 +133,7 @@ reads to break even = (write multiplier − 1) ÷ (1 − r)
 
 **Example (statelessness plus caching).** A 20-turn Sonnet 5.5 conversation starts with a 20k-token prefix (tools and instructions) and grows by 2k tokens a turn:
 - **Without caching:** 820,000 input tokens are sent over the 20 requests, **$1.64**.
-- **With caching**, each request reads the previous one back (760,000 tokens) and writes only what's new (60,000 tokens): **$0.30**, 82% less.
+- **With caching** (the 5-minute cache), each request reads the previous one back (760,000 tokens) and writes only what's new (60,000 tokens): **$0.30**, 82% less. On the 1-hour cache it's $0.39.
 - **The trap:** a 21st request after the cache has expired re-writes all 62k tokens, **$0.16**, more than half of what the whole cached conversation cost.
 
 ## 7. The cache lifetime
@@ -151,7 +151,11 @@ tokens re-written after 5–60 min pauses  >  0.75 ÷ (1.25 − r)  ×  all toke
                                             (0.65 on most models, 0.625 on Opus 5.5)
 ```
 
-The rule of thumb: **one 5–60 minute pause once the context is near its full size is enough for the 1-hour cache to win.** For example, a day on Opus 5.5 with a steady 80k context, 6 bursts of 10 messages and 15-minute breaks between them costs **$3.48 with the 5-minute cache and $1.92 with the 1-hour one**. The five breaks each re-write 82k tokens on the 5-minute cache.
+The rule of thumb: **one 5–60 minute pause once the context is near its full size is enough for the 1-hour cache to win.** For example, a day on Opus 5.5 in one session: 6 bursts of 10 messages with 15-minute breaks, each message adding 2k new tokens and 500 output tokens, and (to keep the arithmetic simple) a context that stays around 80k all day:
+- **5-minute cache:** a warm message reads 80k ($0.016), writes its 2k ($0.010) and outputs 500 ($0.010): $0.036. The day's first message and the first after each break write all 82k instead ($0.41, plus $0.010 output). The day: 6 × $0.42 + 54 × $0.036 = **$4.46**.
+- **1-hour cache:** a warm message costs $0.042, its 2k written at $8. Only the day's first message writes all 82k ($0.656, plus $0.010). The day: $0.67 + 59 × $0.042 = **$3.14**.
+
+The five breaks each cost the 5-minute cache a full re-write, far more than the 1-hour cache's higher price on the small additions.
 
 **Who gets which, in Claude Code:** on a subscription within plan usage, the main conversation uses 1 hour. On an API key, usage credits or a cloud provider it uses 5 minutes, unless you set `promptCacheTtl` or `CLAUDE_CODE_PROMPT_CACHE_TTL`. Subagents, compaction and titles use 5 minutes by default; `subagentPromptCacheTtl` (or `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`) sets theirs.
 
@@ -164,14 +168,17 @@ The principle: **anything that changes bytes early in the request re-processes e
 | Tool definitions added, removed or edited | ✘ | ✘ | ✘ |
 | Turning web search or citations on or off; switching fast mode (API) | ✓ | ✘ | ✘ |
 | `tool_choice`; adding or removing images | ✓ | ✓ | ✘ |
-| Thinking configuration or effort level (on most models) | model-specific | model-specific | ✘ |
+| Thinking settings (mode, budget) | ✘ on some models | ✘ on some models | ✘ |
+| Effort, changed on the request itself | ✘ on some models | ✘ on some models | ✘ |
 | **A different model** | all new | all new | all new |
 | **The lifetime passing** | gone | gone | gone |
+
+"On some models": the setting is written into the prompt, and some models place it ahead of the tools and system prompt, so everything after it is re-processed. Effort changed per message instead (a beta, below) keeps the cache, and setting effort to the model's default is the same as leaving it out.
 
 What doesn't break it: appending messages, tool calls and results. Mid-conversation additions that are sent as new messages (a system message, a skill's instructions) leave the cached prefix intact.
 
 **Where the API and a client differ, check the client.** Examples from Claude Code:
-- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5, Sonnet 5.5 and Fable 5.1 (with an API key or subscription; not on Bedrock or Google Cloud). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
+- **Effort:** the API keeps the cache across an effort change on Fable 5.1, Mythos 5.1 (a limited-availability model priced like Fable 5.1), Opus 5.5, Sonnet 5.5 and Opus 5, when the change is sent as a per-message setting. Claude Code keeps it on Opus 5.5, Sonnet 5.5 and Fable 5.1 (with an API key or subscription; not on Bedrock or Google Cloud). On Opus 5 it re-wrote the conversation in real sessions (Appendix B).
 - **Fast mode:** the API table says switching speed invalidates system and messages. Claude Code sends the fast-mode header once per conversation, so only turning it on the first time costs a re-write. Turning it off and on again later keeps the cache.
 - **Resuming:** Claude Code keeps the system prompt a conversation started with, so a resumed session reads back whatever is still within the lifetime (8 of 10 real resumes did; the other two read back only the tool list; Appendix B).
 - **MCP servers:** connecting or removing one changes the tool list only if its tools aren't deferred; by default they are.
@@ -202,7 +209,7 @@ Price per token is half the story. The other half is tokens per task, which depe
 
 - **Output is the expensive side:** 5× input on every current model. A 2,000-token reply on Opus 5.5 costs $0.04; reading a 100k conversation from its cache costs $0.02.
 - **Thinking is output.** You pay for all of it, even when the response shows a summary or nothing. `thinking_tokens` in the usage says how much.
-- **Effort** (`low`, `medium`, `high`, `xhigh`, `max`) scales every output token, including thinking, tool calls and explanations. Lower effort means fewer and terser tool calls too. It's a behavioural signal, not a hard budget. Defaults: `medium` on Opus 5.5, `high` on most others.
+- **Effort** (`low`, `medium`, `high`, `xhigh`, `max`) scales every output token, including thinking, tool calls and explanations. Lower effort means fewer and terser tool calls too. It's a behavioural signal, not a hard budget. The API's defaults are `medium` on Opus 5.5 and `high` on the others; a client can set its own (in Claude Code, `/effort`).
 - **Earlier thinking stays in context** on Opus 4.5+, Sonnet 4.6+ and the Fable models, and is re-sent as input every request. That's cheap when read from the cache, expensive after a miss.
 
 **The effort decision on a warm cache:** where an effort change keeps the cache, the saving is immediate. It's output before minus output after, times the output price. For example, Opus 5.5 going from ~3,000 to ~800 output tokens per message saves $0.044 a message. Where it doesn't keep the cache, treat it as a model switch (§15).
@@ -285,7 +292,7 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 
 **`/clear`** starts over and costs nothing itself. The tool list and system prompt usually stay cached. Use it when the topic changes.
 
-**`/rewind`** goes back to an earlier turn whose prefix is already cached: the cheapest way to abandon a wrong path.
+**`/rewind`** goes back to an earlier turn and drops what came after it, so later messages re-send less: the cheapest way to abandon a wrong path. That turn's prefix is read back if it's still cached; the docs don't say whether later, longer reads keep it alive, so after many turns budget for writing it again.
 
 ## 17. Breaks, resumes, subagents and parallel requests
 
@@ -298,7 +305,7 @@ Most choices in a session trade a one-time cost for a per-request saving. Name t
 ## 18. Costs you don't see
 
 Clients make requests you don't type, and not all of them appear in session logs:
-- **Claude Code** (measured at 2.1.278–2.1.285; Appendix B has the details):
+- **Claude Code** (measured at 2.1.278–2.1.286; Appendix B has the details):
 
   | Request | Model | What was measured |
   |---|---|---|
@@ -308,6 +315,7 @@ Clients make requests you don't type, and not all of them appear in session logs
   | `/compact`'s summarising request | The session's | Warm: reads what the latest turn's first request had cached, the rest at the input price, writing only 147–555 tokens. Cold: reads the tool list, the rest at the input price. Output 1,065–3,804 tokens |
   | WebSearch's searches | | A request of their own, plus $10 per 1,000 searches: four searches were 72% of one `claude -p` session's cost |
   | Background summaries for `--resume` | | Not measured |
+  | `/btw` side questions | | Not in the transcript at all: only in Claude Code's input history (`~/.claude/history.jsonl`), which has no cost |
   | The Desktop app's own requests | The session's | Claude Code counted $0.23 for a session whose transcripts show $0.16 |
 - **How much, in real sessions:** the transcripts held 41–100% of what Claude Code itself billed (a median of 89%; 84% weighted by cost), least in very short sessions and in ones that ran many subagents. In one `claude -p` session with four web searches they held only 28%: the searches' own requests were 72% of the cost.
 - **The FinOps rule:** reconcile against the provider's usage report, the client's own total (`/usage`, `cost-state`), or an OpenTelemetry export, not only against your logs.
@@ -405,17 +413,19 @@ Answers follow each one; work them out first.
 
 # Appendix A: Price sheet
 
-Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-09-29. **Re-check there before using these numbers for anything that matters.**
+Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-10-01. **Re-check there before using these numbers for anything that matters.**
 
 | Model | Input | 5-min write | 1-hour write | Cache read | Output | Batch in / out |
 |---|---|---|---|---|---|---|
-| Fable 5.1 | $10 | $12.50 | $20 | $0.25 | $50 | $5 / $25 |
-| Fable 5 | $10 | $12.50 | $20 | $1 | $50 | $5 / $25 |
+| Fable 5.1, Mythos 5.1* | $10 | $12.50 | $20 | $0.25 | $50 | $5 / $25 |
+| Fable 5, Mythos 5* | $10 | $12.50 | $20 | $1 | $50 | $5 / $25 |
 | Opus 5.5 | $4 | $5 | $8 | $0.20 | $20 | $2 / $10 |
 | Opus 5, 4.8, 4.7, 4.6, 4.5 | $5 | $6.25 | $10 | $0.50 | $25 | $2.50 / $12.50 |
 | Sonnet 5.5, Sonnet 5 | $2 | $2.50 | $4 | $0.20 | $10 | $1 / $5 |
 | Sonnet 4.6, 4.5 | $3 | $3.75 | $6 | $0.30 | $15 | $1.50 / $7.50 |
 | Haiku 4.5 | $1 | $1.25 | $2 | $0.10 | $5 | $0.50 / $2.50 |
+
+*Limited availability, by invitation.
 
 | Multiplier | Value |
 |---|---|
@@ -432,7 +442,7 @@ Per million tokens, from Anthropic's [pricing page](https://platform.claude.com/
 
 # Appendix B: Evidence from real sessions
 
-What building and reviewing usdash measured in real Claude Code transcripts, compared with Claude Code's own totals. It's evidence for one client's behaviour at one version (2.1.278–2.1.283). Re-measure after an upgrade. The regression tests in [`tests/test_real_checks.py`](../tests/test_real_checks.py) hold usdash to the 2026-09-28 sessions in [`tests/fixtures/checks`](../tests/fixtures/checks): the next message reading the last prompt back, resuming within the lifetime, a model switch across tokenizers, and the size after `/compact` waiting for the next request.
+What building and reviewing usdash measured in real Claude Code transcripts, compared with Claude Code's own totals. It's evidence for one client's behaviour at the versions measured (2.1.278–2.1.286). Re-measure after an upgrade. The regression tests in [`tests/test_real_checks.py`](../tests/test_real_checks.py) hold usdash to the 2026-09-28 sessions in [`tests/fixtures/checks`](../tests/fixtures/checks): the next message reading the last prompt back, resuming within the lifetime, a model switch across tokenizers, and the size after `/compact` waiting for the next request.
 
 | Question | What was measured |
 |---|---|
@@ -440,10 +450,10 @@ What building and reviewing usdash measured in real Claude Code transcripts, com
 | How big is Claude Code's tool list? | CLI 22–25k tokens; VS Code extension 20.8k; Desktop app 36.3k; `claude -p` 10–20k depending on model and version |
 | Is the tool list cached when the conversation's cache isn't? | Usually. Own model on a 1-hour cache: 36 of 39 cold starts read it back, once after 11¾ hours idle. 5-minute cache: 9 of 48 with no other session using the model, 13 of 22 with one. Another model with no session on it: once yes (Sonnet 5), once no (Opus 5.5) |
 | Is the lifetime exact? | No, a minimum, but only just. With nothing refreshing it in between, one 5-minute entry was read back 5.6 minutes after its last use (all but its newest 220 tokens); 2 others were gone at 5.8 and 10.6 minutes |
-| Does Claude Code's recap refresh the cache? | It re-sends the conversation: a recap written 74 minutes into a pause, after the 1-hour cache had run out, wrote it again, and the next message, 15 minutes later, read all of it back. 27 of 40 recaps came within 4 minutes of the last reply, the rest 4–74 minutes after |
+| Does Claude Code's recap refresh the cache? | It re-sends the conversation: a recap written 74 minutes into a pause, after the 1-hour cache had run out, wrote it again, and the next message, 15 minutes later, read all of it back. 27 of 40 recaps came within 4 minutes of the last reply, the rest 4–74 minutes after. A recap within the lifetime keeps the cache alive: on a 5-minute cache, the next message, 6½ minutes after the last request and 3½ after a recap, read all of it back (2.1.286) |
 | Do other unlogged requests touch the conversation's cache? | Sometimes: with no recap in between, 140 of 1,913 next messages within the lifetime read back more than the previous request had sent, so an unlogged request had cached the conversation with its latest reply |
 | Tokenizer ratio, old to new? | 0.758 in one switch, 0.74 in another; Anthropic says ~30% more tokens (0.77) |
-| Does an effort change keep the cache? | Opus 5.5 in Claude Code: 7 of 7 read everything back. Opus 5 in Claude Code: 7% read back |
+| Does an effort change keep the cache? | Opus 5.5 in Claude Code: 7 of 7 read everything back. Opus 5 in Claude Code: no; the request after the change read back only the tool list, which other sessions keep warm, and wrote the conversation again (12,698 of 35,867 tokens in one check) |
 | Does resuming keep the cache? | Within the lifetime: 8 of 10 resumes read the whole conversation back (1-hour and 5-minute caches, one after a file edit); the other two, 3½ and 40 minutes after the last request, read back only the tool list. After ≥ 92 minutes: 31 of 31 re-wrote it |
 | What does a warm `/compact` request read? | What the latest turn's first request had cached: 46,885 of 56,584 tokens after a four-turn session, 15,804 of 58,787 when one turn built the context. The rest went at the input price; it wrote only 147–555 tokens |
 | And a cold one? | The tool list (13,790), the rest (37,628) at the input price |

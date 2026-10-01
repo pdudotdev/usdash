@@ -68,7 +68,7 @@ def test_sections_and_counts(store):
     closing = Transcript(session="bbbb-2222")
     closing.record("cost-state", totalCostUSD=0.08)
     closing.into(store)
-    assert "╭─ exited · 1 session · last 5d · claude --resume <id> ─" in screen(store, ui.View(now=NOW))
+    assert "╭─ exited · 1 session · last 5d · claude --resume, then pick it ─" in screen(store, ui.View(now=NOW))
 
 
 def test_a_live_session_shows_now_and_up_to(store):

@@ -53,7 +53,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 
 | Shown | What it is |
 |---|---|
-| **ID** | The first 4 characters of the session id (as in `/status` and `claude --resume`), in a fixed colour per session |
+| **ID** | The first 4 characters of the session id (as in `/status`), in a fixed colour per session. `claude --resume` doesn't take them: it takes the whole id, or a name to search for |
 | **SESSION** | Your `/rename`, else the Desktop app's sidebar title, else the agent's name, else Claude Code's automatic title, else the first thing you typed (a command that runs a prompt, like a skill or `/init`, counts; a built-in like `/model` only if it's all there is) |
 | **PROJECT** | The project folder, plus `@branch` unless it's main, master or a detached HEAD. `no folder` for a Desktop session started without one (WHERE says `Desktop`) |
 | **WHERE** | Where it runs: `CLI` (a terminal, including an IDE's built-in one), `IDE` (the VS Code extension's panel, also in forks like Cursor), `Desktop` (the Desktop app's Code tab) or `script` (`claude -p`, the SDKs). Any other app shows as Claude Code names it; `?` if the transcript doesn't say |
@@ -62,7 +62,7 @@ usdash is a small Python program you keep open in a terminal next to your Claude
 | **CONTEXT** | The conversation's size: everything the next message sends again (the tool list, the system prompt and every message so far), as the last request sent it. `compacted` right after `/compact`, until the next message measures the new size |
 | **TODAY** · **TOTAL** | What the session has cost today (`—` if nothing), and since it started (a resumed session counts its earlier days too, and every subagent it ran). Once you've quit it, TOTAL is Claude Code's own figure, which also counts the requests its transcripts never log; after a resume, that figure plus what the transcripts show since. A figure below what the transcripts show is an incomplete record, and TOTAL stays theirs. |
 
-▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (its cache ran out, but it wasn't exited: type in its window if it's still open, else `claude --resume <id>`; a session killed or crashed without exiting shows here too) and **exited** (you quit it, or archived it in the Desktop app: `claude --resume <id>`). A pane with no session in it isn't shown. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
+▫️ **Three panes**, in the order you'd come back to them, with the columns lined up across all three: **live** (the cache is still warm), **expired** (its cache ran out, but it wasn't exited: type in its window if it's still open, else `claude --resume` and pick it; a session killed or crashed without exiting shows here too) and **exited** (you quit it, or archived it in the Desktop app: `claude --resume` and pick it). A pane with no session in it isn't shown. A folder's finished script runs (`claude -p`, SDKs) fold into one row in the exited pane, so a loop of them doesn't bury your sessions.
 
 ▫️ **What coming back costs.** A live session shows what you last typed there, and every session shows what its next message re-sends and what that costs:
 
@@ -230,6 +230,7 @@ Claude Code makes requests its transcripts never log:
 | `/compact`'s summarising request | Reads what's cached, the rest at the input price; its output is the summary (1–4k tokens) |
 | WebSearch's searches | A request of their own, plus $10 per 1,000 searches: four searches were 72% of one `claude -p` session's cost |
 | Background summaries for `--resume` | Not measured |
+| `/btw` side questions | Not in the transcript at all |
 | The Desktop app's own requests | On the session's model |
 
 On the machine usdash was built on, the transcripts held 41–100% of what Claude Code counted (a median of 89%), least in very short sessions and in ones that ran many subagents. Weighted by cost, 84%, and 23% on Haiku 4.5, which Claude Code uses for requests of its own.

@@ -249,8 +249,9 @@ SESSION_COLUMNS = (("ID", False), ("SESSION", False), ("PROJECT", False), ("WHER
 
 # The panes, top to bottom, and what their titles say about their sessions. An expired
 # session may still be open in its window, or have been killed without exiting: either
-# way, `claude --resume <id>` brings it back.
-PANES = {"live": "cache warm", "expired": "cache ran out, not exited", "exited": "claude --resume <id>"}
+# way, `claude --resume` brings it back. It takes a whole session id or a name, not the 4
+# characters shown, so the hint is its picker.
+PANES = {"live": "cache warm", "expired": "cache ran out, not exited", "exited": "claude --resume, then pick it"}
 
 
 @dataclass
