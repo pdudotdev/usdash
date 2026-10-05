@@ -226,7 +226,7 @@ Claude Code makes requests its transcripts never log:
 |---|---|
 | Session titles | Small, on Haiku 4.5 |
 | Prompt suggestions | Mostly cache reads |
-| The recap written while you're away | Re-sends the conversation on the session's model: it restarts the cache clock, and after the cache has run out it writes the conversation again |
+| The recap written while you're away | Re-reads the conversation on the session's model, about 3 minutes after the last reply if you've switched away from the window, and restarts the cache clock. Claude Code 2.1.288 writes it only while the cache is warm; older versions could write an expired cache again |
 | `/compact`'s summarising request | Reads what's cached, the rest at the input price; its output is the summary (1–4k tokens) |
 | WebSearch's searches | A request of their own, plus $10 per 1,000 searches: four searches were 72% of one `claude -p` session's cost |
 | Background summaries for `--resume` | Not measured |
@@ -293,7 +293,7 @@ Every message re-sends the whole conversation. Anthropic caches the start of eac
 - A subagent refreshes its own cache, not the parent's: a parent waiting on a long subagent can go cold
 - Either way, a session whose cache runs out while Claude Code is still busy there moves to the expired pane as `○ expired · working`: its next request will write the conversation again. usdash tells busy from the transcript: a reply that called a tool (a subagent is one) whose result isn't back yet, or results not yet answered. After 30 minutes without a new record, its subagents' included, it no longer counts as busy (the session was likely stopped mid-tool)
 - A subagent started in the background is different: the parent ends its turn and waits to be told the subagent is done. While that subagent keeps writing records after the parent's last reply, the parent shows `○ expired · subagent` (with the same 30-minute bound)
-- When Claude Code writes its recap of the session (usually within 4 minutes of its last reply, sometimes much later), that re-sends the conversation too: the clock restarts, and usdash's countdown jumps back up. A recap after the cache ran out writes the conversation again, and the session comes back to the live pane
+- When Claude Code writes its recap of the session (about 3 minutes after its last reply, once you've switched away from the window), it re-reads the conversation: the clock restarts, and usdash's countdown jumps back up. Claude Code 2.1.288 skips the recap once 90% of the lifetime has passed; on older versions one could come after the cache ran out, write the conversation again, and bring the session back to the live pane
 
 ▫️ **Switching model mid-conversation**
 
