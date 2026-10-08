@@ -301,7 +301,7 @@ The other model has to write the whole conversation into its own cache, while st
 
 ▫️ **The full picture**
 
-[`research/AI-TOKENOMICS-GUIDE.md`](research/AI-TOKENOMICS-GUIDE.md) is a field guide to what LLM usage costs and why: the cost equation, prompt caching, the other levers (model, effort, batch, fast mode), agents and `/compact`, FinOps practice, practice problems, and the evidence behind usdash's numbers.
+The field guide behind these numbers (what LLM usage costs and why, prompt caching, and the evidence from real sessions) now lives in a private knowledge base, `pdudotdev/llm-kb`.
 
 ## 📂 Project Files
 
@@ -312,7 +312,6 @@ The other model has to write the whole conversation into its own cache, while st
 | [`usdash/pricing.yaml`](usdash/pricing.yaml) | Anthropic's list prices as shipped, with the date they were verified: used when the pricing page can't be read and no copy of it is saved |
 | [`usdash/models.yaml`](usdash/models.yaml) | What usdash knows about the models besides their prices: where an effort change keeps the cache, and the tokenizers |
 | [`install.sh`](install.sh) | The one-line installer: uv if it's missing, then usdash ([`tests/test_install.py`](tests/test_install.py) runs it against stand-ins for curl and uv) |
-| [`research/AI-TOKENOMICS-GUIDE.md`](research/AI-TOKENOMICS-GUIDE.md) | The principles behind every number, with worked examples, checked against Anthropic's docs and real sessions |
 | [`scripts/make_fixture.py`](scripts/make_fixture.py) | Copies a real transcript into the test fixtures with its text removed |
 | [`scripts/readme_screen.py`](scripts/readme_screen.py) | Draws the README's pictures of the dashboard, [`docs/dashboard.svg`](docs/dashboard.svg) and [`docs/stats.svg`](docs/stats.svg), from made-up sessions |
 | [`docs/`](docs/) | The README's pictures: the sessions, the stats and how usdash works |
