@@ -2,7 +2,7 @@
 
 How the cost of using a large language model is built, why it moves, and how to work out any case from ten principles, one formula and two decision trees. Written around Claude and Claude Code; the principles apply to any provider that bills by the token and caches prompts.
 
-**Checked on 2026-10-05** against Anthropic's docs (Appendix E), Claude Code 2.1.288's code, and real Claude Code sessions measured while building usdash (Appendix B). Prices change and the principles don't: re-check prices before relying on them.
+**Checked on 2026-10-08** against Anthropic's docs and pricing pages (Appendix E), Claude Code 2.1.293's code, and real Claude Code sessions measured while building usdash (Appendix B). Prices change and the principles don't: re-check prices before relying on them.
 
 ## Contents
 
@@ -53,14 +53,14 @@ The whole subject on one page. Everything later is one of them applied.
 
 A **token** is about 4 characters, or ¾ of an English word; code and other languages take more.
 
-- **Input,** on every request (P1, P2): the tool definitions (plus 300–700 tokens of tool instructions the API adds), the system prompt, and every earlier message: yours, the replies, tool calls and results, images, and the model's earlier thinking (kept on Opus 4.5 and later, Sonnet 4.6 and later, and Fable; Haiku drops it).
+- **Input,** on every request (P1, P2): the tool definitions (plus about 290–800 tokens of tool instructions the API adds, by model and `tool_choice`), the system prompt, and every earlier message: yours, the replies, tool calls and results, images, and the model's earlier thinking (kept on Opus 4.5 and later, Sonnet 4.6 and later, Haiku 5.5 and Fable; Haiku 4.5 drops it).
 - **Output:** the reply, tool calls and thinking. Thinking is billed in full even when only a summary is shown.
-- **Limits:** a context window of 1M tokens (200k on Haiku 4.5), up to 128k of it output (64k on Haiku 4.5). From Claude 4.6 on, a long request costs the same per token as a short one.
-- **The tokenizer belongs to the model.** Opus 4.7 and later models (Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Fable) count about 30% more tokens for the same text than Haiku 4.5, Sonnet 4.6 and older models (measured: 1.32–1.35×). Compare models on the cost of the same text, and recount tokens on the target model.
+- **Limits:** a context window of 1M tokens (200k on Haiku 4.5), up to 128k of it output (64k on Haiku 4.5). From Claude 4.6 on, a long request costs the same per token as a short one, except on Haiku 5.5: a prompt over 100k tokens pays 5× for every token (§3).
+- **The tokenizer belongs to the model.** Opus 4.7 and later models (Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5, Haiku 5.5, Fable) count about 30% more tokens for the same text than Haiku 4.5, Sonnet 4.6 and older models (measured: 1.32–1.35×). Compare models on the cost of the same text, and recount tokens on the target model.
 
 ### 3. Prices and the cost formula
 
-USD per million tokens (MTok), from Anthropic's pricing page on 2026-10-01. `p` is the input price, `r` the cache-read multiplier.
+USD per million tokens (MTok), from Anthropic's pricing pages on 2026-10-08. `p` is the input price, `r` the cache-read multiplier. In bold, the models behind Claude Code's `opus`, `sonnet` and `haiku` on the Anthropic API.
 
 | Model | Input `p` | 5-min write | 1-hour write | Cache read | Output | `r` | Min. cacheable |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -69,9 +69,11 @@ USD per million tokens (MTok), from Anthropic's pricing page on 2026-10-01. `p` 
 | **Opus 5.5** | **4.00** | **5.00** | **8.00** | **0.20** | **20.00** | **0.05** | **512** |
 | Opus 5 | 5.00 | 6.25 | 10.00 | 0.50 | 25.00 | 0.1 | 512 |
 | Opus 4.8 / 4.7 / 4.6 / 4.5 | 5.00 | 6.25 | 10.00 | 0.50 | 25.00 | 0.1 | 1,024 / 2,048 / 4,096 / 4,096 |
-| **Sonnet 5.5** | **2.00** | **2.50** | **4.00** | **0.20** | **10.00** | **0.1** | **512** |
+| **Sonnet 5.5** | **2.00** | **2.50** | **4.00** | **0.10** | **10.00** | **0.05** | **512** |
 | Sonnet 5 | 2.00 | 2.50 | 4.00 | 0.20 | 10.00 | 0.1 | 1,024 |
 | Sonnet 4.6, 4.5 | 3.00 | 3.75 | 6.00 | 0.30 | 15.00 | 0.1 | 1,024 |
+| **Haiku 5.5, prompt up to 100k** | **0.10** | **0.125** | **0.20** | **0.01** | **0.50** | **0.1** | **512** |
+| **Haiku 5.5, prompt over 100k** | **0.50** | **0.625** | **1.00** | **0.05** | **2.50** | **0.1** | **512** |
 | Haiku 4.5 | 1.00 | 1.25 | 2.00 | 0.10 | 5.00 | 0.1 | 4,096 |
 
 *Limited availability.
@@ -82,17 +84,22 @@ cost = p × ( plain + 1.25·w5m + 2·w1h + r·read + 5·out ) ÷ 1,000,000
      + $0.01 per web search
 ```
 
+On Haiku 5.5, `p` depends on the request's prompt size, `plain + w5m + w1h + read`: $0.10 up to 100,000 tokens, $0.50 over, for every token of the request, its output included.
+
 | Modifier | Value | What to know |
 |---|---|---|
 | Batch API | × 0.5 | Most batches finish within an hour; requests not done in 24 hours expire, unbilled. Cache hits are best-effort, so put a shared prefix on the 1-hour cache |
-| Fast mode | × 2 | Opus 5.5 ($8 / $40), Opus 5 and Opus 4.8 ($10 / $50), up to 2.5× faster output. Not in batches, Bedrock or Google Cloud; on a subscription it draws on usage credits. Turning it on mid-conversation re-writes the context at fast prices (§8) |
-| US-only inference | × 1.1 | `inference_geo: "us"`, on the request or as the workspace default; Claude 4.6 and later |
-| Regional endpoints | + 10% | Bedrock and Google Cloud regional endpoints, Claude 4.5 and later |
+| Fast mode | × 2 | Opus 5.5 ($8 / $40), Opus 5 and Opus 4.8 ($10 / $50), up to 2.5× faster output. Claude API only: not on Bedrock, Google Cloud, Microsoft Foundry or Claude Platform on AWS, and not in batches. On a subscription it's always paid from usage credits. Turning it on mid-conversation re-writes the context at fast prices (§8) |
+| US-only inference | × 1.1 | `inference_geo: "us"`, on the request or as the workspace default, on the Claude API and Claude Platform on AWS (on Foundry, a US Data Zone deployment); Claude 4.6 and later |
+| Regional endpoints | + 10% | Bedrock and Google Cloud regional endpoints (and Google Cloud's multi-region ones), Claude 4.5 and later |
 | Contract | your rate | A negotiated discount |
 
-The modifiers multiply each other (P7): a 1-hour cache write on Opus 5.5 is $8 a million, $8.80 with US-only inference, and $4.40 in a batch as well. Per-use fees are added last.
+The modifiers multiply each other (P7): a 1-hour cache write on Opus 5.5 is $8 a million, $8.80 with US-only inference, and $4.40 in a batch as well. Per-use fees are added last. Claude Platform on AWS and Microsoft Foundry charge the Claude API's prices, billed through the AWS or Azure Marketplace in Claude Consumption Units of $0.01; Bedrock and Google Cloud set their own prices.
 
-**What the table says:** a cache read is 12–80× cheaper than a write, and output is the most expensive token. Two traps: Opus 5.5, Sonnet 5.5 and Sonnet 5 all read the cache at $0.20, so moving a warm conversation from Opus to Sonnet saves nothing on its cached part; and Fable 5.1 reads at $0.25, close to Opus 5.5, though everything else costs 2.5× more.
+**What the table says:** a cache read is 12–80× cheaper than a write, and output is the most expensive token. Three traps:
+- **Sonnet 5.5 costs half of Opus 5.5 on every token, cache reads included** ($0.10 against $0.20, since 2026-10-07). Sonnet 5 reads at the same $0.20 as Opus 5.5, so moving a warm conversation from Opus 5.5 to Sonnet 5 saves nothing on its cached part.
+- **Fable 5.1 reads at $0.25,** close to Opus 5.5, though everything else costs 2.5× more.
+- **Haiku 5.5 has a price cliff at 100,000 tokens of prompt:** past it, every token of the request costs 5×, its output included, so a 100,001-token prompt costs five times a 100,000-token one. Under the line its prices are a tenth of Haiku 4.5's; over it, half (§10).
 
 **The running session.** Claude Code on Opus 5.5, with a subscription's 1-hour cache:
 - every request starts with the same 25k tokens: the tool list (~23k) and the system prompt (~2k);
@@ -204,7 +211,7 @@ With the API, a single top-level `cache_control` (*automatic caching*) puts the 
 
 On the wire: after a 331-second tool on a 5-minute cache, the next request read back only the start (25,209 tokens) and wrote the rest (10,224): $0.0562, against about $0.01 warm.
 
-**Which lifetime Claude Code uses** (P10): the main conversation (your turns, `claude -p` runs, the Agent SDK) gets 1 hour on a subscription within plan usage, and 5 minutes otherwise: on an API key, on usage credits past the plan, or through a cloud provider. Everything else, such as subagents, forks, compaction and titles, gets 5 minutes. `promptCacheTtl` and `subagentPromptCacheTtl`, or their environment variables, override each.
+**Which lifetime Claude Code uses** (P10): the main conversation (your turns, `claude -p` runs, the Agent SDK) gets 1 hour on a subscription within plan usage, and 5 minutes otherwise: on an API key, on usage credits past the plan, or through a cloud provider. Everything else, such as subagents, forks, compaction and titles, gets 5 minutes, except a few helper requests Anthropic picks server-side, which get the main conversation's lifetime (in 2.1.293's defaults, the auto mode classifier and memory recall, Appendix C). `promptCacheTtl` and `subagentPromptCacheTtl`, or their environment variables, override each.
 
 ### 7. What breaks the cache
 
@@ -243,8 +250,8 @@ What happened since the conversation's last request?
 ├─ Nothing, within the lifetime ──── read everything; write only what's new
 ├─ More than the lifetime passed ─── read the shared start if other sessions kept it warm; write the rest
 ├─ Model switch ──────────────────── as if expired, on the new model's cache (its tool list is often warm)
-├─ Effort change ─────────────────── kept on Opus 5.5, Sonnet 5.5 and Fable 5.1 (API key or subscription);
-│                                    otherwise as a model switch
+├─ Effort change ─────────────────── kept on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1 (API key or
+│                                    subscription); otherwise as a model switch
 ├─ Fast mode turned on ───────────── the first time only: nothing read, everything written at fast prices
 ├─ Tool list changed ─────────────── everything written again (MCP tools are deferred by default, so
 │                                    connecting a server usually changes nothing)
@@ -269,7 +276,7 @@ reads to break even = (write multiplier − 1) ÷ (1 − r)
 | | 5-minute | 1-hour |
 |---|---:|---:|
 | r = 0.1 | 0.28: pays from the **1st** read | 1.11: from the **2nd** |
-| Opus 5.5 (r = 0.05) | 0.26 | 1.05 |
+| Opus 5.5, Sonnet 5.5 (r = 0.05) | 0.26 | 1.05 |
 | Fable 5.1 (r = 0.025) | 0.26 | 1.03 |
 
 The running session's first 20 messages (35k → 73k, 1.08M input tokens) cost **$4.72** without caching and **$0.99** with the 1-hour cache, 79% less; output ($0.40) becomes the largest part. A 21st message after the cache expired (75k) costs $0.43 with the start still cached and $0.62 with nothing cached, against $0.05 warm.
@@ -279,7 +286,7 @@ The running session's first 20 messages (35k → 73k, 1.08M input tokens) cost *
 ```
 the 1-hour cache wins when
     tokens re-written after 5–60 minute pauses  >  0.75 ÷ (1.25 − r)  ×  all tokens written
-                                                   (0.65 most models · 0.625 Opus 5.5 · 0.61 Fable 5.1)
+                                                   (0.65 most models · 0.625 Opus 5.5 and Sonnet 5.5 · 0.61 Fable 5.1)
 ```
 
 | Typical gap between requests | Choose |
@@ -290,7 +297,7 @@ the 1-hour cache wins when
 
 For example, a day in the running session, 6 bursts of 10 messages at about 100k with 15-minute breaks, costs **$5.88** on the 5-minute cache, where each burst starts by writing all 102k (6 × $0.53 + 54 × $0.050), and **$4.14** on the 1-hour one, where only the first does ($0.84 + 59 × $0.056).
 
-**Keep-alive pings (API).** A request with `max_tokens: 0` reads the prompt without generating anything, restarting a 5-minute entry for one cache read (`r·p` per token). Against the 1-hour premium of `0.75p` per token written, pings win while there are fewer than `0.75 ÷ r` of them: 7.5 on most models (about half an hour of pings every 4½ minutes), 15 on Opus 5.5, 30 on Fable 5.1.
+**Keep-alive pings (API).** A request with `max_tokens: 0` reads the prompt without generating anything, restarting a 5-minute entry for one cache read (`r·p` per token). Against the 1-hour premium of `0.75p` per token written, pings win while there are fewer than `0.75 ÷ r` of them: 7.5 on most models (about half an hour of pings every 4½ minutes), 15 on Opus 5.5 and Sonnet 5.5, 30 on Fable 5.1.
 
 **Throughput.** On most models, cache reads don't count toward the input-tokens-per-minute rate limit: at an 80% hit rate, a 2M limit handles 10M input tokens a minute. `max_tokens` doesn't count toward the output limit, so there's no reason to set it low.
 
@@ -300,13 +307,15 @@ For example, a day in the running session, 6 bursts of 10 messages at about 100k
 
 ### 10. Model choice and tokenizers
 
-Price per token is half the story; tokens per task is the other half (P9). It depends on the tokenizer (77k tokens on Haiku 4.5 are 100k–104k on Opus 5.5), on how much the model writes and thinks at the chosen effort, and on how many attempts it needs. Compare models on the same task, per finished result: tokens in and out × price × attempts. Anthropic's own example: 10,000 support tickets of ~3,700 tokens each on Haiku 4.5 cost about $37.
+Price per token is half the story; tokens per task is the other half (P9). It depends on the tokenizer (77k tokens on Haiku 4.5 are 100k–104k on Opus 5.5 or Haiku 5.5), on how much the model writes and thinks at the chosen effort, and on how many attempts it needs. Compare models on the same task, per finished result: tokens in and out × price × attempts. For example, reading 10,000 support tickets of ~3,700 tokens each costs about $37 on Haiku 4.5, and about $4.80 on Haiku 5.5, where each counts ~4,800 tokens.
+
+**Haiku 5.5's price cliff.** A Haiku 5.5 request whose prompt passes 100,000 tokens pays 5× for every token, output included (§3). So keep its requests under 100k: split long documents, and compact or clear a conversation before it gets there. A Claude Code session on Haiku 5.5 compacts only near 967k by default, so every request after its context passes 100k pays the higher prices; `/autocompact 100k`, the lowest setting, compacts it there instead. And Haiku 5.5 thinks by default (adaptive thinking, at `medium` effort), where Haiku 4.5 thought only when asked: count that output when you compare them.
 
 ### 11. Output, thinking and effort
 
 - **Output is the expensive side:** 5× input. A 2,000-token reply on Opus 5.5 costs $0.04, twice what reading a 100k conversation from the cache costs.
 - **Thinking is output,** billed in full even when hidden, and earlier thinking is re-sent as input (§2).
-- **Effort** (`low` to `max`) scales all output, tool calls included; it's a signal, not a budget. The API defaults to `medium` on Opus 5.5 and `high` elsewhere (Haiku 4.5 has none); Claude Code sets its own with `/effort`.
+- **Effort** (`low` to `max`) scales all output, tool calls included; it's a signal, not a budget. The API defaults to `medium` on Opus 5.5 and Haiku 5.5 and `high` elsewhere (Haiku 4.5 has none); Claude Code defaults to `medium` on Opus 5.5, Sonnet 5.5 and Haiku 5.5, and `/effort` changes it.
 - **Lowering effort on a warm cache** saves at once where the change keeps the cache (§8): in the running session, ~3,000 → ~800 output tokens saves $0.044 a message. Where it doesn't, treat it as a model switch (§14).
 
 ### 12. Tools and server tools
@@ -315,7 +324,8 @@ Price per token is half the story; tokens per task is the other half (P9). It de
 - **Tool calls are output; tool results are input** in every later request.
 - **Web search:** $10 per 1,000 searches plus the results as input; a failed search isn't billed.
 - **Web fetch:** only the fetched tokens (a typical page ~2,500; a 500 kB PDF ~125,000).
-- **Code execution:** free alongside web search or fetch; otherwise billed by container time (1,550 free hours per organisation a month, then $0.05 an hour, 5 minutes minimum).
+- **Code execution:** free alongside web search or fetch; otherwise billed by container time (1,550 free hours per organisation a month, which claude.com/pricing gives as 50 a day, then $0.05 an hour per container, 5 minutes minimum).
+- **Claude Managed Agents** (agents Anthropic hosts): tokens at the same prices, no batch discount, plus $0.08 per session-hour while a session is running (idle time is free), in place of code execution's container hours.
 
 ---
 
@@ -345,8 +355,8 @@ m = P ÷ s = requests to pay back          → worth it if more than m requests 
 
 **Example: switching the running session to Sonnet 5.5** at 100k, warm:
 - **P = $0.38:** Sonnet writes all 100k into its own cache ($0.40) where Opus would read them ($0.02).
-- **s = $0.018:** both read at $0.20, so only the new tokens and output get cheaper ($0.056 → $0.038 a message).
-- **m = 21 messages.** After a break it flips: both must write everything, $0.40 on Sonnet against $0.80 on Opus, so switching down is cheaper from the first message.
+- **s = $0.028:** every token costs half on Sonnet 5.5, cache reads included ($0.056 → $0.028 a message).
+- **m = 14 messages.** After a break it flips: both must write everything, $0.40 on Sonnet against $0.80 on Opus, so switching down is cheaper from the first message.
 
 Rules of thumb:
 - **Unsure how many requests are left?** Pay the extra per request until it adds up to P, then switch. You never pay more than about twice the best choice in hindsight.
@@ -359,7 +369,7 @@ Rules of thumb:
 - **`claude --resume`** re-sends the conversation with the system prompt it started with (P10). Within the lifetime it reads back what's cached; after it, it writes it again (P5). On the wire: a resume after 5 minutes read all 35,094 tokens back; one after 22½ hours read back only the 23,167-token tool list.
 - **A subagent** is a separate conversation with its own prompt, tools and 5-minute cache. It doesn't read the parent's cache, and the parent's clock keeps running while it waits (P4, P5). On the wire: a parent on a 5-minute cache waited 10 minutes; the subagent's steps each read their own cache back, but the parent then read back only its 23,292-token start and wrote 12,932 tokens again.
 - **A fork** inherits the parent's prompt, tools and conversation exactly, so it reads the parent's cache. Check that a feature really is one: a skill run "in a forked subagent" in this project read nothing back and wrote its 44k start again.
-- **Parallel requests sharing a prefix:** ten requests sharing a 30k prefix on Sonnet 5.5, sent at once, write it ten times (**$0.75**); one first and the other nine once it has started cost **$0.13** (§5).
+- **Parallel requests sharing a prefix:** ten requests sharing a 30k prefix on Sonnet 5.5, sent at once, write it ten times (**$0.75**); one first and the other nine once it has started cost **$0.10** (§5).
 
 ### 16. /compact, /clear and /rewind
 
@@ -378,12 +388,12 @@ Rules of thumb:
 
 ### 17. Requests you don't see
 
-Clients send requests you never typed, and their usage never reaches the transcript (P8). In Claude Code they come in two kinds; Appendix C lists each one, from Claude Code 2.1.288's code.
+Clients send requests you never typed, and their usage never reaches the transcript (P8). In Claude Code they come in two kinds; Appendix C lists each one, from Claude Code 2.1.293's code.
 
 | Kind | Examples | Cost | Effect on the cache |
 |---|---|---|---|
 | **Copies of the conversation,** on the session's model and start | Prompt suggestions, memory extraction, recaps, compaction, `/btw` | About one cache read of the whole context (550k on Opus 5.5: $0.11), plus the answer | Each reads the session's cache, restarting its clock (P5) |
-| **Separate small requests** | Session titles, tool-batch labels, WebFetch and WebSearch processing | Usually a fraction of a cent; WebSearch adds $10 per 1,000 searches | None on the session's cache |
+| **Separate small requests** | Session titles, WebFetch and WebSearch processing, memory recall | Usually a fraction of a cent; WebSearch adds $10 per 1,000 searches | None on the session's cache |
 
 - **How much logs miss:** Claude Code's transcripts held 41–100% of its own totals (a median of 89%; 84% weighted by cost), and only 28% in a session with four web searches.
 - **The client's own total.** At exit, Claude Code writes what it counted, per model, as a `cost-state` record. On the wire, for a session compacted within a minute of its last reply:
@@ -450,8 +460,8 @@ cost per unit = Σ over its requests of (tokens by kind × price) × modifiers  
 
 **Reference points:**
 - **Claude Code in enterprises** (Anthropic's figures): about $13 per developer per active day, $150–250 a month, and under $30 a day for 90% of users.
-- **A RAG service:** a 50k-token document and 1,000 questions an hour on Sonnet 5.5 (200 tokens in, 400 out) cost **$104 an hour uncached and $15 cached**, and each question then counts only 200 tokens toward the rate limit.
-- **Offline processing:** 10,000 documents of 3k tokens in and 500 out on Haiku 4.5 cost **$55, or $27.50 in batches**.
+- **A RAG service:** a 50k-token document and 1,000 questions an hour on Sonnet 5.5 (200 tokens in, 400 out) cost **$104 an hour uncached and $9.50 cached**, and each question then counts only 200 tokens toward the rate limit.
+- **Offline processing:** 10,000 documents of 3k tokens in and 500 out on Haiku 4.5 cost **$55, or $27.50 in batches**. On Haiku 5.5, where the same text counts ~30% more tokens, about **$7, or $3.60 in batches**, plus any thinking.
 
 ### 21. Governance
 
@@ -462,7 +472,7 @@ cost per unit = Σ over its requests of (tokens by kind × price) × modifiers  
 | **Routing** | The cheapest model that meets the quality bar, per task; small models for subagents' side work |
 | **Time** | The 1-hour cache for work with pauses; batches for anything that can wait; pre-warming with `max_tokens: 0` where first-response latency matters |
 | **Visibility** | Contracted rates in reports (Claude Code's `modelPricing`); OpenTelemetry per user and session; reconciliation with invoices; logs kept long enough for a baseline (Claude Code deletes transcripts after 30 days by default: `cleanupPeriodDays`) |
-| **Plans** | A subscription bills plan usage, not tokens, so list prices are for comparison. Going past the plan onto usage credits also drops Claude Code's main conversation to the 5-minute cache |
+| **Plans** | Pro, Max and Team bill plan usage, not tokens, so list prices are for comparison. Usage credits past the plan are billed at API rates and drop Claude Code's main conversation to the 5-minute cache; fast mode is always paid from them. Enterprise is $20 a seat a month plus usage at API rates. Max includes $100 or $200 a month of Claude API credits and Team up to $500, which don't cover Claude Code |
 
 ---
 
@@ -488,7 +498,7 @@ Work each one with the six steps at the top; the answers follow.
 *Send one first, and the other 19 once its response has begun,* so they read the briefing instead of each writing it (P4, §15). Or pre-warm the cache with `max_tokens: 0`.
 
 **6. Is moving a warm 200k Opus 5.5 conversation to Sonnet 5.5 worth it to save money?**
-*Rarely, while it's warm.* Sonnet must write 200k tokens (~$0.80 at the 1-hour price), and both read at the same $0.20 afterwards, so only the new tokens and output get cheaper. After a break it's different: both must write everything, and Sonnet does it for half (P4, P6, §14).
+*While it's warm, only if more than about 20 messages are left.* Sonnet must write 200k tokens into its own cache ($0.80 at the 1-hour price, $0.76 more than Opus reading them). Then everything costs half, cache reads included: a running-session message at 200k drops from $0.076 to $0.038, and $0.76 ÷ $0.038 = 20. After a break it's different: both must write everything, and Sonnet does it for half (P4, P6, §14).
 
 **7. A session resumed the next morning read 23,167 tokens from the cache and wrote the rest. Why 23,167, and why not 0?**
 *The conversation's entry had expired overnight* (P5), *but the start of the request is shared:* 23,167 is Claude Code's tool list, the same in most sessions on that model and version, and another session kept it warm (P4, §5).
@@ -525,7 +535,7 @@ The running session: Claude Code on Opus 5.5, 1-hour cache, a 25k shared start, 
 | Message at 100k after the cache expired: the start cached elsewhere / nothing cached | $0.64 / $0.84 |
 | A day of 6 bursts of 10 messages at ~100k: 5-minute / 1-hour cache | $5.88 / $4.14 |
 | One prompt running 8 tool steps at 100k (3k result + 300 output each) | $0.42 |
-| Switch to Sonnet 5.5 while warm at 100k | P = $0.38, s = $0.018: pays back after **21** messages |
+| Switch to Sonnet 5.5 while warm at 100k | P = $0.38, s = $0.028: pays back after **14** messages |
 | `/compact` at 100k: warm / after the cache expired | $0.11 / $0.36; pays back after about **18** messages |
 | Lunch break after compacting first | $0.15 instead of $0.64 |
 | Turning fast mode on at 200k | $3.20, once |
@@ -553,39 +563,41 @@ What building and reviewing usdash measured in real Claude Code transcripts (ver
 | How big is the summary? | Its output: 1,065–3,804 tokens. Its `postTokens`: 3.2–6k for 54–65k conversations, 13,984 at 450k, 16,088 at 972k |
 | How big is the conversation right after `/compact`? | 33,335 / 24,987 / 20,315 tokens in three sessions; first prompt + `postTokens` came within 6% |
 | What did Claude Code count around a compaction? | For a 40k conversation compacted within a minute of its last reply: 75,114 more tokens read, 6,851 more plain input, 349 more written and 1,296 more output than its transcript. That fits the compaction (about 35k read, 7k plain, a 1.3k summary) plus one more request reading the whole 40k, a prompt suggestion or a memory extraction |
-| How much do the transcripts miss? | They held 41–100% of Claude Code's own totals in 34 exited sessions (quartiles 72%, 89%, 99%), least in very short sessions and in ones that ran many subagents; 28% in a session with four web searches; a Desktop app session, $0.16 of $0.23. Weighted by cost, 84% ($278.56 of $332.19): 84% on Opus 5.5, 71% on Sonnet 5, 23% on Haiku 4.5, which Claude Code uses for requests of its own |
-| Do Claude Code's prices match the list? | Wherever it counted the same tokens as the transcripts, its cost equalled the list-price calculation to the millionth of a dollar: 13 of 13 sessions by 2026-09-30, and since then Fable 5.1, fast mode on Opus 5.5 and Opus 5, and US-only inference ($0.015279 for a run that costs $0.013890 at global prices: exactly 1.1×) |
+| How much do the transcripts miss? | They held 41–100% of Claude Code's own totals in 34 exited sessions (quartiles 72%, 89%, 99%), least in very short sessions and in ones that ran many subagents; 28% in a session with four web searches; a Desktop app session, $0.16 of $0.23. Weighted by cost, 84% ($278.56 of $332.19): 84% on Opus 5.5, 71% on Sonnet 5, 23% on Haiku 4.5, which Claude Code used for requests of its own (Haiku 5.5 from 2.1.293, on the Anthropic API) |
+| Do Claude Code's prices match the list? | Wherever it counted the same tokens as the transcripts, its cost equalled the list-price calculation to the millionth of a dollar: 13 of 13 sessions by 2026-09-30, and since then Fable 5.1, fast mode on Opus 5.5 and Opus 5, and US-only inference ($0.015279 for a run that costs $0.013890 at global prices: exactly 1.1×). One known gap, from its code: 2.1.293's price table still has Sonnet 5.5's cache reads at $0.20, so for Sonnet 5.5 requests after the 2026-10-07 price cut its totals are above the list price |
 | A real model switch? | Moving a warm 55.9k conversation from Opus 5.5 to Sonnet 5 cost $0.143, against about $0.02 to stay |
 
 ## Appendix C: Claude Code's unlogged requests
 
-From Claude Code 2.1.288's code. Costs are measured where given.
+From Claude Code 2.1.293's code. Costs are measured where given. *The small model* is Haiku 5.5 on the Anthropic API (Haiku 4.5 before 2.1.293); on a cloud provider it depends on the setup, and `ANTHROPIC_SMALL_FAST_MODEL` sets it.
 
 **Copies of the conversation:** on the session's model and start, so each reads the session's cache and restarts its clock.
 
 | Request | When it runs | In the transcript |
 |---|---|---|
-| **Prompt suggestion** | After a turn, in interactive sessions (not `claude -p`), once the conversation has two replies. Skipped when the window isn't focused or the last request moved more than ~10k new tokens; throttled after a run of unused suggestions | Nothing |
+| **Prompt suggestion** | After a turn in an interactive session, once the conversation has two replies (in `claude -p` only with `--prompt-suggestions`). Skipped when the cache is cold, the window isn't focused, the last request moved more than ~10k new tokens, in plan mode, or near a usage limit; throttled after a run of unused suggestions. Off by default on cloud providers | Nothing |
 | **Memory extraction** | Right after a turn, when auto memory is on and you wrote something new, so always while the cache is warm. Up to 5 steps of its own | Nothing |
-| **Recap** | About 3 minutes after the last turn, or as soon as you switch away after that, if the window isn't focused and less than 90% of the lifetime has passed. Shown when you come back | A record (`away_summary`), no usage |
-| **Compaction summary** | `/compact`, or automatic compaction (§16) | A record (`compact_boundary`), no usage |
+| **Recap** | About 3 minutes after the last turn, or as soon as you switch away after that, if the window isn't focused, the session has at least three turns and less than 90% of the lifetime has passed; never twice in a row. Also on `/recap`. Shown when you come back | A record (`away_summary`), no usage |
+| **Compaction summary** | `/compact`, automatic compaction (§16), or resuming a large session from a summary | A record (`compact_boundary`), no usage |
 | **`/btw` side question** | When you ask one | Nothing; the question is only in the input history |
-| **`/rename` without a name** | When you run it | Nothing |
-| **Auto dream** (memory consolidation) | At most once a day, once 5 sessions have run since the last one (the defaults), when auto memory is on | Nothing |
+| **Auto dream** (memory consolidation) | At most once a day, once 5 sessions have run since the last one (the defaults), when auto memory and auto dream are on (`autoDreamEnabled`, else Anthropic's default) | Nothing |
 | **Subagent progress summary** | While a subagent runs; it reads the subagent's cache, not the session's | Nothing |
+| **A mod's `$.model.fork`** | When an installed [mod](https://code.claude.com/docs/en/plugins/mods/api) asks a question about the conversation | Nothing |
 
 **Separate small requests:** they don't touch the session's cache.
 
 | Request | When it runs | Model and size |
 |---|---|---|
-| **Session title** | Early in the session | Haiku 4.5, a short excerpt: 893–975 tokens in, 10–15 out (measured) |
-| **Tool-batch labels** | After tool batches: one-line labels for the mobile app | A small model, no caching |
-| **WebFetch** | Each fetch | A small model reads the page with your prompt; grows with the page |
-| **WebSearch** | Each search | The session's model, or a small one when a server flag says so; no caching, and the results count as input. Measured on Haiku 4.5: one search came to $0.023263 with its $0.01 fee (12,633 tokens in and 126 out, the session's title included) |
-| **Auto mode classifier** | Tool calls that need a decision in auto mode | Its own model and copy of the conversation; not measured |
-| **Prompt and agent hooks** | Each time a hook of those types that you configured fires | Its own request |
+| **Session title** | Early in the session | The small model, given a short excerpt. Measured on Haiku 4.5: 893–975 tokens in, 10–15 out, about $0.001; on Haiku 5.5 the same text is ~30% more tokens at a tenth of the price |
+| **`/rename` without a name** | When you run it | The small model, given an excerpt (a copy of the conversation instead, when a server flag says so) |
+| **Memory recall** | Before each prompt of more than one word, when auto memory is on and a server flag enables it | Sonnet (the `sonnet` alias) picks which memory files to attach, in a small conversation of its own, cached for as long as the main conversation (§6) |
+| **WebFetch** | Each fetch | The small model reads the page, cut to 100,000 characters, with your prompt; grows with the page |
+| **WebSearch** | Each search | The session's model, or the small one when a server flag says so; no caching, up to 8 searches a call at $10 per 1,000, and the results count as input. Measured on Haiku 4.5: one search came to $0.023263 with its $0.01 fee (12,633 tokens in and 126 out, the session's title included) |
+| **Auto mode classifier** | Tool calls that need a decision in auto mode | Its own model and copy of the conversation, cached for as long as the main conversation (§6); not measured |
+| **Tool-batch labels** | After tool batches in the main conversation, only when the host sets `CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES`: one-line labels for the mobile app | The small model, no caching |
+| **Prompt and agent hooks, mods** | Each time a prompt or agent hook you configured fires, or a mod calls `$.model.complete` | A prompt hook: one request, on the small model by default. An agent hook: a subagent of its own, up to 50 steps. `$.model.complete`: one request, on the model the mod names |
 | **Background-agent naming and status** | When background agents run | Small requests |
-| **Rare, on demand** | `/insights`, `/feedback`, validating a model name, MCP date parsing, artifact comment replies, auto mode setup and critique, plugin evals, a title when moving a session to the cloud | One-off, small |
+| **Rare, on demand** | `/insights`, `/feedback`, validating a model name, MCP date parsing, artifact comment replies, triage and edits, auto mode setup and critique, plugin evals, a title when moving a session to the cloud; 1-token checks of an API key, of a subscriber's usage limits (on Haiku 4.5) and, on Google Cloud, of model access | One-off, small |
 
 ## Appendix D: Glossary
 
@@ -614,9 +626,12 @@ From Claude Code 2.1.288's code. Costs are measured where given.
 
 ## Appendix E: Sources
 
-- Pricing: https://platform.claude.com/docs/en/about-claude/pricing
+- Pricing: https://platform.claude.com/docs/en/about-claude/pricing and https://claude.com/pricing#api (plans: https://claude.com/pricing)
+- Release notes (the Sonnet 5.5 cache-read price cut and Haiku 5.5, 2026-10-07): https://platform.claude.com/docs/en/release-notes/overview
 - Prompt caching: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 - Models overview: https://platform.claude.com/docs/en/models/overview
+- Haiku 5.5: https://platform.claude.com/docs/en/models/haiku-5-5/overview
+- API credits for Max and Team: https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers
 - Context windows: https://platform.claude.com/docs/en/build-with-claude/context-windows
 - Token counting: https://platform.claude.com/docs/en/build-with-claude/token-counting
 - Thinking pricing: https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost
@@ -628,4 +643,6 @@ From Claude Code 2.1.288's code. Costs are measured where given.
 - Compaction: https://platform.claude.com/docs/en/build-with-claude/compaction
 - How Claude Code uses prompt caching: https://code.claude.com/docs/en/prompt-caching
 - Managing Claude Code costs: https://code.claude.com/docs/en/costs
-- Claude Code 2.1.288's own code: when each request in Appendix C runs, its model, and whether it reads the session's cache
+- Claude Code model configuration (aliases, effort defaults, auto-compaction): https://code.claude.com/docs/en/model-config
+- Claude Code mods calling a model: https://code.claude.com/docs/en/plugins/mods/api
+- Claude Code 2.1.293's own code: when each request in Appendix C runs, its model, and whether it reads the session's cache
