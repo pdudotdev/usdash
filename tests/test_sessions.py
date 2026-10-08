@@ -543,7 +543,7 @@ def test_scripted_sessions(store):
     assert not store.sessions["e"].scripted
 
 
-# --- Long turns and long subagents (research/AI-TOKENOMICS-GUIDE.md §6, §15) ------------
+# --- Long turns and long subagents --------------------------------------------------
 
 
 def test_a_long_skill_turn_stays_warm_while_each_step_starts_in_time(store):

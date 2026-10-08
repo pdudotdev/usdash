@@ -5,8 +5,8 @@
     up to   C written to the cache again, once it has expired: C × the write price
 
 "now" is exact for the next message in a live session: it reads the whole of C
-back (research/AI-TOKENOMICS-GUIDE.md, Appendix B). "up to" is an upper bound:
-Claude Code's tool list at the start of C often stays cached. What the next
+back (tests/test_real_checks.py holds this to real sessions). "up to" is an upper
+bound: Claude Code's tool list at the start of C often stays cached. What the next
 message adds (your text, tool results, the reply) isn't known yet, so it's left out.
 """
 from .prices import FIVE_MINUTES, prompt_cost
